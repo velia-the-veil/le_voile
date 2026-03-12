@@ -15,7 +15,8 @@ import (
 )
 
 const (
-	defaultRateLimitBytesPerSec = 512 * 1024 // 512 KB/s
+	defaultRateLimitBytesPerSec = 512 * 1024          // 512 KB/s
+	maxDownloadSize             = 500 * 1024 * 1024    // 500 MB
 	allowedDownloadHost         = "github.com"
 	allowedDownloadPathPrefix   = "/velia-the-veil/le_voile/releases"
 )
@@ -90,7 +91,8 @@ func (d *Downloader) Download(ctx context.Context, rawURL string) (string, error
 		return "", fmt.Errorf("updater: download: create file: %w", err)
 	}
 
-	reader := newRateLimitedReader(ctx, resp.Body, d.rateLimit)
+	limited := io.LimitReader(resp.Body, maxDownloadSize)
+	reader := newRateLimitedReader(ctx, limited, d.rateLimit)
 	_, copyErr := io.Copy(f, reader)
 	closeErr := f.Close()
 

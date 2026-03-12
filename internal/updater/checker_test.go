@@ -250,6 +250,38 @@ func TestChecker_CheckLatest_NotFound(t *testing.T) {
 	}
 }
 
+func TestNewChecker_ValidOwnerRepo(t *testing.T) {
+	c, err := NewChecker("velia-the-veil", "le_voile")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if c.owner != "velia-the-veil" || c.repo != "le_voile" {
+		t.Errorf("got owner=%q repo=%q", c.owner, c.repo)
+	}
+}
+
+func TestNewChecker_InvalidOwnerRepo(t *testing.T) {
+	tests := []struct {
+		name  string
+		owner string
+		repo  string
+	}{
+		{"empty owner", "", "le_voile"},
+		{"empty repo", "velia-the-veil", ""},
+		{"path traversal owner", "../../evil", "le_voile"},
+		{"slash in repo", "velia", "le/voile"},
+		{"space in owner", "vel ia", "le_voile"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := NewChecker(tt.owner, tt.repo)
+			if err == nil {
+				t.Errorf("expected error for owner=%q repo=%q", tt.owner, tt.repo)
+			}
+		})
+	}
+}
+
 // roundTripFunc allows using a function as http.RoundTripper.
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
