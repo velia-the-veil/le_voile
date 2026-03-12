@@ -66,6 +66,12 @@ func NewPeriodicScheduler(
 	if interval == 0 {
 		panic("leakcheck: NewPeriodicScheduler: interval must not be zero")
 	}
+	if ks == nil {
+		panic("leakcheck: NewPeriodicScheduler: KillSwitchQuerier must not be nil")
+	}
+	if ts == nil {
+		panic("leakcheck: NewPeriodicScheduler: TunnelStateQuerier must not be nil")
+	}
 	return &PeriodicScheduler{
 		interval:    interval,
 		checker:     checker,

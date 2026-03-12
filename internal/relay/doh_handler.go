@@ -121,27 +121,21 @@ func (h *DoHHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp, err := h.forwardToUpstream(r.Context(), body)
-	if err != nil {
-		http.Error(w, "", http.StatusBadGateway)
-		return
-	}
-	defer resp.Body.Close()
-
-	respBody, err := io.ReadAll(resp.Body)
+	respBody, statusCode, err := h.forwardToUpstream(r.Context(), body)
 	if err != nil {
 		http.Error(w, "", http.StatusBadGateway)
 		return
 	}
 
 	w.Header().Set("Content-Type", dnsMessageContentType)
-	w.WriteHeader(resp.StatusCode)
-	w.Write(respBody)
+	w.WriteHeader(statusCode)
+	_, _ = w.Write(respBody)
 }
 
 // forwardToUpstream tries upstreams starting at activeIdx, falling back to the
 // next in the list on error. Updates activeIdx when a fallback succeeds.
-func (h *DoHHandler) forwardToUpstream(ctx context.Context, dnsQuery []byte) (*http.Response, error) {
+// Returns the buffered response body, its HTTP status code, or an error.
+func (h *DoHHandler) forwardToUpstream(ctx context.Context, dnsQuery []byte) ([]byte, int, error) {
 	// Cap total fallback time to upstreamTimeout regardless of upstream count.
 	ctx, cancel := context.WithTimeout(ctx, upstreamTimeout)
 	defer cancel()
@@ -153,51 +147,51 @@ func (h *DoHHandler) forwardToUpstream(ctx context.Context, dnsQuery []byte) (*h
 	n := len(h.upstreams)
 	for i := 0; i < n; i++ {
 		idx := (startIdx + i) % n
-		probeCtx, cancel := context.WithTimeout(ctx, fallbackTimeout)
-		resp, err := h.doRequest(probeCtx, h.upstreams[idx], dnsQuery)
-		cancel()
+		probeCtx, probeCancel := context.WithTimeout(ctx, fallbackTimeout)
+		body, status, err := h.doRequest(probeCtx, h.upstreams[idx], dnsQuery)
+		probeCancel()
 		if err == nil {
 			if idx != startIdx {
 				h.mu.Lock()
 				h.activeIdx = idx
 				h.mu.Unlock()
 			}
-			return resp, nil
+			return body, status, nil
 		}
 	}
-	return nil, ErrUpstreamUnavailable
+	return nil, 0, ErrUpstreamUnavailable
 }
 
 // doRequest sends a single DNS-over-HTTPS POST request to the given upstream URL.
-// It buffers the full response body while the context is still valid, then replaces
-// resp.Body with an in-memory reader so it remains accessible after context cancellation.
-func (h *DoHHandler) doRequest(ctx context.Context, upstream string, dnsQuery []byte) (*http.Response, error) {
+// It buffers the full response body while the context is still valid and returns
+// the body bytes and HTTP status code directly, avoiding intermediate allocations.
+func (h *DoHHandler) doRequest(ctx context.Context, upstream string, dnsQuery []byte) ([]byte, int, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, upstream, bytes.NewReader(dnsQuery))
 	if err != nil {
-		return nil, ErrUpstreamUnavailable
+		return nil, 0, ErrUpstreamUnavailable
 	}
 	req.Header.Set("Content-Type", dnsMessageContentType)
 	resp, err := h.client.Do(req)
 	if err != nil {
-		return nil, ErrUpstreamUnavailable
+		return nil, 0, ErrUpstreamUnavailable
 	}
 	defer resp.Body.Close()
 	bodyBytes, err := io.ReadAll(io.LimitReader(resp.Body, maxDNSBodySize+1))
 	if err != nil {
-		return nil, ErrUpstreamUnavailable
+		return nil, 0, ErrUpstreamUnavailable
 	}
 	if len(bodyBytes) > maxDNSBodySize {
-		return nil, ErrUpstreamUnavailable
+		return nil, 0, ErrUpstreamUnavailable
 	}
 	if resp.StatusCode >= 500 {
-		return nil, ErrUpstreamUnavailable
+		return nil, 0, ErrUpstreamUnavailable
 	}
-	resp.Body = io.NopCloser(bytes.NewReader(bodyBytes))
-	return resp, nil
+	return bodyBytes, resp.StatusCode, nil
 }
 
 // dnsProbeQuery is a minimal DNS wire-format query for "." type A,
 // used to probe upstream reachability with a valid payload.
+// Read-only; must not be modified.
 var dnsProbeQuery = []byte{
 	0x00, 0x00, // ID
 	0x01, 0x00, // Flags: standard query, RD
@@ -223,6 +217,7 @@ func (h *DoHHandler) isPrimaryReachable(ctx context.Context) bool {
 	if err != nil {
 		return false
 	}
+	_, _ = io.Copy(io.Discard, resp.Body)
 	resp.Body.Close()
 	return resp.StatusCode < 500
 }

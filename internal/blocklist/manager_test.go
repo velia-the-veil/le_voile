@@ -29,6 +29,32 @@ func newTestServerFunc(fn http.HandlerFunc) *httptest.Server {
 	return httptest.NewServer(fn)
 }
 
+// waitReady polls until the manager reports ready or the timeout expires.
+func waitReady(t *testing.T, m *Manager, timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if m.IsReady() {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("timed out waiting for manager to become ready")
+}
+
+// waitBlocked polls until the given domain is blocked or the timeout expires.
+func waitBlocked(t *testing.T, m *Manager, domain string, timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if m.IsBlocked(domain) {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for %s to be blocked", domain)
+}
+
 func TestManager_InitialDownload(t *testing.T) {
 	srv := newTestServer("0.0.0.0 ads.example.com\n0.0.0.0 tracker.io\n")
 	defer srv.Close()
@@ -42,14 +68,7 @@ func TestManager_InitialDownload(t *testing.T) {
 	}
 	defer m.Stop()
 
-	// Wait for initial download to complete.
-	deadline := time.Now().Add(3 * time.Second)
-	for time.Now().Before(deadline) {
-		if m.IsReady() {
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
+	waitReady(t, m, 3*time.Second)
 
 	if !m.IsBlocked("ads.example.com") {
 		t.Error("expected ads.example.com to be blocked")
@@ -72,13 +91,7 @@ func TestManager_IsBlocked_NotInList(t *testing.T) {
 	}
 	defer m.Stop()
 
-	deadline := time.Now().Add(3 * time.Second)
-	for time.Now().Before(deadline) {
-		if m.IsReady() {
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
+	waitReady(t, m, 3*time.Second)
 
 	if m.IsBlocked("clean.example.com") {
 		t.Error("clean.example.com should not be blocked")
@@ -111,28 +124,13 @@ func TestManager_AtomicSwap(t *testing.T) {
 	}
 	defer m.Stop()
 
-	// Wait for first download (list A).
-	deadline := time.Now().Add(3 * time.Second)
-	for time.Now().Before(deadline) {
-		if m.IsBlocked("list-a.com") {
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	if !m.IsBlocked("list-a.com") {
-		t.Fatal("list-a.com should be blocked after first download")
-	}
+	waitBlocked(t, m, "list-a.com", 3*time.Second)
 
-	// Wait for second download (list B).
-	deadline = time.Now().Add(3 * time.Second)
-	for time.Now().Before(deadline) {
-		if m.IsBlocked("list-b.com") {
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	if !m.IsBlocked("list-b.com") {
-		t.Fatal("list-b.com should be blocked after second download (atomic swap)")
+	waitBlocked(t, m, "list-b.com", 3*time.Second)
+
+	// Verify atomic REPLACEMENT (not merge): list-a.com must no longer be blocked.
+	if m.IsBlocked("list-a.com") {
+		t.Error("list-a.com should no longer be blocked after atomic swap to list B")
 	}
 }
 
@@ -164,17 +162,7 @@ func TestManager_FallbackOnError(t *testing.T) {
 	}
 	defer m.Stop()
 
-	// Wait for first download.
-	deadline := time.Now().Add(3 * time.Second)
-	for time.Now().Before(deadline) {
-		if m.IsBlocked("original.com") {
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	if !m.IsBlocked("original.com") {
-		t.Fatal("original.com should be blocked after first download")
-	}
+	waitBlocked(t, m, "original.com", 3*time.Second)
 
 	// Wait for the second (failing) request to complete via channel — no sleep.
 	select {

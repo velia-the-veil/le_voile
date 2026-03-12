@@ -97,7 +97,7 @@ func NewClient(relayDomain string, relayPubKeyBase64 string, opts ...ClientOptio
 				pinnedKey := c.relayPubKey
 				c.mu.RUnlock()
 				if err := lecrypto.VerifyEd25519CertPin(cert, pinnedKey); err != nil {
-					return ErrPinningFailed
+					return fmt.Errorf("%w: %v", ErrPinningFailed, err)
 				}
 				return nil
 			},

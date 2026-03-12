@@ -110,7 +110,7 @@ func (m *Manager) IsBlocked(domain string) bool {
 func (m *Manager) IsReady() bool {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	return len(m.domains) > 0
+	return !m.lastUpdate.IsZero()
 }
 
 // refresh downloads and parses the blocklist, then atomically swaps the in-memory map.
@@ -121,6 +121,9 @@ func (m *Manager) refresh(ctx context.Context) {
 		return
 	}
 	newDomains := parse(data)
+	if len(newDomains) == 0 {
+		return
+	}
 
 	m.mu.Lock()
 	m.domains = newDomains

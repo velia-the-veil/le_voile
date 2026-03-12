@@ -15,13 +15,7 @@ const blocklistURL = "https://raw.githubusercontent.com/StevenBlack/hosts/master
 // a malicious or misconfigured server.
 const maxBodyBytes = 10 * 1024 * 1024 // 10 MB
 
-// download fetches the blocklist from blocklistURL using the provided HTTP client.
-// Returns the raw body bytes or a wrapped error.
-func download(ctx context.Context, client *http.Client) ([]byte, error) {
-	return downloadFrom(ctx, client, blocklistURL)
-}
-
-// downloadFrom fetches the blocklist from the given URL. Extracted for testability.
+// downloadFrom fetches the blocklist from the given URL.
 func downloadFrom(ctx context.Context, client *http.Client, url string) ([]byte, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
@@ -35,12 +29,16 @@ func downloadFrom(ctx context.Context, client *http.Client, url string) ([]byte,
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
+		_, _ = io.Copy(io.Discard, resp.Body)
 		return nil, fmt.Errorf("blocklist: download: HTTP %d", resp.StatusCode)
 	}
 
 	data, err := io.ReadAll(io.LimitReader(resp.Body, maxBodyBytes))
 	if err != nil {
 		return nil, fmt.Errorf("blocklist: download: %w", err)
+	}
+	if len(data) >= maxBodyBytes {
+		return nil, fmt.Errorf("blocklist: download: response too large (>%d bytes)", maxBodyBytes)
 	}
 	return data, nil
 }

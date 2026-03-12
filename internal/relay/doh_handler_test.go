@@ -310,6 +310,25 @@ func TestDoHHandler_AllUpstreamsFail(t *testing.T) {
 	}
 }
 
+// TestDoHHandler_Start_SingleUpstream_NoOp verifies that Start is a no-op
+// when only one upstream is configured (no recovery goroutine launched).
+func TestDoHHandler_Start_SingleUpstream_NoOp(t *testing.T) {
+	handler := NewDoHHandler([]string{"https://localhost"}, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Start should return immediately without launching a goroutine.
+	handler.Start(ctx)
+
+	// Verify activeIdx is still 0 — no goroutine should touch it.
+	handler.mu.RLock()
+	active := handler.activeIdx
+	handler.mu.RUnlock()
+	if active != 0 {
+		t.Errorf("expected activeIdx=0 after no-op Start, got %d", active)
+	}
+}
+
 // TestDoHHandler_RecoveryToPrimary verifies that the recovery goroutine resets
 // activeIdx to 0 when the primary becomes reachable again.
 func TestDoHHandler_RecoveryToPrimary(t *testing.T) {

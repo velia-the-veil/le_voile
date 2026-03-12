@@ -63,17 +63,7 @@ func handleGetStatus(prg *svc.Program) ipc.Response {
 			resp.RollbackVersion = prg.RollbackVersion()
 			resp.RollbackReason = prg.RollbackReason()
 		}
-		// Leak scheduler is always nil when tc is nil (started after tunnel connects),
-		// but check explicitly so lifecycle changes don't silently omit leak status.
-		if scheduler := prg.LeakScheduler(); scheduler != nil {
-			result, checkAt := scheduler.LastResult()
-			if result == nil {
-				resp.LeakStatus = ipc.StatusLeakPending
-			} else {
-				resp.LeakStatus = result.Status
-				resp.LeakLastCheck = checkAt.Format(time.RFC3339)
-			}
-		}
+		fillLeakStatus(prg, &resp)
 		resp.BlocklistEnabled = prg.BlocklistActive()
 		return resp
 	}
@@ -97,18 +87,25 @@ func handleGetStatus(prg *svc.Program) ipc.Response {
 	}
 
 	// Include leak test state for tray polling (AC7).
-	if scheduler := prg.LeakScheduler(); scheduler != nil {
-		result, checkAt := scheduler.LastResult()
-		if result == nil {
-			resp.LeakStatus = ipc.StatusLeakPending
-		} else {
-			resp.LeakStatus = result.Status // "pass" or "fail"
-			resp.LeakLastCheck = checkAt.Format(time.RFC3339)
-		}
-	}
+	fillLeakStatus(prg, &resp)
 
 	resp.BlocklistEnabled = prg.BlocklistActive()
 	return resp
+}
+
+// fillLeakStatus populates LeakStatus and LeakLastCheck from the leak scheduler.
+func fillLeakStatus(prg *svc.Program, resp *ipc.Response) {
+	scheduler := prg.LeakScheduler()
+	if scheduler == nil {
+		return
+	}
+	result, checkAt := scheduler.LastResult()
+	if result == nil {
+		resp.LeakStatus = ipc.StatusLeakPending
+	} else {
+		resp.LeakStatus = result.Status
+		resp.LeakLastCheck = checkAt.Format(time.RFC3339)
+	}
 }
 
 func handleConnect(prg *svc.Program) ipc.Response {
