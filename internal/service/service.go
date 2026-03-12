@@ -388,6 +388,8 @@ func (p *Program) run() {
 		if p.tryRollbackIfNeeded(ctx, err) {
 			p.scheduleServiceRestart()
 		}
+		// Clean up tunnel client that never connected to avoid leaking resources.
+		p.tunnelClient = nil
 		return
 	} else if connectCancel != nil {
 		connectCancel()
@@ -759,11 +761,15 @@ func (p *Program) tryRollbackIfNeeded(ctx context.Context, tunnelErr error) bool
 		fmt.Fprintf(serviceStderr, "updater: rollback: clear state: %v\n", err)
 	}
 
-	// Update rollback status fields
+	// Update rollback status fields and clear stale install state.
+	// installedVersion is no longer accurate — the version was rolled back.
+	// Clearing it also prevents a spurious 30s tunnel timeout if the service
+	// is restarted in-process (justInstalled would otherwise still be true).
 	p.updateMu.Lock()
 	p.rollbackOccurred = true
 	p.rollbackVersion = state.InstalledVersion
 	p.rollbackReason = tunnelErr.Error()
+	p.installedVersion = ""
 	p.updateMu.Unlock()
 
 	fmt.Fprintf(serviceStderr, "updater: rollback: restored previous version (v%s failed: %v)\n", state.InstalledVersion, tunnelErr)

@@ -90,6 +90,28 @@ func TestConfig_RegistryDefaults(t *testing.T) {
 	}
 }
 
+func TestConfig_UpdateDefaults(t *testing.T) {
+	cfg, err := Load(filepath.Join(t.TempDir(), "nonexistent.toml"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !cfg.Update.Enabled {
+		t.Error("expected Update.Enabled to default to true")
+	}
+	if want := "6h"; cfg.Update.CheckInterval != want {
+		t.Errorf("Update.CheckInterval: got %q, want %q", cfg.Update.CheckInterval, want)
+	}
+	if want := 512; cfg.Update.RateLimitKBps != want {
+		t.Errorf("Update.RateLimitKBps: got %d, want %d", cfg.Update.RateLimitKBps, want)
+	}
+	if want := "velia-the-veil"; cfg.Update.GitHubOwner != want {
+		t.Errorf("Update.GitHubOwner: got %q, want %q", cfg.Update.GitHubOwner, want)
+	}
+	if want := "le_voile"; cfg.Update.GitHubRepo != want {
+		t.Errorf("Update.GitHubRepo: got %q, want %q", cfg.Update.GitHubRepo, want)
+	}
+}
+
 func TestConfig_DefaultPath(t *testing.T) {
 	p, err := DefaultPath()
 	if err != nil {
