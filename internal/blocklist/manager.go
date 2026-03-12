@@ -3,6 +3,8 @@ package blocklist
 import (
 	"context"
 	"errors"
+	"fmt"
+	"io"
 	"net/http"
 	"sync"
 	"time"
@@ -14,18 +16,21 @@ var ErrManagerAlreadyRunning = errors.New("blocklist: manager already running")
 // Manager downloads and maintains an in-memory DNS blocklist.
 // It performs an initial download on Start and refreshes at the configured interval.
 // The in-memory map is replaced atomically on each successful refresh.
-// On download failure the existing list remains active.
+// On download failure the existing list remains active and the error is tracked.
 type Manager struct {
 	httpClient *http.Client
 	url        string
 	interval   time.Duration
+	logger     io.Writer // error output writer; nil disables logging
 
-	mu         sync.RWMutex
-	domains    map[string]struct{}
-	lastUpdate time.Time
-	running    bool
-	cancel     context.CancelFunc
-	done       chan struct{}
+	mu              sync.RWMutex
+	domains         map[string]struct{}
+	lastUpdate      time.Time
+	lastError       string
+	consecutiveFails int
+	running         bool
+	cancel          context.CancelFunc
+	done            chan struct{}
 }
 
 // NewManager creates a Manager with a 30-second HTTP timeout and the given refresh interval.
@@ -113,20 +118,50 @@ func (m *Manager) IsReady() bool {
 	return !m.lastUpdate.IsZero()
 }
 
+// LastError returns the last refresh error message (empty if last refresh succeeded). Thread-safe.
+func (m *Manager) LastError() string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.lastError
+}
+
+// SetLogger sets the error output writer for refresh failure logging.
+func (m *Manager) SetLogger(w io.Writer) {
+	m.logger = w
+}
+
 // refresh downloads and parses the blocklist, then atomically swaps the in-memory map.
-// On error it silently retains the existing list.
+// On error it retains the existing list and logs the failure.
 func (m *Manager) refresh(ctx context.Context) {
 	data, err := downloadFrom(ctx, m.httpClient, m.url)
 	if err != nil {
+		m.mu.Lock()
+		m.consecutiveFails++
+		m.lastError = err.Error()
+		fails := m.consecutiveFails
+		m.mu.Unlock()
+		if m.logger != nil {
+			fmt.Fprintf(m.logger, "blocklist: refresh failed (%d consecutive): %v\n", fails, err)
+		}
 		return
 	}
 	newDomains := parse(data)
 	if len(newDomains) == 0 {
+		m.mu.Lock()
+		m.consecutiveFails++
+		m.lastError = "parsed 0 domains from response"
+		fails := m.consecutiveFails
+		m.mu.Unlock()
+		if m.logger != nil {
+			fmt.Fprintf(m.logger, "blocklist: refresh produced 0 domains (%d consecutive)\n", fails)
+		}
 		return
 	}
 
 	m.mu.Lock()
 	m.domains = newDomains
 	m.lastUpdate = time.Now()
+	m.consecutiveFails = 0
+	m.lastError = ""
 	m.mu.Unlock()
 }

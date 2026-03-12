@@ -26,6 +26,7 @@ func NewPlatformListener() Listener {
 }
 
 // Listen starts listening on the unix socket. Removes stale socket first.
+// The socket file is created with 0o700 permissions to restrict access to the owner.
 func (pl *platformListener) Listen() (net.Listener, error) {
 	// Remove stale socket file if it exists.
 	os.Remove(SocketPath)
@@ -34,6 +35,9 @@ func (pl *platformListener) Listen() (net.Listener, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Restrict socket permissions to owner-only to prevent other local users
+	// from connecting and sending IPC commands (e.g., disconnect, quit).
+	os.Chmod(SocketPath, 0o700)
 	pl.listener = l
 	return l, nil
 }

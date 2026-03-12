@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 )
 
 // ExeDir returns the directory of the current executable.
@@ -35,11 +36,18 @@ func DiscoverPath(flagPath string) string {
 // DiscoverPortablePath determines which config file to use for the portable binary.
 // Priority: 1) config.toml next to executable, 2) empty string (use internal defaults).
 // No AppData fallback — avoids loading the installed version's config accidentally.
+// On Unix, rejects world-writable config files to prevent local privilege escalation.
 func DiscoverPortablePath() string {
 	exeDir := ExeDir()
 	if exeDir != "" {
 		candidate := filepath.Join(exeDir, "config.toml")
-		if _, err := os.Stat(candidate); err == nil {
+		info, err := os.Stat(candidate)
+		if err == nil {
+			// Reject world-writable config on Unix to prevent config injection
+			// when the portable binary runs from a shared directory.
+			if runtime.GOOS != "windows" && info.Mode()&0o002 != 0 {
+				return ""
+			}
 			return candidate
 		}
 	}

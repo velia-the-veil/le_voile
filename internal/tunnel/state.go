@@ -20,10 +20,12 @@ type StateManager struct {
 }
 
 // NewStateManager creates a StateManager with initial state disconnected.
+// The updates channel is buffered to reduce the chance of dropped state
+// transitions between rapid state changes.
 func NewStateManager() *StateManager {
 	return &StateManager{
 		current: StateDisconnected,
-		updates: make(chan ConnState, 1),
+		updates: make(chan ConnState, 4),
 	}
 }
 

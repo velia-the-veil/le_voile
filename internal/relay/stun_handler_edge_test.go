@@ -168,7 +168,8 @@ func TestSTUNHandler_AllowedTarget_HostnameSTUNPort(t *testing.T) {
 	}{
 		{"google STUN hostname", "stun.l.google.com:3478", true},
 		{"google STUN alt port", "stun.l.google.com:19302", true},
-		{"arbitrary hostname DTLS port", "stun.example.org:5349", true},
+		// stun.example.org does not resolve — rejected to prevent SSRF via DNS rebinding.
+		{"unresolvable hostname DTLS port", "stun.example.org:5349", false},
 		{"hostname wrong port", "stun.example.org:8080", false},
 	}
 

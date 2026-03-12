@@ -152,6 +152,9 @@ func handleDisconnect(prg *svc.Program) ipc.Response {
 }
 
 func handleSetAutoStart(prg *svc.Program, req ipc.Request, opts Options) ipc.Response {
+	if req.Value != "true" && req.Value != "false" {
+		return ipc.Response{Status: ipc.StatusError, Error: "invalid_value: must be \"true\" or \"false\""}
+	}
 	autoStart := req.Value == "true"
 
 	cfgPath := opts.ConfigPathFn()

@@ -158,7 +158,7 @@ func (inst *Installer) Install(ctx context.Context, staged *StagedUpdate) error 
 		return fmt.Errorf("updater: install: copy staged binary: %w", err)
 	}
 
-	// 4. Verify new binary is accessible and has correct permissions
+	// 4. Verify new binary is accessible, non-empty, and executable
 	info, err := os.Stat(inst.executablePath)
 	if err != nil {
 		renameWithRetry(backupPath, inst.executablePath)
@@ -167,6 +167,14 @@ func (inst *Installer) Install(ctx context.Context, staged *StagedUpdate) error 
 	if info.Size() == 0 {
 		renameWithRetry(backupPath, inst.executablePath)
 		return fmt.Errorf("updater: install: new binary is empty")
+	}
+	// Ensure executable permission on Unix (atomicCopyFile preserves mode,
+	// but verify in case the staged binary was created without +x).
+	if runtime.GOOS != "windows" && info.Mode()&0o111 == 0 {
+		if chmodErr := os.Chmod(inst.executablePath, info.Mode()|0o755); chmodErr != nil {
+			renameWithRetry(backupPath, inst.executablePath)
+			return fmt.Errorf("updater: install: set executable permission: %w", chmodErr)
+		}
 	}
 
 	// 5. Clean up staging directory

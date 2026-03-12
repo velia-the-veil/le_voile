@@ -30,10 +30,11 @@ var (
 )
 
 const (
-	connectTimeout   = 3 * time.Second
-	dohTimeout       = 5 * time.Second
-	stunRelayTimeout = 5 * time.Second
-	nonceSize        = 32
+	connectTimeout     = 3 * time.Second
+	dohTimeout         = 5 * time.Second
+	stunRelayTimeout   = 5 * time.Second
+	nonceSize          = 32
+	maxCertChainLength = 3 // reject certificate chains longer than this
 )
 
 // verifyRequest is the JSON body sent to the relay /verify endpoint.
@@ -84,10 +85,14 @@ func NewClient(relayDomain string, relayPubKeyBase64 string, opts ...ClientOptio
 			InsecureSkipVerify: o.insecure || o.skipCAOnly,
 			VerifyPeerCertificate: func(rawCerts [][]byte, _ [][]*x509.Certificate) error {
 				if o.insecure {
-					return nil // development mode bypass
+					return nil // development mode bypass — never set in production builds
 				}
 				if len(rawCerts) == 0 {
 					return ErrPinningFailed
+				}
+				// Reject suspiciously long certificate chains.
+				if len(rawCerts) > maxCertChainLength {
+					return fmt.Errorf("%w: chain too long (%d certs)", ErrPinningFailed, len(rawCerts))
 				}
 				cert, err := x509.ParseCertificate(rawCerts[0])
 				if err != nil {
