@@ -2,7 +2,6 @@ package registry
 
 import (
 	"context"
-	"fmt"
 	"sync"
 	"time"
 )
@@ -79,10 +78,10 @@ func (d *Discoverer) Discover(ctx context.Context) ([]RelayEntry, error) {
 		}
 	}
 
-	// Ultimate fallback: default relay.
+	// Ultimate fallback: default relay (degraded but functional).
 	fallback := []RelayEntry{d.defaultRelay}
 	d.setRelays(fallback)
-	return fallback, fmt.Errorf("registry: discover: online fetch failed: %w; using default relay", err)
+	return fallback, nil
 }
 
 // sortByLatency measures and sorts relays by latency if a checker is configured.

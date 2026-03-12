@@ -112,9 +112,9 @@ func TestDiscoverer_Discover_OfflineNoCache(t *testing.T) {
 	disc := NewDiscoverer(client, cache, defaultRelay)
 
 	relays, err := disc.Discover(context.Background())
-	// Error is expected (but fallback to default is returned).
-	if err == nil {
-		t.Error("expected error when both fetch and cache fail")
+	// No error: fallback to default relay is a degraded success, not a failure.
+	if err != nil {
+		t.Errorf("unexpected error: %v", err)
 	}
 	if len(relays) != 1 || relays[0].Domain != "default.example.com" {
 		t.Errorf("expected default relay, got %+v", relays)

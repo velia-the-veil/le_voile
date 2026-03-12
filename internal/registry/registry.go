@@ -56,6 +56,11 @@ func Parse(data []byte) (*Registry, error) {
 	if len(reg.Relays) == 0 {
 		return nil, ErrRegistryEmpty
 	}
+	for i, r := range reg.Relays {
+		if r.ID == "" || r.Domain == "" || r.PublicKey == "" || r.Signature == "" {
+			return nil, fmt.Errorf("registry: parse: relay %d has empty required field", i)
+		}
+	}
 	return &reg, nil
 }
 

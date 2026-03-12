@@ -44,8 +44,9 @@ func WithRefreshInterval(d time.Duration) ClientOption {
 // NewClient creates a registry client that fetches from the given URL and
 // verifies relay signatures against the master public key.
 func NewClient(registryURL string, masterPubKeyBase64 string, opts ...ClientOption) (*Client, error) {
-	if _, err := url.Parse(registryURL); err != nil {
-		return nil, fmt.Errorf("registry: client: invalid registry URL: %w", err)
+	parsedURL, err := url.Parse(registryURL)
+	if err != nil || parsedURL.Scheme == "" || parsedURL.Host == "" {
+		return nil, fmt.Errorf("registry: client: invalid registry URL %q", registryURL)
 	}
 
 	keyBytes, err := base64.StdEncoding.DecodeString(masterPubKeyBase64)
@@ -108,12 +109,17 @@ func (c *Client) Fetch(ctx context.Context) ([]RelayEntry, error) {
 
 	reg, err := Parse(body)
 	if err != nil {
-		return nil, fmt.Errorf("registry: fetch: %w", err)
+		return nil, err
 	}
+
+	// Use the client's trusted master key, NOT the registry response key.
+	// This prevents an attacker who controls the registry endpoint from
+	// supplying their own master key and signing malicious relays.
+	reg.MasterPublicKey = c.masterPubKeyBase64
 
 	verified, err := reg.VerifyAll()
 	if err != nil {
-		return nil, fmt.Errorf("registry: fetch: %w", err)
+		return nil, err
 	}
 
 	// Sort by Added descending (most recent first).
