@@ -33,6 +33,9 @@ coverage.html
 *.swo
 *~
 
+# Runtime config (may contain credentials)
+config.toml
+
 # OS files
 .DS_Store
 Thumbs.db

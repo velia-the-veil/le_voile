@@ -28,9 +28,11 @@ func (l *Limiter) Acquire() bool {
 	return true
 }
 
-// Release releases a connection slot.
+// Release releases a connection slot. Guards against underflow from double-release bugs.
 func (l *Limiter) Release() {
-	l.current.Add(-1)
+	if n := l.current.Add(-1); n < 0 {
+		l.current.Add(1) // restore to prevent further corruption
+	}
 }
 
 // Current returns the current number of active connections.

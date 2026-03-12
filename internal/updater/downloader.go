@@ -21,6 +21,12 @@ const (
 	allowedDownloadPathPrefix   = "/velia-the-veil/le_voile/releases"
 )
 
+// allowedRedirectHosts are hosts that GitHub legitimately redirects release downloads to.
+var allowedRedirectHosts = map[string]bool{
+	"github.com":                     true,
+	"objects.githubusercontent.com":  true,
+}
+
 // StagedUpdate holds paths to downloaded and verified update files.
 type StagedUpdate struct {
 	BinaryPath    string
@@ -44,7 +50,21 @@ func NewDownloader(stagingDir string) (*Downloader, error) {
 		return nil, fmt.Errorf("updater: downloader: create staging dir: %w", err)
 	}
 	return &Downloader{
-		httpClient: &http.Client{Timeout: 10 * time.Minute},
+		httpClient: &http.Client{
+			Timeout: 10 * time.Minute,
+			CheckRedirect: func(req *http.Request, via []*http.Request) error {
+				if req.URL.Scheme != "https" {
+					return fmt.Errorf("updater: redirect to non-HTTPS: %s", req.URL)
+				}
+				if !allowedRedirectHosts[req.URL.Host] {
+					return fmt.Errorf("updater: redirect to disallowed host: %s", req.URL.Host)
+				}
+				if len(via) >= 10 {
+					return fmt.Errorf("updater: too many redirects")
+				}
+				return nil
+			},
+		},
 		rateLimit:  defaultRateLimitBytesPerSec,
 		stagingDir: stagingDir,
 	}, nil

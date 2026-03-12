@@ -5,6 +5,7 @@ package dns
 import (
 	"context"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"strings"
@@ -90,19 +91,5 @@ func discoverInterfaces(ctx context.Context) []string {
 }
 
 func isIPAddr(s string) bool {
-	parts := strings.Split(s, ".")
-	if len(parts) != 4 {
-		return false
-	}
-	for _, p := range parts {
-		if len(p) == 0 || len(p) > 3 {
-			return false
-		}
-		for _, c := range p {
-			if c < '0' || c > '9' {
-				return false
-			}
-		}
-	}
-	return true
+	return net.ParseIP(s) != nil
 }

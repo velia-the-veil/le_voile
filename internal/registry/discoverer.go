@@ -67,11 +67,12 @@ func (d *Discoverer) Discover(ctx context.Context) ([]RelayEntry, error) {
 	}
 
 	// Fallback: try loading from cache.
-	cached, masterKey, cacheErr := d.cache.Load()
+	cached, _, cacheErr := d.cache.Load()
 	if cacheErr == nil && len(cached) > 0 {
-		// Re-verify cached entries.
+		// Re-verify cached entries using the trusted master key from the client,
+		// NOT the key stored in the cache file (which could be attacker-controlled).
 		reg := &Registry{
-			MasterPublicKey: masterKey,
+			MasterPublicKey: d.client.MasterPublicKeyBase64(),
 			Relays:          cached,
 		}
 		verified, verifyErr := reg.VerifyAll()

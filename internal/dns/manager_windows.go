@@ -75,7 +75,7 @@ func (m *windowsManager) SetResolver(ctx context.Context, addr string) error {
 
 		// Set IPv4 DNS
 		out, err := m.run(ctx, "netsh", "interface", "ip", "set", "dns",
-			fmt.Sprintf("name=%s", iface), "static", addr)
+			fmt.Sprintf(`name="%s"`, iface), "static", addr)
 		if err != nil {
 			m.rollback(ctx, modified)
 			m.originalDNS = nil
@@ -85,7 +85,7 @@ func (m *windowsManager) SetResolver(ctx context.Context, addr string) error {
 
 		// Set IPv6 DNS to ::1 to prevent IPv6 DNS bypass
 		m.run(ctx, "netsh", "interface", "ipv6", "set", "dns",
-			fmt.Sprintf("name=%s", iface), "static", "::1")
+			fmt.Sprintf(`name="%s"`, iface), "static", "::1")
 
 		modified = append(modified, iface)
 	}
@@ -96,7 +96,7 @@ func (m *windowsManager) SetResolver(ctx context.Context, addr string) error {
 // rollback restores already-modified interfaces to their original DNS on SetResolver failure.
 func (m *windowsManager) rollback(ctx context.Context, modified []string) {
 	for _, iface := range modified {
-		nameArg := fmt.Sprintf("name=%s", iface)
+		nameArg := fmt.Sprintf(`name="%s"`, iface)
 
 		// Restore IPv4
 		original := m.originalDNS[iface]
@@ -127,7 +127,7 @@ func (m *windowsManager) RestoreResolver(ctx context.Context) error {
 
 	var lastErr error
 	for iface, original := range m.originalDNS {
-		nameArg := fmt.Sprintf("name=%s", iface)
+		nameArg := fmt.Sprintf(`name="%s"`, iface)
 
 		// Restore IPv4
 		var out []byte

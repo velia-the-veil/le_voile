@@ -79,14 +79,18 @@ func main() {
 
 	// 4. Create the Program (inline service).
 	svcCfg := svc.Config{
-		RelayDomain:       cfg.Relay.Domain,
-		RelayPubKey:       cfg.Relay.PublicKeyEd25519,
-		Insecure:          cfg.Relay.Insecure,
-		STUNDefaultServer: cfg.STUN.DefaultServer,
-		UpdateEnabled:     cfg.Update.Enabled,
-		UpdateOwner:       cfg.Update.GitHubOwner,
-		UpdateRepo:        cfg.Update.GitHubRepo,
-		UpdateRateLimit:   int64(cfg.Update.RateLimitKBps) * 1024,
+		RelayDomain:          cfg.Relay.Domain,
+		RelayPubKey:          cfg.Relay.PublicKeyEd25519,
+		Insecure:             cfg.Relay.Insecure,
+		STUNDefaultServer:    cfg.STUN.DefaultServer,
+		UpdateEnabled:        cfg.Update.Enabled,
+		UpdateOwner:          cfg.Update.GitHubOwner,
+		UpdateRepo:           cfg.Update.GitHubRepo,
+		UpdateRateLimit:      int64(cfg.Update.RateLimitKBps) * 1024,
+		BlocklistEnabled:     cfg.Blocklist.Enabled,
+		RegistryEnabled:      cfg.Registry.Enabled,
+		RegistryURL:          cfg.Registry.URL,
+		RegistryMasterPubKey: cfg.Registry.MasterPublicKey,
 	}
 	if cfg.Update.CheckInterval != "" {
 		d, err := time.ParseDuration(cfg.Update.CheckInterval)
@@ -103,6 +107,18 @@ func main() {
 			os.Exit(1)
 		}
 		svcCfg.UpdateStagingDir = stagingDir
+	}
+	if cfg.Blocklist.UpdateInterval != "" {
+		d, err := time.ParseDuration(cfg.Blocklist.UpdateInterval)
+		if err == nil {
+			svcCfg.BlocklistInterval = d
+		}
+	}
+	if cfg.Registry.RefreshInterval != "" {
+		d, err := time.ParseDuration(cfg.Registry.RefreshInterval)
+		if err == nil {
+			svcCfg.RegistryRefreshInterval = d
+		}
 	}
 	prg := svc.NewProgram(svcCfg)
 
@@ -126,8 +142,10 @@ func main() {
 	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
 	go func() {
 		<-sigCh
+		// Stop blocks until shutdown() completes (including DNS restoration).
+		// The tray.Run() loop will eventually exit, and defer prg.Stop handles
+		// the normal path. For signal shutdown, we stop the tray to unblock main.
 		prg.Stop(nil)
-		os.Exit(0)
 	}()
 
 	// 7. Start the service in a goroutine (non-blocking).

@@ -3,8 +3,10 @@
 package ipc
 
 import (
+	"fmt"
 	"net"
 	"os"
+	"syscall"
 )
 
 // SocketPath is the unix socket path on Linux/macOS.
@@ -28,16 +30,32 @@ func NewPlatformListener() Listener {
 // Listen starts listening on the unix socket. Removes stale socket first.
 // The socket file is created with 0o700 permissions to restrict access to the owner.
 func (pl *platformListener) Listen() (net.Listener, error) {
-	// Remove stale socket file if it exists.
-	os.Remove(SocketPath)
+	// Check for symlink before removing — prevent symlink attacks in /tmp.
+	if info, err := os.Lstat(SocketPath); err == nil {
+		if info.Mode()&os.ModeSymlink != 0 {
+			return nil, fmt.Errorf("ipc: socket path %s is a symlink, refusing to proceed", SocketPath)
+		}
+		// Only remove stale sockets or regular files, not symlinks.
+		if info.Mode()&os.ModeSocket != 0 || info.Mode().IsRegular() {
+			os.Remove(SocketPath)
+		}
+	}
 
+	// Set umask to restrict socket permissions at creation time.
+	oldUmask := syscall.Umask(0o077)
 	l, err := net.Listen("unix", SocketPath)
+	syscall.Umask(oldUmask)
 	if err != nil {
 		return nil, err
 	}
-	// Restrict socket permissions to owner-only to prevent other local users
-	// from connecting and sending IPC commands (e.g., disconnect, quit).
-	os.Chmod(SocketPath, 0o700)
+
+	// Verify socket permissions after creation.
+	if err := os.Chmod(SocketPath, 0o700); err != nil {
+		l.Close()
+		os.Remove(SocketPath)
+		return nil, fmt.Errorf("ipc: chmod socket: %w", err)
+	}
+
 	pl.listener = l
 	return l, nil
 }

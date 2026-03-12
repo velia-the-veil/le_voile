@@ -449,13 +449,17 @@ func (t *Tray) connectAndPoll(ctx context.Context) {
 				}
 			}
 			// Detect leak from periodic auto-test (AC3).
+			t.mu.Lock()
+			wasLeakActive := t.leakAlertActive
 			if resp.LeakStatus == ipc.StatusLeakFail && !t.leakAlertActive {
 				t.leakAlertActive = true
+			} else if resp.LeakStatus == ipc.StatusLeakPass && t.leakAlertActive {
+				t.leakAlertActive = false
+			}
+			t.mu.Unlock()
+			if resp.LeakStatus == ipc.StatusLeakFail && !wasLeakActive {
 				t.api.SetTooltip("⚠ Fuite détectée — vérification en cours")
 				go t.restoreTooltipAfter(ctx, 30*time.Second)
-			} else if resp.LeakStatus == ipc.StatusLeakPass && t.leakAlertActive {
-				// Recovery: clear flag; restoreTooltipAfter already handles tooltip restore.
-				t.leakAlertActive = false
 			}
 		}
 	}
@@ -490,7 +494,9 @@ func (t *Tray) handleIPCError(ctx context.Context, err error) {
 	// Reset leak alert flag so future leaks detected after reconnect are notified.
 	// Without this reset, a leak alert active at the time of disconnect would
 	// permanently suppress all future alerts (leakAlertActive stays true).
+	t.mu.Lock()
 	t.leakAlertActive = false
+	t.mu.Unlock()
 
 	t.api.SetIcon(IconDisconnected)
 	t.api.SetTooltip(fmt.Sprintf("Non protégé — %s", err))

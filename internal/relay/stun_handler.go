@@ -69,7 +69,9 @@ func (h *STUNHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !h.isAllowedTarget(target) {
+	// Resolve and validate target; use the resolved address to prevent DNS rebinding.
+	resolvedAddr, ok := h.resolveAndValidateTarget(target)
+	if !ok {
 		http.Error(w, "", http.StatusForbidden)
 		return
 	}
@@ -95,7 +97,7 @@ func (h *STUNHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp, err := h.forwardToSTUN(body, target)
+	resp, err := h.forwardToSTUN(body, resolvedAddr)
 	if err != nil {
 		http.Error(w, "", http.StatusBadGateway)
 		return
@@ -106,49 +108,51 @@ func (h *STUNHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Write(resp)
 }
 
-// isAllowedTarget validates that the target address uses an allowed STUN port
-// and is not a private/loopback IP address.
-// Hostnames are resolved immediately to prevent DNS rebinding and SSRF bypasses.
-func (h *STUNHandler) isAllowedTarget(target string) bool {
+// resolveAndValidateTarget validates the target address and returns a resolved
+// *net.UDPAddr to eliminate TOCTOU DNS rebinding. Returns (nil, false) if the
+// target is not allowed.
+func (h *STUNHandler) resolveAndValidateTarget(target string) (*net.UDPAddr, bool) {
 	host, portStr, err := net.SplitHostPort(target)
 	if err != nil {
-		return false
+		return nil, false
 	}
 
 	port, err := strconv.Atoi(portStr)
 	if err != nil {
-		return false
+		return nil, false
 	}
 
 	if !allowedSTUNPorts[port] && port != h.TestAllowPort {
-		return false
+		return nil, false
 	}
 
 	if host == "" {
-		return false
+		return nil, false
 	}
 
-	// Block private/loopback IPs to prevent SSRF.
+	// Resolve hostnames to IPs immediately to prevent DNS rebinding attacks.
+	// If host is already an IP, ParseIP succeeds; otherwise resolve via DNS.
 	skipIPCheck := testSkipIPValidation || h.TestSkipIPCheck
-	if !skipIPCheck {
-		// Resolve hostnames to IPs immediately to prevent DNS rebinding attacks.
-		// If host is already an IP, ParseIP succeeds; otherwise resolve via DNS.
-		ips := []net.IP{net.ParseIP(host)}
-		if ips[0] == nil {
-			resolved, err := net.LookupIP(host)
-			if err != nil || len(resolved) == 0 {
-				return false
-			}
-			ips = resolved
+	ips := []net.IP{net.ParseIP(host)}
+	if ips[0] == nil {
+		resolved, lookupErr := net.LookupIP(host)
+		if lookupErr != nil || len(resolved) == 0 {
+			return nil, false
 		}
+		ips = resolved
+	}
+
+	if !skipIPCheck {
+		// Block private/loopback IPs to prevent SSRF.
 		for _, ip := range ips {
 			if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsUnspecified() {
-				return false
+				return nil, false
 			}
 		}
 	}
 
-	return true
+	// Use the first resolved IP directly — no second DNS lookup.
+	return &net.UDPAddr{IP: ips[0], Port: port}, true
 }
 
 // isValidSTUNPacket performs minimal STUN validation: checks size, first 2 bits,
@@ -165,12 +169,8 @@ func isValidSTUNPacket(packet []byte) bool {
 	return cookie == stunMagicCookie
 }
 
-func (h *STUNHandler) forwardToSTUN(packet []byte, target string) ([]byte, error) {
-	addr, err := net.ResolveUDPAddr("udp", target)
-	if err != nil {
-		return nil, fmt.Errorf("relay: stun: resolve: %w", err)
-	}
-
+// forwardToSTUN sends a STUN packet to the already-resolved UDP address.
+func (h *STUNHandler) forwardToSTUN(packet []byte, addr *net.UDPAddr) ([]byte, error) {
 	conn, err := net.DialUDP("udp", nil, addr)
 	if err != nil {
 		return nil, fmt.Errorf("relay: stun: dial: %w", err)

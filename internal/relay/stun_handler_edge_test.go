@@ -177,9 +177,9 @@ func TestSTUNHandler_AllowedTarget_HostnameSTUNPort(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			got := h.isAllowedTarget(tt.target)
+			_, got := h.resolveAndValidateTarget(tt.target)
 			if got != tt.want {
-				t.Errorf("isAllowedTarget(%q) = %v, want %v", tt.target, got, tt.want)
+				t.Errorf("resolveAndValidateTarget(%q) = %v, want %v", tt.target, got, tt.want)
 			}
 		})
 	}
@@ -204,9 +204,9 @@ func TestSTUNHandler_AllowedTarget_IPv6(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			got := h.isAllowedTarget(tt.target)
+			_, got := h.resolveAndValidateTarget(tt.target)
 			if got != tt.want {
-				t.Errorf("isAllowedTarget(%q) = %v, want %v", tt.target, got, tt.want)
+				t.Errorf("resolveAndValidateTarget(%q) = %v, want %v", tt.target, got, tt.want)
 			}
 		})
 	}
