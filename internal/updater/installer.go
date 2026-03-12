@@ -289,17 +289,10 @@ func atomicCopyFile(src, dst string) error {
 	}
 
 	// Rename with retry for Windows (antivirus may temporarily lock the file)
-	var renameErr error
-	for i := 0; i < renameRetries; i++ {
-		renameErr = os.Rename(tmpDst, dst)
-		if renameErr == nil {
-			return nil
-		}
-		if i < renameRetries-1 {
-			time.Sleep(renameRetryDelay)
-		}
+	if err := renameWithRetry(tmpDst, dst); err != nil {
+		os.Remove(tmpDst)
+		return fmt.Errorf("rename: %w", err)
 	}
 
-	os.Remove(tmpDst)
-	return fmt.Errorf("rename: %w", renameErr)
+	return nil
 }

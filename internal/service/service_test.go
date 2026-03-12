@@ -426,6 +426,9 @@ func TestService_TryRollbackIfNeeded_AfterInstall(t *testing.T) {
 	inst := updater.NewInstallerWithPath(stagingDir, exePath, nil)
 	prg.installer = inst
 
+	// Simulate that tryInstallStagedUpdate set installedVersion (as in real flow)
+	prg.SetInstalledVersion("2.1.0")
+
 	tunnelErr := context.DeadlineExceeded
 	result := prg.tryRollbackIfNeeded(context.Background(), tunnelErr)
 	if !result {
@@ -441,6 +444,11 @@ func TestService_TryRollbackIfNeeded_AfterInstall(t *testing.T) {
 	}
 	if prg.RollbackReason() == "" {
 		t.Error("RollbackReason should not be empty")
+	}
+	// installedVersion must be cleared after rollback — the version is no longer
+	// installed and a stale value would cause a spurious 30s tunnel timeout.
+	if prg.InstalledVersion() != "" {
+		t.Errorf("InstalledVersion should be empty after rollback, got %q", prg.InstalledVersion())
 	}
 
 	// Verify old binary restored

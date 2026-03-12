@@ -15,6 +15,7 @@ const (
 	retryIntervalOnNetwork    = 30 * time.Minute
 	retryIntervalOnIntegrity  = 1 * time.Hour
 	maxConsecutiveRetries     = 3
+	cycleTimeout              = 10 * time.Minute
 )
 
 // UpdaterConfig holds configuration for the Updater.
@@ -101,7 +102,9 @@ func (u *Updater) Start(ctx context.Context) error {
 
 	consecutiveFailures := 0
 	for {
-		_, err := u.CheckAndDownload(ctx)
+		cycleCtx, cycleCancel := context.WithTimeout(ctx, cycleTimeout)
+		_, err := u.CheckAndDownload(cycleCtx)
+		cycleCancel()
 		if err != nil {
 			consecutiveFailures++
 			var wait time.Duration
