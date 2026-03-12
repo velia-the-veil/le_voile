@@ -22,6 +22,7 @@ type Client struct {
 	masterPubKeyBase64 string
 	httpClient         *http.Client
 	refreshInterval    time.Duration
+	allowHTTP          bool // test-only: bypass HTTPS enforcement
 }
 
 // ClientOption configures the Client.
@@ -41,11 +42,17 @@ func WithRefreshInterval(d time.Duration) ClientOption {
 	}
 }
 
+// withAllowHTTP is a test-only option that bypasses the HTTPS enforcement.
+// Exported only within the package for test use.
+var withAllowHTTP = func(cl *Client) {
+	cl.allowHTTP = true
+}
+
 // NewClient creates a registry client that fetches from the given URL and
 // verifies relay signatures against the master public key.
 func NewClient(registryURL string, masterPubKeyBase64 string, opts ...ClientOption) (*Client, error) {
 	parsedURL, err := url.Parse(registryURL)
-	if err != nil || parsedURL.Scheme == "" || parsedURL.Host == "" {
+	if err != nil || parsedURL.Host == "" {
 		return nil, fmt.Errorf("registry: client: invalid registry URL %q", registryURL)
 	}
 
@@ -69,6 +76,12 @@ func NewClient(registryURL string, masterPubKeyBase64 string, opts ...ClientOpti
 	for _, opt := range opts {
 		opt(c)
 	}
+
+	// Enforce HTTPS in production. Tests can bypass via withAllowHTTP.
+	if parsedURL.Scheme != "https" && !c.allowHTTP {
+		return nil, fmt.Errorf("registry: client: registry URL must use HTTPS, got %q", parsedURL.Scheme)
+	}
+
 	return c, nil
 }
 

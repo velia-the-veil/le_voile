@@ -96,6 +96,7 @@ func (c *WebRTCLeakChecker) CheckSTUNLeak(ctx context.Context, stunServer string
 
 	// Build STUN Binding Request.
 	req := BuildBindingRequest()
+	txnID := req[8:20] // 12-byte Transaction ID
 
 	// Send request.
 	if _, err := conn.Write(req); err != nil {
@@ -107,6 +108,16 @@ func (c *WebRTCLeakChecker) CheckSTUNLeak(ctx context.Context, stunServer string
 	n, err := conn.Read(buf)
 	if err != nil {
 		return nil, fmt.Errorf("leakcheck: stun: read %s: %w", stunServer, err)
+	}
+
+	// Validate response transaction ID matches our request to prevent spoofed responses.
+	if n < 20 {
+		return nil, fmt.Errorf("leakcheck: stun: response too short from %s", stunServer)
+	}
+	for i := 0; i < 12; i++ {
+		if buf[8+i] != txnID[i] {
+			return nil, fmt.Errorf("leakcheck: stun: transaction ID mismatch from %s", stunServer)
+		}
 	}
 
 	// Parse XOR-MAPPED-ADDRESS from response.

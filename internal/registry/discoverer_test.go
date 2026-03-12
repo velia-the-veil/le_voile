@@ -20,7 +20,7 @@ func TestDiscoverer_Discover_OnlineSuccess(t *testing.T) {
 	defer srv.Close()
 
 	masterB64 := base64.StdEncoding.EncodeToString(masterPub)
-	client, err := NewClient(srv.URL, masterB64)
+	client, err := NewClient(srv.URL, masterB64, withAllowHTTP)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,7 +75,7 @@ func TestDiscoverer_Discover_OfflineFallbackCache(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client, err := NewClient(srv.URL, masterB64)
+	client, err := NewClient(srv.URL, masterB64, withAllowHTTP)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -101,7 +101,7 @@ func TestDiscoverer_Discover_OfflineNoCache(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client, err := NewClient(srv.URL, masterB64)
+	client, err := NewClient(srv.URL, masterB64, withAllowHTTP)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -154,7 +154,7 @@ func TestDiscoverer_Start_PeriodicRefresh(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client, err := NewClient(srv.URL, masterB64, WithRefreshInterval(50*time.Millisecond))
+	client, err := NewClient(srv.URL, masterB64, WithRefreshInterval(50*time.Millisecond), withAllowHTTP)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -205,7 +205,7 @@ func TestDiscoverer_WithLatencyChecker_SortsRelays(t *testing.T) {
 	regSrv := serveRegistry(t, masterPub, entries)
 	defer regSrv.Close()
 
-	client, err := NewClient(regSrv.URL, masterB64)
+	client, err := NewClient(regSrv.URL, masterB64, withAllowHTTP)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -251,7 +251,7 @@ func TestDiscoverer_LatencyFallbackToCache(t *testing.T) {
 	regSrv := serveRegistry(t, masterPub, entries)
 	defer regSrv.Close()
 
-	client, err := NewClient(regSrv.URL, masterB64)
+	client, err := NewClient(regSrv.URL, masterB64, withAllowHTTP)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -301,7 +301,7 @@ func TestDiscoverer_Relays_ThreadSafe(t *testing.T) {
 	srv := serveRegistry(t, masterPub, entries)
 	defer srv.Close()
 
-	client, err := NewClient(srv.URL, masterB64, WithRefreshInterval(10*time.Millisecond))
+	client, err := NewClient(srv.URL, masterB64, WithRefreshInterval(10*time.Millisecond), withAllowHTTP)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -357,7 +357,7 @@ func TestDiscoverer_RefreshLoop_NoRelaySwitch(t *testing.T) {
 	regSrv := serveRegistry(t, masterPub, entries)
 	defer regSrv.Close()
 
-	client, err := NewClient(regSrv.URL, masterB64, WithRefreshInterval(200*time.Millisecond))
+	client, err := NewClient(regSrv.URL, masterB64, WithRefreshInterval(200*time.Millisecond), withAllowHTTP)
 	if err != nil {
 		t.Fatal(err)
 	}

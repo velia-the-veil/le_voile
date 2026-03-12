@@ -108,6 +108,7 @@ func (h *STUNHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 // isAllowedTarget validates that the target address uses an allowed STUN port
 // and is not a private/loopback IP address.
+// Hostnames are resolved immediately to prevent DNS rebinding and SSRF bypasses.
 func (h *STUNHandler) isAllowedTarget(target string) bool {
 	host, portStr, err := net.SplitHostPort(target)
 	if err != nil {
@@ -130,9 +131,18 @@ func (h *STUNHandler) isAllowedTarget(target string) bool {
 	// Block private/loopback IPs to prevent SSRF.
 	skipIPCheck := testSkipIPValidation || h.TestSkipIPCheck
 	if !skipIPCheck {
-		ip := net.ParseIP(host)
-		if ip != nil {
-			if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() {
+		// Resolve hostnames to IPs immediately to prevent DNS rebinding attacks.
+		// If host is already an IP, ParseIP succeeds; otherwise resolve via DNS.
+		ips := []net.IP{net.ParseIP(host)}
+		if ips[0] == nil {
+			resolved, err := net.LookupIP(host)
+			if err != nil || len(resolved) == 0 {
+				return false
+			}
+			ips = resolved
+		}
+		for _, ip := range ips {
+			if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsUnspecified() {
 				return false
 			}
 		}

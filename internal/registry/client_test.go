@@ -46,7 +46,7 @@ func TestClient_Fetch_Success(t *testing.T) {
 	defer srv.Close()
 
 	masterB64 := base64.StdEncoding.EncodeToString(masterPub)
-	client, err := NewClient(srv.URL, masterB64)
+	client, err := NewClient(srv.URL, masterB64, withAllowHTTP)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -68,7 +68,7 @@ func TestClient_Fetch_HTTPError(t *testing.T) {
 
 	masterPub, _, _ := ed25519.GenerateKey(nil)
 	masterB64 := base64.StdEncoding.EncodeToString(masterPub)
-	client, err := NewClient(srv.URL, masterB64)
+	client, err := NewClient(srv.URL, masterB64, withAllowHTTP)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -88,7 +88,7 @@ func TestClient_Fetch_InvalidSignature(t *testing.T) {
 	defer srv.Close()
 
 	masterB64 := base64.StdEncoding.EncodeToString(masterPub)
-	client, err := NewClient(srv.URL, masterB64)
+	client, err := NewClient(srv.URL, masterB64, withAllowHTTP)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -112,7 +112,7 @@ func TestClient_Fetch_Timeout(t *testing.T) {
 	masterB64 := base64.StdEncoding.EncodeToString(masterPub)
 
 	httpClient := &http.Client{Timeout: 50 * time.Millisecond}
-	client, err := NewClient(srv.URL, masterB64, WithHTTPClient(httpClient))
+	client, err := NewClient(srv.URL, masterB64, WithHTTPClient(httpClient), withAllowHTTP)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

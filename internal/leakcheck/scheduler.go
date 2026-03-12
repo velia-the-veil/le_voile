@@ -30,6 +30,10 @@ type leakCheckerIface interface {
 	RunFullCheck(ctx context.Context) (*FullLeakReport, error)
 }
 
+// maxConsecutiveSkips is the maximum number of consecutive skip cycles
+// before the scheduler considers the tunnel stuck in a non-connected state.
+const maxConsecutiveSkips = 6
+
 // PeriodicScheduler runs WebRTC leak checks at a fixed interval.
 // It skips checks when the kill switch is active or the tunnel is not connected.
 // On leak detection it invokes onLeak; on recovery it invokes onRecovery.
@@ -41,13 +45,14 @@ type PeriodicScheduler struct {
 	onLeak      func(report *FullLeakReport)
 	onRecovery  func()
 
-	mu          sync.Mutex
-	running     bool
-	cancel      context.CancelFunc
-	done        chan struct{}
-	lastResult  *FullLeakReport
-	lastCheckAt time.Time
-	lastWasLeak bool
+	mu                sync.Mutex
+	running           bool
+	cancel            context.CancelFunc
+	done              chan struct{}
+	lastResult        *FullLeakReport
+	lastCheckAt       time.Time
+	lastWasLeak       bool
+	consecutiveSkips  int
 }
 
 // NewPeriodicScheduler creates a PeriodicScheduler.
@@ -147,14 +152,27 @@ func (p *PeriodicScheduler) LastResult() (*FullLeakReport, time.Time) {
 	return p.lastResult, p.lastCheckAt
 }
 
+// ConsecutiveSkips returns the number of consecutive skipped check cycles. Thread-safe.
+func (p *PeriodicScheduler) ConsecutiveSkips() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.consecutiveSkips
+}
+
 // runCheck executes a single leak check, applying skip conditions and invoking callbacks.
 func (p *PeriodicScheduler) runCheck(ctx context.Context) {
 	// Skip when kill switch is active (AC5): no traffic outside tunnel.
 	if p.killSwitch.IsActive() {
+		p.mu.Lock()
+		p.consecutiveSkips++
+		p.mu.Unlock()
 		return
 	}
 	// Skip when tunnel is not fully connected (AC6).
 	if p.tunnelState.Get() != tunnel.StateConnected {
+		p.mu.Lock()
+		p.consecutiveSkips++
+		p.mu.Unlock()
 		return
 	}
 
@@ -170,6 +188,7 @@ func (p *PeriodicScheduler) runCheck(ctx context.Context) {
 	p.mu.Lock()
 	p.lastResult = report
 	p.lastCheckAt = time.Now()
+	p.consecutiveSkips = 0
 	wasLeak := p.lastWasLeak
 	p.lastWasLeak = report.Status == statusFail
 	p.mu.Unlock()
