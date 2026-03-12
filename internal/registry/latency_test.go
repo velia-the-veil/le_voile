@@ -98,17 +98,10 @@ func TestMeasureAll_Parallel(t *testing.T) {
 		}
 	}
 
-	// Use the first server's TLS client (all share the same test CA).
+	// Use the first server's TLS client with InsecureSkipVerify
+	// (each httptest.Server has a distinct CA, so skip verification for cross-server tests).
 	client := servers[0].Client()
-	// Add all server TLS certs to the client's transport.
 	transport := client.Transport.(*http.Transport)
-	for _, srv := range servers[1:] {
-		srvTransport := srv.Client().Transport.(*http.Transport)
-		for _, cert := range srvTransport.TLSClientConfig.RootCAs.Subjects() {
-			_ = cert // Subjects() is deprecated; use Certificates pool merging instead.
-		}
-	}
-	// For test simplicity, skip TLS verification.
 	transport.TLSClientConfig.InsecureSkipVerify = true
 
 	lc := NewLatencyChecker(WithLatencyHTTPClient(client))
@@ -186,8 +179,9 @@ func TestSortByLatency_Order(t *testing.T) {
 
 	sorted := SortByLatency(results)
 
-	if len(sorted) != 3 {
-		t.Fatalf("expected 3 sorted relays, got %d", len(sorted))
+	// 3 reachable sorted by latency + 1 unreachable at end.
+	if len(sorted) != 4 {
+		t.Fatalf("expected 4 sorted relays, got %d", len(sorted))
 	}
 	if sorted[0].ID != "fast" {
 		t.Errorf("first relay: got %s, want fast", sorted[0].ID)
@@ -198,6 +192,9 @@ func TestSortByLatency_Order(t *testing.T) {
 	if sorted[2].ID != "slow" {
 		t.Errorf("third relay: got %s, want slow", sorted[2].ID)
 	}
+	if sorted[3].ID != "dead" {
+		t.Errorf("fourth relay (unreachable): got %s, want dead", sorted[3].ID)
+	}
 }
 
 func TestSortByLatency_AllUnreachable(t *testing.T) {
@@ -207,7 +204,14 @@ func TestSortByLatency_AllUnreachable(t *testing.T) {
 	}
 
 	sorted := SortByLatency(results)
-	if len(sorted) != 0 {
-		t.Errorf("expected empty slice, got %d entries", len(sorted))
+	// All unreachable relays are still returned (at end of list).
+	if len(sorted) != 2 {
+		t.Fatalf("expected 2 entries (unreachable at end), got %d", len(sorted))
+	}
+	if sorted[0].ID != "dead-1" {
+		t.Errorf("first relay: got %s, want dead-1", sorted[0].ID)
+	}
+	if sorted[1].ID != "dead-2" {
+		t.Errorf("second relay: got %s, want dead-2", sorted[1].ID)
 	}
 }
