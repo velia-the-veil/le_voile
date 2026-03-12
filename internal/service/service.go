@@ -529,7 +529,11 @@ func (p *Program) run() {
 		func() { /* onRecovery: tray sees "pass" on next poll */ },
 	)
 	p.leakScheduler = lkScheduler
-	go lkScheduler.Start(ctx)
+	go func() {
+		if err := lkScheduler.Start(ctx); err != nil {
+			fmt.Fprintf(serviceStderr, "service: leak scheduler start: %v\n", err)
+		}
+	}()
 
 	// --- 5c. Blocklist manager start (if enabled) ---
 	if p.config.BlocklistEnabled {
@@ -540,7 +544,11 @@ func (p *Program) run() {
 		blMgr := blocklist.NewManager(interval)
 		p.blocklistManager = blMgr
 		p.blocklistActive.Store(true)
-		go blMgr.Start(ctx)
+		go func() {
+			if err := blMgr.Start(ctx); err != nil {
+				fmt.Fprintf(serviceStderr, "service: blocklist manager start: %v\n", err)
+			}
+		}()
 	}
 
 	// --- 6. IPC server start (if registered) ---

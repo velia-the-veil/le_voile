@@ -2,6 +2,7 @@ package leakcheck
 
 import (
 	"context"
+	"net"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -38,7 +39,7 @@ func (m *mockChecker) RunFullCheck(_ context.Context) (*FullLeakReport, error) {
 	if n < len(m.reports) {
 		return m.reports[n], nil
 	}
-	return &FullLeakReport{Status: "pass"}, nil
+	return &FullLeakReport{Status: statusPass}, nil
 }
 
 func (m *mockChecker) calls() int { return int(atomic.LoadInt32(&m.callCount)) }
@@ -67,7 +68,7 @@ func newSchedulerForTest(
 
 // TestPeriodicScheduler_PassSilent: checker returns "pass" → onLeak never called (AC2).
 func TestPeriodicScheduler_PassSilent(t *testing.T) {
-	checker := newMockChecker(&FullLeakReport{Status: "pass"})
+	checker := newMockChecker(&FullLeakReport{Status: statusPass})
 	ks := &mockKillSwitch{active: false}
 	ts := &mockTunnelState{state: tunnel.StateConnected}
 
@@ -85,7 +86,7 @@ func TestPeriodicScheduler_PassSilent(t *testing.T) {
 	if result == nil {
 		t.Fatal("LastResult should not be nil after a check")
 	}
-	if result.Status != "pass" {
+	if result.Status != statusPass {
 		t.Errorf("expected Status=pass, got %s", result.Status)
 	}
 	if checkAt.IsZero() {
@@ -95,7 +96,7 @@ func TestPeriodicScheduler_PassSilent(t *testing.T) {
 
 // TestPeriodicScheduler_FailCallsOnLeak: checker returns "fail" → onLeak called exactly once (AC3).
 func TestPeriodicScheduler_FailCallsOnLeak(t *testing.T) {
-	checker := newMockChecker(&FullLeakReport{Status: "fail"})
+	checker := newMockChecker(&FullLeakReport{Status: statusFail})
 	ks := &mockKillSwitch{active: false}
 	ts := &mockTunnelState{state: tunnel.StateConnected}
 
@@ -110,7 +111,7 @@ func TestPeriodicScheduler_FailCallsOnLeak(t *testing.T) {
 		t.Errorf("expected onLeak called 1 time, got %d", n)
 	}
 	result, _ := p.LastResult()
-	if result == nil || result.Status != "fail" {
+	if result == nil || result.Status != statusFail {
 		t.Errorf("expected LastResult.Status=fail, got %v", result)
 	}
 }
@@ -152,8 +153,8 @@ func TestPeriodicScheduler_SkipsWhenTunnelDisconnected(t *testing.T) {
 // TestPeriodicScheduler_RecoveryCallback: fail then pass → onRecovery called exactly once.
 func TestPeriodicScheduler_RecoveryCallback(t *testing.T) {
 	checker := newMockChecker(
-		&FullLeakReport{Status: "fail"},
-		&FullLeakReport{Status: "pass"},
+		&FullLeakReport{Status: statusFail},
+		&FullLeakReport{Status: statusPass},
 	)
 	ks := &mockKillSwitch{active: false}
 	ts := &mockTunnelState{state: tunnel.StateConnected}
@@ -218,7 +219,7 @@ func TestPeriodicScheduler_StartStop(t *testing.T) {
 
 // TestPeriodicScheduler_TriggerCheck: TriggerCheck executes an immediate check outside the normal tick (M2 coverage: AC4 re-test path).
 func TestPeriodicScheduler_TriggerCheck(t *testing.T) {
-	checker := newMockChecker(&FullLeakReport{Status: "fail"})
+	checker := newMockChecker(&FullLeakReport{Status: statusFail})
 	ks := &mockKillSwitch{active: false}
 	ts := &mockTunnelState{state: tunnel.StateConnected}
 
@@ -237,7 +238,7 @@ func TestPeriodicScheduler_TriggerCheck(t *testing.T) {
 		t.Errorf("expected onLeak called 1 time after fail, got %d", n)
 	}
 	result, checkAt := p.LastResult()
-	if result == nil || result.Status != "fail" {
+	if result == nil || result.Status != statusFail {
 		t.Errorf("expected LastResult.Status=fail, got %v", result)
 	}
 	if checkAt.IsZero() {
@@ -247,7 +248,7 @@ func TestPeriodicScheduler_TriggerCheck(t *testing.T) {
 
 // TestPeriodicScheduler_TriggerCheck_SkipsWhenKillSwitchActive: TriggerCheck respects kill switch skip (AC4+AC5 interaction).
 func TestPeriodicScheduler_TriggerCheck_SkipsWhenKillSwitchActive(t *testing.T) {
-	checker := newMockChecker(&FullLeakReport{Status: "pass"})
+	checker := newMockChecker(&FullLeakReport{Status: statusPass})
 	ks := &mockKillSwitch{active: true} // kill switch active
 	ts := &mockTunnelState{state: tunnel.StateConnected}
 
@@ -278,4 +279,26 @@ func TestPeriodicScheduler_StartAlreadyRunning(t *testing.T) {
 	if err := p.Start(ctx); err != ErrSchedulerAlreadyRunning {
 		t.Errorf("expected ErrSchedulerAlreadyRunning, got: %v", err)
 	}
+}
+
+// TestNewPeriodicScheduler_PanicsOnNilKillSwitch: nil KillSwitchQuerier panics at construction.
+func TestNewPeriodicScheduler_PanicsOnNilKillSwitch(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Error("expected panic for nil KillSwitchQuerier, got none")
+		}
+	}()
+	checker := NewWebRTCLeakChecker(func(_ context.Context) (net.IP, error) { return nil, nil })
+	NewPeriodicScheduler(10*time.Second, checker, nil, &mockTunnelState{state: tunnel.StateConnected}, nil, nil)
+}
+
+// TestNewPeriodicScheduler_PanicsOnNilTunnelState: nil TunnelStateQuerier panics at construction.
+func TestNewPeriodicScheduler_PanicsOnNilTunnelState(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Error("expected panic for nil TunnelStateQuerier, got none")
+		}
+	}()
+	checker := NewWebRTCLeakChecker(func(_ context.Context) (net.IP, error) { return nil, nil })
+	NewPeriodicScheduler(10*time.Second, checker, &mockKillSwitch{active: false}, nil, nil, nil)
 }

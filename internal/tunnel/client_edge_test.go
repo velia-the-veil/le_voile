@@ -240,12 +240,17 @@ func TestClient_ConnectTimeout_VeryShort(t *testing.T) {
 		t.Fatalf("generate key: %v", err)
 	}
 
-	// Start a slow relay that delays responding.
+	// Start a slow relay that blocks until explicitly released.
+	// httptest.Server.Close() calls wg.Wait() before CloseClientConnections(),
+	// so we must unblock the handler ourselves via the done channel.
+	done := make(chan struct{})
 	ts := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		time.Sleep(10 * time.Second) // way longer than connectTimeout
-		w.WriteHeader(http.StatusOK)
+		<-done
 	}))
-	defer ts.Close()
+	defer func() {
+		close(done)
+		ts.Close()
+	}()
 	_ = priv // not used since we use httptest
 
 	pubB64 := lecrypto.ExportPublicKeyBase64(pub)
