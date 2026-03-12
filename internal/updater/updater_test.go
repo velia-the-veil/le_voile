@@ -356,3 +356,25 @@ func TestUpdater_CheckAndDownload_VerificationFail(t *testing.T) {
 		t.Errorf("expected staging dir to be empty after verification failure, got %d files", len(entries))
 	}
 }
+
+func TestNewUpdater_EmptyOwnerRepo(t *testing.T) {
+	_, err := NewUpdater(UpdaterConfig{
+		Owner:        "",
+		Repo:         "le_voile",
+		PubKeyBase64: "dGVzdA==",
+		StagingDir:   t.TempDir(),
+	})
+	if err == nil {
+		t.Error("expected error for empty Owner")
+	}
+
+	_, err = NewUpdater(UpdaterConfig{
+		Owner:        "velia-the-veil",
+		Repo:         "",
+		PubKeyBase64: "dGVzdA==",
+		StagingDir:   t.TempDir(),
+	})
+	if err == nil {
+		t.Error("expected error for empty Repo")
+	}
+}

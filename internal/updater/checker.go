@@ -6,11 +6,15 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
 	"time"
 )
+
+// validGitHubName matches valid GitHub owner and repo names.
+var validGitHubName = regexp.MustCompile(`^[a-zA-Z0-9._-]+$`)
 
 // Checker queries GitHub Releases API for the latest version.
 type Checker struct {
@@ -21,7 +25,14 @@ type Checker struct {
 }
 
 // NewChecker creates a Checker for the given GitHub owner/repo.
-func NewChecker(owner, repo string) *Checker {
+// Returns an error if owner or repo contain invalid characters.
+func NewChecker(owner, repo string) (*Checker, error) {
+	if !validGitHubName.MatchString(owner) {
+		return nil, fmt.Errorf("updater: checker: invalid owner %q", owner)
+	}
+	if !validGitHubName.MatchString(repo) {
+		return nil, fmt.Errorf("updater: checker: invalid repo %q", repo)
+	}
 	return &Checker{
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
@@ -29,7 +40,7 @@ func NewChecker(owner, repo string) *Checker {
 		owner:          owner,
 		repo:           repo,
 		currentVersion: CurrentVersion(),
-	}
+	}, nil
 }
 
 // CheckLatest queries the GitHub Releases API for the latest release.

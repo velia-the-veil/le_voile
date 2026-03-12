@@ -43,8 +43,16 @@ type Updater struct {
 }
 
 // NewUpdater creates an Updater from the given configuration.
+// Returns an error if Owner or Repo are empty or contain invalid characters.
 func NewUpdater(cfg UpdaterConfig) (*Updater, error) {
-	checker := NewChecker(cfg.Owner, cfg.Repo)
+	if cfg.Owner == "" || cfg.Repo == "" {
+		return nil, fmt.Errorf("updater: owner and repo are required")
+	}
+
+	checker, err := NewChecker(cfg.Owner, cfg.Repo)
+	if err != nil {
+		return nil, fmt.Errorf("updater: %w", err)
+	}
 
 	dl, err := NewDownloader(cfg.StagingDir)
 	if err != nil {
