@@ -549,6 +549,17 @@ func (p *Program) run() {
 				fmt.Fprintf(serviceStderr, "service: blocklist manager start: %v\n", err)
 			}
 		}()
+
+		// Inject blocklist into already-running proxies (startProxy ran before
+		// blocklistActive was set, so the proxies have no blocklist yet).
+		p.proxyMu.Lock()
+		if p.proxy != nil {
+			p.proxy.SetBlocklist(blMgr)
+		}
+		if p.proxyV6 != nil {
+			p.proxyV6.SetBlocklist(blMgr)
+		}
+		p.proxyMu.Unlock()
 	}
 
 	// --- 6. IPC server start (if registered) ---

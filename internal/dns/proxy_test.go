@@ -560,8 +560,11 @@ func TestProxy_SetBlocklist_ThreadSafe(t *testing.T) {
 
 	startProxy(t, p, ctx)
 
+	// Use a blocklist that actually blocks "example.com" to exercise the
+	// blocking path (extractDomain + IsBlocked + buildNXDOMAINResponse)
+	// under concurrent SetBlocklist toggling.
 	bl := &mockBlocklist{
-		blockedDomains: map[string]bool{},
+		blockedDomains: map[string]bool{"example.com": true},
 		ready:          true,
 	}
 
@@ -578,7 +581,9 @@ func TestProxy_SetBlocklist_ThreadSafe(t *testing.T) {
 		}
 	}()
 
-	// Send a few queries concurrently — should not race.
+	// Send queries for a blocked domain concurrently — should not race.
+	// Responses will be either echo (forwarded) or NXDOMAIN (blocked),
+	// depending on the current blocklist state.
 	results := make(chan error, 10)
 	for i := 0; i < 10; i++ {
 		go func() {
