@@ -1,0 +1,104 @@
+version: 2
+
+builds:
+  - id: service
+    main: ./cmd/client
+    binary: levoile-service
+    goos: [windows]
+    goarch: [amd64]
+    ldflags:
+      - -s -w -X main.version={{.Version}}
+
+  - id: tray
+    main: ./cmd/tray
+    binary: levoile-tray
+    goos: [windows]
+    goarch: [amd64]
+    ldflags:
+      - -s -w -X main.version={{.Version}} -H windowsgui
+
+  - id: relay
+    main: ./cmd/relay
+    binary: levoile-relay
+    goos: [linux]
+    goarch: [amd64]
+    ldflags:
+      - -s -w -X main.version={{.Version}}
+
+  # Portable builds — single binary combining service + tray.
+  # Windows: no CGo needed (fyne.io/systray is pure Go on Windows).
+  # Linux/macOS: require CGo (dbus/appindicator, Objective-C).
+  # Cross-compilation from Windows to Linux/macOS with CGo will fail — expected for MVP.
+  - id: portable-windows
+    main: ./cmd/portable
+    binary: levoile-portable
+    goos: [windows]
+    goarch: [amd64]
+    env:
+      - CGO_ENABLED=0
+    ldflags:
+      - -s -w -X main.version={{.Version}}
+    # No -H windowsgui: UAC/error messages must be visible in console.
+
+  - id: portable-linux
+    main: ./cmd/portable
+    binary: levoile-portable
+    goos: [linux]
+    goarch: [amd64]
+    env:
+      - CGO_ENABLED=1
+    ldflags:
+      - -s -w -X main.version={{.Version}}
+
+  - id: portable-darwin
+    main: ./cmd/portable
+    binary: levoile-portable
+    goos: [darwin]
+    goarch: [amd64, arm64]
+    env:
+      - CGO_ENABLED=1
+    ldflags:
+      - -s -w -X main.version={{.Version}}
+
+archives:
+  - id: windows
+    builds: [service, tray]
+    name_template: "LeVoile_{{.Version}}_windows_amd64"
+    format: zip
+    files:
+      - LICENSE
+      - assets/icons/*.ico
+      - installer/config-default.toml
+
+  - id: relay
+    builds: [relay]
+    name_template: "LeVoile-Relay_{{.Version}}_linux_amd64"
+    format: tar.gz
+    files:
+      - LICENSE
+      - deploy/*
+
+  - id: portable-windows
+    builds: [portable-windows]
+    name_template: "LeVoile-Portable_{{.Version}}_windows_amd64"
+    format: zip
+    files:
+      - LICENSE
+      - installer/config-default.toml
+
+  - id: portable-linux
+    builds: [portable-linux]
+    name_template: "LeVoile-Portable_{{.Version}}_linux_amd64"
+    format: tar.gz
+    files:
+      - LICENSE
+
+  - id: portable-darwin
+    builds: [portable-darwin]
+    name_template: "LeVoile-Portable_{{.Version}}_{{.Os}}_{{.Arch}}"
+    format: tar.gz
+    files:
+      - LICENSE
+
+checksum:
+  name_template: "checksums.txt"

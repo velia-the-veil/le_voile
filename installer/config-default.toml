@@ -1,0 +1,10 @@
+# Le Voile - Configuration par defaut
+# La cle publique Ed25519 du relais DOIT etre remplie avant distribution.
+# Elle est injectee au moment du build/release.
+
+[relay]
+domain = "levoile.dev"
+public_key_ed25519 = ""
+
+[client]
+auto_start = true

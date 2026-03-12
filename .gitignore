@@ -1,0 +1,38 @@
+# Binaries
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Go build output
+/bin/
+/dist/
+/installer/build/
+
+# Extensionless binaries (Linux/macOS builds)
+/client
+/tray
+/relay
+/portable
+
+# Vendor directory
+vendor/
+
+# Test binary
+*.test
+
+# Go coverage
+*.out
+coverage.html
+
+# IDE files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
