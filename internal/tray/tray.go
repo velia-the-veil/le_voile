@@ -223,11 +223,30 @@ func (t *Tray) handleToggle(ctx context.Context) {
 		return
 	}
 
+	// Force a full state refresh on next poll instead of calling updateTrayState
+	// directly. The connect/disconnect response lacks fields like BlocklistEnabled,
+	// which would cause updateTrayState to incorrectly flip the blocklist menu.
 	t.mu.Lock()
-	t.last = "" // force state refresh
+	t.last = ""
 	t.mu.Unlock()
 
-	t.updateTrayState(resp)
+	// Apply immediate visual feedback for connection status only.
+	switch resp.Status {
+	case ipc.StatusConnected:
+		t.api.SetIcon(IconConnected)
+		t.api.SetTooltip(fmt.Sprintf("Protégé — IP visible : %s", resp.IP))
+		if t.menuToggle != nil {
+			t.menuToggle.SetTitle("Désactiver Le Voile")
+		}
+	case ipc.StatusDisconnected:
+		t.api.SetIcon(IconDisconnected)
+		t.api.SetTooltip("Non protégé")
+		if t.menuToggle != nil {
+			t.menuToggle.SetTitle("Activer Le Voile")
+		}
+	case ipc.StatusError:
+		t.api.SetTooltip(fmt.Sprintf("Erreur : %s", resp.Error))
+	}
 }
 
 func (t *Tray) handleAutoStartToggle(ctx context.Context) {
