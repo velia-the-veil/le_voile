@@ -27,6 +27,7 @@ func newManagerWithRunner(run commandRunner) DNSManager {
 }
 
 // SetResolver modifies the DNS resolver on all network services to addr.
+// On partial failure, already-modified services are rolled back to their original DNS.
 func (m *darwinManager) SetResolver(ctx context.Context, addr string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -41,21 +42,40 @@ func (m *darwinManager) SetResolver(ctx context.Context, addr string) error {
 	}
 
 	m.originalDNS = make(map[string][]string, len(services))
+	var modified []string
 
 	for _, svc := range services {
 		servers, err := m.getDNSServers(ctx, svc)
 		if err != nil {
+			m.rollback(ctx, modified)
+			m.originalDNS = nil
 			return fmt.Errorf("dns: set resolver: get dns for %q: %w", svc, err)
 		}
 		m.originalDNS[svc] = servers
 
 		out, err := m.run(ctx, "networksetup", "-setdnsservers", svc, addr)
 		if err != nil {
+			m.rollback(ctx, modified)
+			m.originalDNS = nil
 			return fmt.Errorf("dns: set resolver: networksetup for %q: %s: %w", svc, string(out), ErrSetResolverFailed)
 		}
+		modified = append(modified, svc)
 	}
 
 	return nil
+}
+
+// rollback restores already-modified services to their original DNS on SetResolver failure.
+func (m *darwinManager) rollback(ctx context.Context, modified []string) {
+	for _, svc := range modified {
+		servers := m.originalDNS[svc]
+		if len(servers) == 0 {
+			m.run(ctx, "networksetup", "-setdnsservers", svc, "Empty")
+		} else {
+			args := append([]string{"-setdnsservers", svc}, servers...)
+			m.run(ctx, "networksetup", args...)
+		}
+	}
 }
 
 // RestoreResolver restores the DNS resolver to its original value on all modified services.

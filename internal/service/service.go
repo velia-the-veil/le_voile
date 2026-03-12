@@ -425,6 +425,9 @@ func (p *Program) run() {
 	// --- 2. Proxy start ---
 	if err := p.startProxy(ctx); err != nil {
 		fmt.Fprintf(serviceStderr, "service: %v\n", err)
+		if p.discoverer != nil {
+			p.discoverer.Stop()
+		}
 		client.Disconnect()
 		return
 	}
@@ -439,6 +442,9 @@ func (p *Program) run() {
 		fmt.Fprintf(serviceStderr, "service: dns set resolver: %v\n", err)
 		p.stopSTUN()
 		p.stopProxy()
+		if p.discoverer != nil {
+			p.discoverer.Stop()
+		}
 		client.Disconnect()
 		return
 	}

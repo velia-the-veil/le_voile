@@ -92,22 +92,33 @@ func Load(path string) (*Config, error) {
 	return cfg, nil
 }
 
-// Save writes the configuration to a TOML file, creating parent directories
-// if necessary.
+// Save writes the configuration to a TOML file atomically, creating parent
+// directories if necessary. It writes to a temp file first and renames on
+// success to prevent corruption on crash.
 func (c *Config) Save(path string) error {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("config: %w", err)
 	}
 
-	f, err := os.Create(path)
+	tmp, err := os.CreateTemp(dir, "config-*.tmp")
 	if err != nil {
-		return fmt.Errorf("config: %w", err)
+		return fmt.Errorf("config: create temp: %w", err)
 	}
-	defer f.Close()
+	tmpName := tmp.Name()
 
-	if err := toml.NewEncoder(f).Encode(c); err != nil {
-		return fmt.Errorf("config: %w", err)
+	if err := toml.NewEncoder(tmp).Encode(c); err != nil {
+		tmp.Close()
+		os.Remove(tmpName)
+		return fmt.Errorf("config: encode: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		os.Remove(tmpName)
+		return fmt.Errorf("config: close temp: %w", err)
+	}
+	if err := os.Rename(tmpName, path); err != nil {
+		os.Remove(tmpName)
+		return fmt.Errorf("config: rename: %w", err)
 	}
 	return nil
 }

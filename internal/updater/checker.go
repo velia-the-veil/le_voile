@@ -140,33 +140,64 @@ func parseGitHubRelease(body []byte) (*ReleaseInfo, error) {
 	return info, nil
 }
 
+// parsedVersion holds a parsed semver version with optional pre-release suffix.
+type parsedVersion struct {
+	nums       [3]int
+	prerelease string // empty string means stable release
+}
+
 // compareVersions compares two semver strings.
 // Returns -1 if current < latest, 0 if equal, 1 if current > latest.
 // Handles the "v" prefix (v1.2.3 == 1.2.3).
+// Pre-release versions (e.g., 1.2.3-beta.1) compare as less than the
+// corresponding release (1.2.3-beta.1 < 1.2.3).
 // Non-numeric or malformed versions compare as 0.0.0.
 func compareVersions(current, latest string) int {
-	parse := func(v string) [3]int {
+	parse := func(v string) parsedVersion {
 		v = strings.TrimPrefix(v, "v")
+		var pv parsedVersion
 		parts := strings.SplitN(v, ".", 3)
-		var nums [3]int
 		for i := 0; i < 3 && i < len(parts); i++ {
-			n, err := strconv.Atoi(parts[i])
-			if err != nil {
-				return [3]int{}
+			seg := parts[i]
+			// Strip pre-release suffix from the last segment (e.g., "3-beta.1" → "3").
+			if i == len(parts)-1 {
+				if idx := strings.IndexByte(seg, '-'); idx >= 0 {
+					pv.prerelease = seg[idx+1:]
+					seg = seg[:idx]
+				}
 			}
-			nums[i] = n
+			n, err := strconv.Atoi(seg)
+			if err != nil {
+				return parsedVersion{}
+			}
+			pv.nums[i] = n
 		}
-		return nums
+		return pv
 	}
 
 	c := parse(current)
 	l := parse(latest)
 
 	for i := 0; i < 3; i++ {
-		if c[i] < l[i] {
+		if c.nums[i] < l.nums[i] {
 			return -1
 		}
-		if c[i] > l[i] {
+		if c.nums[i] > l.nums[i] {
+			return 1
+		}
+	}
+
+	// Same numeric version — pre-release < stable.
+	switch {
+	case c.prerelease != "" && l.prerelease == "":
+		return -1
+	case c.prerelease == "" && l.prerelease != "":
+		return 1
+	case c.prerelease != "" && l.prerelease != "":
+		if c.prerelease < l.prerelease {
+			return -1
+		}
+		if c.prerelease > l.prerelease {
 			return 1
 		}
 	}

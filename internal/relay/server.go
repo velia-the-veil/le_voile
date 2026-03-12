@@ -51,7 +51,7 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 	if s.Handler != nil {
 		mux.Handle("/dns-query", LimitMiddleware(s.Limiter, s.Handler))
 	}
-	mux.Handle("/health", NewHealthHandler(s.Limiter, s.StartTime))
+	mux.Handle("/health", LimitMiddleware(s.Limiter, NewHealthHandler(s.Limiter, s.StartTime)))
 	if s.SigningKey != nil {
 		mux.Handle("/verify", NewVerifyHandler(s.SigningKey))
 	}

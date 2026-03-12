@@ -30,6 +30,8 @@ func NewStateManager() *StateManager {
 }
 
 // Set updates the current state and sends a non-blocking notification on the updates channel.
+// If the channel is full, it drains the oldest entry to make room, ensuring critical
+// transitions like StateDisconnected are never silently dropped.
 func (sm *StateManager) Set(state ConnState) {
 	sm.mu.Lock()
 	sm.current = state
@@ -38,6 +40,15 @@ func (sm *StateManager) Set(state ConnState) {
 	select {
 	case sm.updates <- state:
 	default:
+		// Channel full — drain the oldest entry and retry.
+		select {
+		case <-sm.updates:
+		default:
+		}
+		select {
+		case sm.updates <- state:
+		default:
+		}
 	}
 }
 

@@ -1,0 +1,8 @@
+# Le Voile - Example configuration (copy to config.toml and fill in your values)
+[relay]
+domain = "your-relay-domain.example.com"
+public_key_ed25519 = "YOUR_ED25519_PUBLIC_KEY_BASE64"
+# insecure = true  # Uncomment for development only — NEVER in production
+
+[client]
+auto_start = true

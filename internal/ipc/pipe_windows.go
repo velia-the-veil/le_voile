@@ -27,8 +27,14 @@ func NewPlatformListener() Listener {
 }
 
 // Listen starts listening on the Windows named pipe.
+// The pipe is restricted to SYSTEM and the built-in Administrators group.
 func (pl *platformListener) Listen() (net.Listener, error) {
-	l, err := winio.ListenPipe(PipeName, nil)
+	cfg := &winio.PipeConfig{
+		// D: — DACL; A — Allow; GA — Generic All
+		// BA = Built-in Administrators; SY = Local System
+		SecurityDescriptor: "D:P(A;;GA;;;BA)(A;;GA;;;SY)",
+	}
+	l, err := winio.ListenPipe(PipeName, cfg)
 	if err != nil {
 		return nil, err
 	}

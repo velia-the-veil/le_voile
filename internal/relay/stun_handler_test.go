@@ -302,9 +302,9 @@ func TestIsAllowedTarget(t *testing.T) {
 	h := NewSTUNHandler()
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := h.isAllowedTarget(tt.target)
+			got := func() bool { _, ok := h.resolveAndValidateTarget(tt.target); return ok }()
 			if got != tt.allowed {
-				t.Errorf("isAllowedTarget(%q) = %v, want %v", tt.target, got, tt.allowed)
+				t.Errorf("resolveAndValidateTarget(%q) = %v, want %v", tt.target, got, tt.allowed)
 			}
 		})
 	}

@@ -34,7 +34,9 @@ const (
 	dohTimeout         = 5 * time.Second
 	stunRelayTimeout   = 5 * time.Second
 	nonceSize          = 32
-	maxCertChainLength = 3 // reject certificate chains longer than this
+	maxCertChainLength = 3   // reject certificate chains longer than this
+	maxDoHResponseSize = 64 * 1024  // 64 KB — well above the 65535-byte DNS UDP limit
+	maxSTUNResponseSize = 1600      // slightly above typical 1500-byte STUN messages
 )
 
 // verifyRequest is the JSON body sent to the relay /verify endpoint.
@@ -185,7 +187,7 @@ func (c *Client) SendDoHQuery(ctx context.Context, dnsPayload []byte) ([]byte, e
 		return nil, fmt.Errorf("tunnel: send doh: server returned status %d", resp.StatusCode)
 	}
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxDoHResponseSize))
 	if err != nil {
 		return nil, fmt.Errorf("tunnel: send doh: read response: %w", err)
 	}
@@ -224,7 +226,7 @@ func (c *Client) SendSTUNRelay(ctx context.Context, stunPacket []byte, targetAdd
 		return nil, fmt.Errorf("tunnel: send stun relay: server returned status %d", resp.StatusCode)
 	}
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxSTUNResponseSize))
 	if err != nil {
 		return nil, fmt.Errorf("tunnel: send stun relay: read response: %w", err)
 	}
