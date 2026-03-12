@@ -2,6 +2,7 @@ package registry
 
 import (
 	"context"
+	"sort"
 	"sync"
 	"time"
 )
@@ -47,6 +48,10 @@ func NewDiscoverer(client *Client, cache *Cache, defaultRelay RelayEntry, opts .
 // Discover attempts to fetch relays online, falls back to cache, then to the default relay.
 // When a LatencyChecker is configured and more than one relay is available, relays are
 // sorted by latency. If latency measurement fails, cached latency rankings are used.
+//
+// NOTE: The error return is always nil because the fallback cascade (online → cache →
+// default relay) guarantees at least the default relay is returned. The error is kept
+// in the signature for forward compatibility if stricter modes are added later.
 func (d *Discoverer) Discover(ctx context.Context) ([]RelayEntry, error) {
 	// Try online fetch first.
 	relays, err := d.client.Fetch(ctx)
@@ -93,15 +98,23 @@ func (d *Discoverer) sortByLatency(ctx context.Context, relays []RelayEntry) []R
 	}
 
 	results := d.latencyChecker.MeasureAll(ctx, relays)
-	sorted := SortByLatency(results)
 
-	if len(sorted) > 0 {
-		// Save latency rankings to cache (best-effort).
-		_ = d.cache.SaveLatencies(results)
-		return sorted
+	// Check if at least one relay is reachable.
+	hasReachable := false
+	for _, r := range results {
+		if r.Reachable {
+			hasReachable = true
+			break
+		}
 	}
 
-	// Latency measurement failed for all relays — try cached rankings.
+	if hasReachable {
+		// Save latency rankings to cache (best-effort).
+		_ = d.cache.SaveLatencies(results)
+		return SortByLatency(results)
+	}
+
+	// All measurements failed — try cached rankings.
 	return d.sortByLatencyCache(relays)
 }
 
@@ -141,13 +154,9 @@ func (d *Discoverer) sortByLatencyCache(relays []RelayEntry) []RelayEntry {
 	}
 
 	// Sort known by latency ascending.
-	for i := 0; i < len(known); i++ {
-		for j := i + 1; j < len(known); j++ {
-			if known[j].latency < known[i].latency {
-				known[i], known[j] = known[j], known[i]
-			}
-		}
-	}
+	sort.Slice(known, func(i, j int) bool {
+		return known[i].latency < known[j].latency
+	})
 
 	result := make([]RelayEntry, 0, len(relays))
 	for _, k := range known {

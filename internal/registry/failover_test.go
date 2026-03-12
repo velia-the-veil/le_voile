@@ -135,6 +135,18 @@ func TestFailoverManager_HandleFailover_AllFail(t *testing.T) {
 	if fm.CurrentRelayID() != "relay-0" {
 		t.Errorf("expected relay-0 unchanged, got %s", fm.CurrentRelayID())
 	}
+	// Tunnel client coordinates must be restored to the original relay so that
+	// the Reconnector's subsequent backoff retries target the correct relay.
+	updater.mu.Lock()
+	restoredDomain := updater.lastDomain
+	restoredKey := updater.lastPubKey
+	updater.mu.Unlock()
+	if restoredDomain != "r0.example.com" {
+		t.Errorf("expected updater restored to r0.example.com, got %s", restoredDomain)
+	}
+	if restoredKey != "key0" {
+		t.Errorf("expected updater restored to key0, got %s", restoredKey)
+	}
 }
 
 func TestFailoverManager_ThreadSafe(t *testing.T) {

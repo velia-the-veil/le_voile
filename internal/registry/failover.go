@@ -21,7 +21,7 @@ type FailoverManager struct {
 	discoverer     *Discoverer
 	tunnelUpdater  RelayUpdater
 	connectFn      func(ctx context.Context) error
-	mu             sync.Mutex
+	mu             sync.RWMutex
 	currentRelayID string
 }
 
@@ -45,11 +45,14 @@ func (fm *FailoverManager) HandleFailover(ctx context.Context) error {
 		return ErrNoAlternativeRelay
 	}
 
-	// Find the index of the current relay.
+	// Find the current relay and save its coordinates for potential restoration.
 	currentIdx := -1
+	var originalDomain, originalPubKey string
 	for i, r := range relays {
 		if r.ID == fm.currentRelayID {
 			currentIdx = i
+			originalDomain = r.Domain
+			originalPubKey = r.PublicKey
 			break
 		}
 	}
@@ -78,6 +81,13 @@ func (fm *FailoverManager) HandleFailover(ctx context.Context) error {
 		return nil
 	}
 
+	// All alternatives failed — restore the original relay coordinates so that
+	// the Reconnector's subsequent backoff retries target the original relay,
+	// not the last alternative that was tried.
+	if originalDomain != "" {
+		_ = fm.tunnelUpdater.UpdateRelay(originalDomain, originalPubKey)
+	}
+
 	return fmt.Errorf("%w: all alternatives failed", ErrNoAlternativeRelay)
 }
 
@@ -90,7 +100,7 @@ func (fm *FailoverManager) SetCurrentRelay(relayID string) {
 
 // CurrentRelayID returns the currently active relay ID.
 func (fm *FailoverManager) CurrentRelayID() string {
-	fm.mu.Lock()
-	defer fm.mu.Unlock()
+	fm.mu.RLock()
+	defer fm.mu.RUnlock()
 	return fm.currentRelayID
 }

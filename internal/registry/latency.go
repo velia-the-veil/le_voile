@@ -56,6 +56,10 @@ func NewLatencyChecker(opts ...LatencyOption) *LatencyChecker {
 
 // MeasureOne measures the round-trip latency to a single relay's /health endpoint.
 func (lc *LatencyChecker) MeasureOne(ctx context.Context, relay RelayEntry) (time.Duration, error) {
+	if relay.Domain == "" {
+		return 0, fmt.Errorf("registry: latency: %s: empty domain", relay.ID)
+	}
+
 	url := "https://" + relay.Domain + HealthEndpoint
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
@@ -103,13 +107,15 @@ func (lc *LatencyChecker) MeasureAll(ctx context.Context, relays []RelayEntry) [
 	return results
 }
 
-// SortByLatency sorts results by latency ascending, returning only reachable relays.
-// Unreachable relays are excluded from the result.
+// SortByLatency sorts results by latency ascending, with unreachable relays at the end.
+// Reachable relays are sorted by latency; unreachable relays follow in original order.
 func SortByLatency(results []LatencyResult) []RelayEntry {
-	var reachable []LatencyResult
+	var reachable, unreachable []LatencyResult
 	for _, r := range results {
 		if r.Reachable {
 			reachable = append(reachable, r)
+		} else {
+			unreachable = append(unreachable, r)
 		}
 	}
 
@@ -117,8 +123,11 @@ func SortByLatency(results []LatencyResult) []RelayEntry {
 		return reachable[i].Latency < reachable[j].Latency
 	})
 
-	sorted := make([]RelayEntry, 0, len(reachable))
+	sorted := make([]RelayEntry, 0, len(results))
 	for _, r := range reachable {
+		sorted = append(sorted, r.Relay)
+	}
+	for _, r := range unreachable {
 		sorted = append(sorted, r.Relay)
 	}
 	return sorted
