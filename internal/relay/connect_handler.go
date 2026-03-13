@@ -1,0 +1,265 @@
+package relay
+
+import (
+	"context"
+	"crypto/ed25519"
+	"crypto/sha256"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net"
+	"net/http"
+	"strings"
+	"time"
+)
+
+const (
+	connectIdleTimeout = 120 * time.Second
+	maxConnectBodySize = 1024 // max size for the JSON target body
+)
+
+// connectRequest is the JSON body for a CONNECT proxy request.
+type connectRequest struct {
+	Target string `json:"target"`
+}
+
+// ConnectHandler implements the relay-side forward proxy handler.
+// Accepts POST requests with a target in the JSON body, authenticates via
+// session token, and relays traffic bidirectionally to the destination.
+type ConnectHandler struct {
+	signingKey  ed25519.PublicKey // for verifying session tokens
+	cfValidator *CloudflareIPValidator
+	ipLimiter   *IPLimiter
+	logFunc     func(format string, args ...any)
+}
+
+// NewConnectHandler creates a new relay CONNECT handler.
+func NewConnectHandler(pubKey ed25519.PublicKey, cfv *CloudflareIPValidator, ipLimiter *IPLimiter, logFunc func(string, ...any)) *ConnectHandler {
+	return &ConnectHandler{
+		signingKey:  pubKey,
+		cfValidator: cfv,
+		ipLimiter:   ipLimiter,
+		logFunc:     logFunc,
+	}
+}
+
+// ServeHTTP handles POST requests to /connect.
+func (h *ConnectHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// Only POST allowed.
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// CF-Connecting-IP validation: drop non-CF sources silently.
+	if h.cfValidator != nil && !h.cfValidator.IsTrustedSource(r.RemoteAddr) {
+		// Silent TCP drop — no HTTP response.
+		hj, ok := w.(http.Hijacker)
+		if ok {
+			conn, _, _ := hj.Hijack()
+			if conn != nil {
+				conn.Close()
+			}
+		}
+		return
+	}
+
+	// Extract client IP.
+	clientIP := ""
+	if h.cfValidator != nil {
+		var err error
+		clientIP, err = h.cfValidator.ExtractClientIP(r)
+		if err != nil {
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+	}
+
+	// Authenticate: extract and verify session token.
+	token := extractBearerToken(r)
+	if token == "" {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	payload, err := VerifySessionToken(h.signingKey, token)
+	if err != nil {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	// Check expiration.
+	if time.Now().Unix() > payload.Issued+payload.TTL {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	// Check IP hash match (defense-in-depth).
+	if clientIP != "" {
+		expectedHash := fmt.Sprintf("%x", sha256.Sum256([]byte(clientIP)))
+		if payload.IPHash != expectedHash {
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+	}
+
+	// Per-IP rate limiting.
+	if h.ipLimiter != nil && clientIP != "" {
+		if !h.ipLimiter.Acquire(clientIP) {
+			http.Error(w, "Too Many Requests", http.StatusTooManyRequests)
+			return
+		}
+		defer h.ipLimiter.Release(clientIP)
+	}
+
+	// Read target from JSON body.
+	body, err := io.ReadAll(io.LimitReader(r.Body, maxConnectBodySize+1))
+	if err != nil || len(body) > maxConnectBodySize {
+		http.Error(w, "Bad Request", http.StatusBadRequest)
+		return
+	}
+
+	var req connectRequest
+	if err := json.Unmarshal(body, &req); err != nil || req.Target == "" {
+		http.Error(w, "Bad Request", http.StatusBadRequest)
+		return
+	}
+
+	// Resolve and validate destination (TOCTOU-safe: use resolved IP for dial).
+	targetAddr, err := resolveAndValidateConnect(req.Target)
+	if err != nil {
+		http.Error(w, "Forbidden", http.StatusForbidden)
+		return
+	}
+
+	// Dial the destination using the resolved IP directly.
+	destConn, err := net.DialTCP("tcp", nil, targetAddr)
+	if err != nil {
+		http.Error(w, "Bad Gateway", http.StatusBadGateway)
+		return
+	}
+	defer destConn.Close()
+
+	// Signal success — start streaming.
+	w.WriteHeader(http.StatusOK)
+
+	// Flush the 200 response immediately so the client can start relaying.
+	if f, ok := w.(http.Flusher); ok {
+		f.Flush()
+	}
+
+	// Bidirectional relay with idle timeout.
+	ctx := r.Context()
+	relay(ctx, r.Body, w, destConn)
+}
+
+// relay copies data bidirectionally between the HTTP stream and the destination.
+func relay(ctx context.Context, clientReader io.Reader, clientWriter io.Writer, dest net.Conn) {
+	idleTimer := time.NewTimer(connectIdleTimeout)
+	defer idleTimer.Stop()
+
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	// dest → client
+	go func() {
+		defer cancel()
+		buf := make([]byte, 32*1024)
+		for {
+			dest.SetReadDeadline(time.Now().Add(connectIdleTimeout))
+			n, err := dest.Read(buf)
+			if n > 0 {
+				if _, wErr := clientWriter.Write(buf[:n]); wErr != nil {
+					return
+				}
+				if f, ok := clientWriter.(http.Flusher); ok {
+					f.Flush()
+				}
+				idleTimer.Reset(connectIdleTimeout)
+			}
+			if err != nil {
+				return
+			}
+		}
+	}()
+
+	// client → dest
+	buf := make([]byte, 32*1024)
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-idleTimer.C:
+			return
+		default:
+		}
+		n, err := clientReader.Read(buf)
+		if n > 0 {
+			if _, wErr := dest.Write(buf[:n]); wErr != nil {
+				return
+			}
+			idleTimer.Reset(connectIdleTimeout)
+		}
+		if err != nil {
+			return
+		}
+	}
+}
+
+// resolveAndValidateConnect resolves a host:port and validates against SSRF.
+func resolveAndValidateConnect(target string) (*net.TCPAddr, error) {
+	host, port, err := net.SplitHostPort(target)
+	if err != nil {
+		return nil, fmt.Errorf("connect: invalid target: %w", err)
+	}
+	if host == "" || port == "" {
+		return nil, fmt.Errorf("connect: empty host or port")
+	}
+
+	// Resolve hostname to IP.
+	var ip net.IP
+	if parsed := net.ParseIP(host); parsed != nil {
+		ip = parsed
+	} else {
+		ips, err := net.LookupIP(host)
+		if err != nil || len(ips) == 0 {
+			return nil, fmt.Errorf("connect: resolve %q: %w", host, err)
+		}
+		ip = ips[0]
+	}
+
+	// SSRF validation on resolved IP.
+	if isBlockedIP(ip) {
+		return nil, fmt.Errorf("connect: blocked destination %s", ip)
+	}
+
+	portNum, err := net.LookupPort("tcp", port)
+	if err != nil {
+		return nil, fmt.Errorf("connect: invalid port %q: %w", port, err)
+	}
+
+	return &net.TCPAddr{IP: ip, Port: portNum}, nil
+}
+
+// isBlockedIP returns true if the IP is private, loopback, or otherwise blocked.
+func isBlockedIP(ip net.IP) bool {
+	return ip.IsLoopback() ||
+		ip.IsPrivate() ||
+		ip.IsLinkLocalUnicast() ||
+		ip.IsLinkLocalMulticast() ||
+		ip.IsUnspecified()
+}
+
+// extractBearerToken extracts the token from an Authorization: Bearer header.
+// The Authorization header value is sanitized in logs.
+func extractBearerToken(r *http.Request) string {
+	auth := r.Header.Get("Authorization")
+	if auth == "" {
+		return ""
+	}
+	const prefix = "Bearer "
+	if len(auth) < len(prefix) || !strings.EqualFold(auth[:len(prefix)], prefix) {
+		return ""
+	}
+	return auth[len(prefix):]
+}

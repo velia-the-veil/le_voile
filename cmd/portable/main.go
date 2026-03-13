@@ -154,7 +154,7 @@ func main() {
 
 	// 8. Start tray on the main thread (BLOCKING).
 	autoStart := cfg.Client.AutoStart
-	t := tray.NewWithConfig(autoStart, true, cfg.Blocklist.Enabled) // true = portableMode
+	t := tray.NewWithConfig(autoStart, true, cfg.Blocklist.Enabled, cfg.HTTPProxy.Enabled, cfg.Relay.Domain) // true = portableMode
 	t.Run()
 
 	// 9. Clean shutdown — prg.Stop(nil) via defer.

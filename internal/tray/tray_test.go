@@ -171,7 +171,7 @@ func (m *mockIPCClient) getRequests() []ipc.Request {
 func TestTray_UpdateState_Connected(t *testing.T) {
 	api := &mockSystrayAPI{}
 	client := &mockIPCClient{}
-	tr := newWithDeps(api, newMockMenuAPI(), client, testPollInterval, true, false)
+	tr := newWithDeps(api, newMockMenuAPI(), client, testPollInterval, true, false, false, nil)
 
 	tr.updateTrayState(ipc.Response{Status: ipc.StatusConnected, IP: "82.1.2.3"})
 
@@ -186,7 +186,7 @@ func TestTray_UpdateState_Connected(t *testing.T) {
 func TestTray_UpdateState_Connected_UnknownIP(t *testing.T) {
 	api := &mockSystrayAPI{}
 	client := &mockIPCClient{}
-	tr := newWithDeps(api, newMockMenuAPI(), client, testPollInterval, true, false)
+	tr := newWithDeps(api, newMockMenuAPI(), client, testPollInterval, true, false, false, nil)
 
 	tr.updateTrayState(ipc.Response{Status: ipc.StatusConnected, IP: ""})
 
@@ -198,7 +198,7 @@ func TestTray_UpdateState_Connected_UnknownIP(t *testing.T) {
 func TestTray_UpdateState_Connecting(t *testing.T) {
 	api := &mockSystrayAPI{}
 	client := &mockIPCClient{}
-	tr := newWithDeps(api, newMockMenuAPI(), client, testPollInterval, true, false)
+	tr := newWithDeps(api, newMockMenuAPI(), client, testPollInterval, true, false, false, nil)
 
 	tr.updateTrayState(ipc.Response{Status: ipc.StatusConnecting})
 
@@ -213,7 +213,7 @@ func TestTray_UpdateState_Connecting(t *testing.T) {
 func TestTray_UpdateState_Disconnected(t *testing.T) {
 	api := &mockSystrayAPI{}
 	client := &mockIPCClient{}
-	tr := newWithDeps(api, newMockMenuAPI(), client, testPollInterval, true, false)
+	tr := newWithDeps(api, newMockMenuAPI(), client, testPollInterval, true, false, false, nil)
 
 	tr.updateTrayState(ipc.Response{Status: ipc.StatusDisconnected})
 
@@ -228,7 +228,7 @@ func TestTray_UpdateState_Disconnected(t *testing.T) {
 func TestTray_UpdateState_Disconnected_WithError(t *testing.T) {
 	api := &mockSystrayAPI{}
 	client := &mockIPCClient{}
-	tr := newWithDeps(api, newMockMenuAPI(), client, testPollInterval, true, false)
+	tr := newWithDeps(api, newMockMenuAPI(), client, testPollInterval, true, false, false, nil)
 
 	tr.updateTrayState(ipc.Response{Status: ipc.StatusDisconnected, Error: "timeout"})
 
@@ -240,7 +240,7 @@ func TestTray_UpdateState_Disconnected_WithError(t *testing.T) {
 func TestTray_UpdateState_Error(t *testing.T) {
 	api := &mockSystrayAPI{}
 	client := &mockIPCClient{}
-	tr := newWithDeps(api, newMockMenuAPI(), client, testPollInterval, true, false)
+	tr := newWithDeps(api, newMockMenuAPI(), client, testPollInterval, true, false, false, nil)
 
 	tr.updateTrayState(ipc.Response{Status: ipc.StatusError, Error: "pipe broken"})
 
@@ -255,7 +255,7 @@ func TestTray_UpdateState_Error(t *testing.T) {
 func TestTray_UpdateState_UnknownStatus(t *testing.T) {
 	api := &mockSystrayAPI{}
 	client := &mockIPCClient{}
-	tr := newWithDeps(api, newMockMenuAPI(), client, testPollInterval, true, false)
+	tr := newWithDeps(api, newMockMenuAPI(), client, testPollInterval, true, false, false, nil)
 
 	tr.updateTrayState(ipc.Response{Status: "weird_status"})
 
@@ -272,7 +272,7 @@ func TestTray_UpdateState_UnknownStatus(t *testing.T) {
 func TestTray_UpdateState_NoUpdateIfSameState(t *testing.T) {
 	api := &mockSystrayAPI{}
 	client := &mockIPCClient{}
-	tr := newWithDeps(api, newMockMenuAPI(), client, testPollInterval, true, false)
+	tr := newWithDeps(api, newMockMenuAPI(), client, testPollInterval, true, false, false, nil)
 
 	resp := ipc.Response{Status: ipc.StatusConnected, IP: "1.2.3.4"}
 	tr.updateTrayState(resp)
@@ -290,7 +290,7 @@ func TestTray_UpdateState_NoUpdateIfSameState(t *testing.T) {
 func TestTray_UpdateState_UpdatesOnDifferentState(t *testing.T) {
 	api := &mockSystrayAPI{}
 	client := &mockIPCClient{}
-	tr := newWithDeps(api, newMockMenuAPI(), client, testPollInterval, true, false)
+	tr := newWithDeps(api, newMockMenuAPI(), client, testPollInterval, true, false, false, nil)
 
 	tr.updateTrayState(ipc.Response{Status: ipc.StatusConnected, IP: "1.2.3.4"})
 	callsAfterFirst := api.getCalls()
@@ -308,7 +308,7 @@ func TestTray_UpdateState_UpdatesOnDifferentState(t *testing.T) {
 func TestTray_UpdateState_ConnectedStateTracking(t *testing.T) {
 	api := &mockSystrayAPI{}
 	client := &mockIPCClient{}
-	tr := newWithDeps(api, newMockMenuAPI(), client, testPollInterval, true, false)
+	tr := newWithDeps(api, newMockMenuAPI(), client, testPollInterval, true, false, false, nil)
 
 	tr.updateTrayState(ipc.Response{Status: ipc.StatusConnected, IP: "1.2.3.4"})
 
@@ -334,7 +334,7 @@ func TestTray_UpdateState_ConnectedStateTracking(t *testing.T) {
 func TestTray_UpdateState_ConnectingKeepsState(t *testing.T) {
 	api := &mockSystrayAPI{}
 	client := &mockIPCClient{}
-	tr := newWithDeps(api, newMockMenuAPI(), client, testPollInterval, true, false)
+	tr := newWithDeps(api, newMockMenuAPI(), client, testPollInterval, true, false, false, nil)
 
 	// Set initial connected state
 	tr.updateTrayState(ipc.Response{Status: ipc.StatusConnected, IP: "1.2.3.4"})
@@ -358,7 +358,7 @@ func TestTray_HandleToggle_Connected_SendsDisconnect(t *testing.T) {
 	client := &mockIPCClient{
 		response: ipc.Response{Status: ipc.StatusDisconnected},
 	}
-	tr := newWithDeps(api, newMockMenuAPI(), client, testPollInterval, true, false)
+	tr := newWithDeps(api, newMockMenuAPI(), client, testPollInterval, true, false, false, nil)
 
 	// Set state to connected
 	tr.mu.Lock()
@@ -379,7 +379,7 @@ func TestTray_HandleToggle_Disconnected_SendsConnect(t *testing.T) {
 	client := &mockIPCClient{
 		response: ipc.Response{Status: ipc.StatusConnected},
 	}
-	tr := newWithDeps(api, newMockMenuAPI(), client, testPollInterval, true, false)
+	tr := newWithDeps(api, newMockMenuAPI(), client, testPollInterval, true, false, false, nil)
 
 	// Set state to disconnected
 	tr.mu.Lock()
@@ -403,7 +403,7 @@ func TestTray_HandleQuit_SendsQuitAndCallsSystrayQuit(t *testing.T) {
 	client := &mockIPCClient{
 		response: ipc.Response{Status: ipc.StatusDisconnected},
 	}
-	tr := newWithDeps(api, menuAPI, client, testPollInterval, true, false)
+	tr := newWithDeps(api, menuAPI, client, testPollInterval, true, false, false, nil)
 
 	ctx := context.Background()
 	tr.handleQuit(ctx)
@@ -425,7 +425,7 @@ func TestTray_ConnectAndPoll_SuccessfulPolling(t *testing.T) {
 	client := &mockIPCClient{
 		response: ipc.Response{Status: ipc.StatusConnected, IP: "10.0.0.1"},
 	}
-	tr := newWithDeps(api, newMockMenuAPI(), client, testPollInterval, true, false)
+	tr := newWithDeps(api, newMockMenuAPI(), client, testPollInterval, true, false, false, nil)
 
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -444,7 +444,7 @@ func TestTray_ConnectAndPoll_ReconnectsOnError(t *testing.T) {
 	client := &mockIPCClient{
 		response: ipc.Response{Status: ipc.StatusConnected, IP: "10.0.0.1"},
 	}
-	tr := newWithDeps(api, newMockMenuAPI(), client, testPollInterval, true, false)
+	tr := newWithDeps(api, newMockMenuAPI(), client, testPollInterval, true, false, false, nil)
 
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -493,7 +493,7 @@ func TestTray_HandleToggle_IPCError_NoStateChange(t *testing.T) {
 	client := &mockIPCClient{
 		sendErr: fmt.Errorf("ipc: broken pipe"),
 	}
-	tr := newWithDeps(api, newMockMenuAPI(), client, testPollInterval, true, false)
+	tr := newWithDeps(api, newMockMenuAPI(), client, testPollInterval, true, false, false, nil)
 
 	tr.mu.Lock()
 	tr.connected = true
@@ -519,7 +519,7 @@ func TestTray_HandleAutoStartToggle_SendsSetAutoStart(t *testing.T) {
 	client := &mockIPCClient{
 		response: ipc.Response{Status: ipc.StatusOK},
 	}
-	tr := newWithDeps(api, newMockMenuAPI(), client, testPollInterval, true, false)
+	tr := newWithDeps(api, newMockMenuAPI(), client, testPollInterval, true, false, false, nil)
 
 	ctx := context.Background()
 	tr.handleAutoStartToggle(ctx)
@@ -546,7 +546,7 @@ func TestTray_HandleAutoStartToggle_FromFalse_SendsTrue(t *testing.T) {
 	client := &mockIPCClient{
 		response: ipc.Response{Status: ipc.StatusOK},
 	}
-	tr := newWithDeps(api, newMockMenuAPI(), client, testPollInterval, false, false)
+	tr := newWithDeps(api, newMockMenuAPI(), client, testPollInterval, false, false, false, nil)
 
 	ctx := context.Background()
 	tr.handleAutoStartToggle(ctx)
@@ -570,7 +570,7 @@ func TestTray_HandleAutoStartToggle_IPCError_ShowsTooltip(t *testing.T) {
 	client := &mockIPCClient{
 		sendErr: fmt.Errorf("ipc: broken pipe"),
 	}
-	tr := newWithDeps(api, newMockMenuAPI(), client, testPollInterval, true, false)
+	tr := newWithDeps(api, newMockMenuAPI(), client, testPollInterval, true, false, false, nil)
 
 	ctx := context.Background()
 	tr.handleAutoStartToggle(ctx)
@@ -595,7 +595,7 @@ func TestTray_HandleToggle_IPCError_ShowsTooltip(t *testing.T) {
 	client := &mockIPCClient{
 		sendErr: fmt.Errorf("ipc: connection refused"),
 	}
-	tr := newWithDeps(api, newMockMenuAPI(), client, testPollInterval, true, false)
+	tr := newWithDeps(api, newMockMenuAPI(), client, testPollInterval, true, false, false, nil)
 
 	tr.mu.Lock()
 	tr.connected = true
@@ -616,7 +616,7 @@ func TestTray_HandleLeakCheck_Pass(t *testing.T) {
 	client := &mockIPCClient{
 		response: ipc.Response{Status: ipc.StatusLeakPass, IP: "198.51.100.1"},
 	}
-	tr := newWithDeps(api, newMockMenuAPI(), client, testPollInterval, true, false)
+	tr := newWithDeps(api, newMockMenuAPI(), client, testPollInterval, true, false, false, nil)
 
 	ctx := context.Background()
 	tr.handleLeakCheck(ctx)
@@ -636,7 +636,7 @@ func TestTray_HandleLeakCheck_Fail(t *testing.T) {
 	client := &mockIPCClient{
 		response: ipc.Response{Status: ipc.StatusLeakFail, IP: "192.168.1.100"},
 	}
-	tr := newWithDeps(api, newMockMenuAPI(), client, testPollInterval, true, false)
+	tr := newWithDeps(api, newMockMenuAPI(), client, testPollInterval, true, false, false, nil)
 
 	ctx := context.Background()
 	tr.handleLeakCheck(ctx)
@@ -651,7 +651,7 @@ func TestTray_HandleLeakCheck_IPCError(t *testing.T) {
 	client := &mockIPCClient{
 		sendErr: fmt.Errorf("ipc: timeout"),
 	}
-	tr := newWithDeps(api, newMockMenuAPI(), client, testPollInterval, true, false)
+	tr := newWithDeps(api, newMockMenuAPI(), client, testPollInterval, true, false, false, nil)
 
 	ctx := context.Background()
 	tr.handleLeakCheck(ctx)
@@ -666,7 +666,7 @@ func TestTray_HandleLeakCheck_IPCError(t *testing.T) {
 func TestTray_NotifyUpdateReady_SetsTooltip(t *testing.T) {
 	api := &mockSystrayAPI{}
 	client := &mockIPCClient{}
-	tr := newWithDeps(api, newMockMenuAPI(), client, testPollInterval, true, false)
+	tr := newWithDeps(api, newMockMenuAPI(), client, testPollInterval, true, false, false, nil)
 
 	tr.NotifyUpdateReady("2.1.0")
 
@@ -679,7 +679,7 @@ func TestTray_NotifyUpdateReady_SetsTooltip(t *testing.T) {
 func TestTray_NotifyUpdateReady_NilMenuItem(t *testing.T) {
 	api := &mockSystrayAPI{}
 	client := &mockIPCClient{}
-	tr := newWithDeps(api, newMockMenuAPI(), client, testPollInterval, true, false)
+	tr := newWithDeps(api, newMockMenuAPI(), client, testPollInterval, true, false, false, nil)
 
 	// menuUpdateReady is nil (not created by mock) — should not panic
 	tr.NotifyUpdateReady("3.0.0")
@@ -693,7 +693,7 @@ func TestTray_NotifyUpdateReady_NilMenuItem(t *testing.T) {
 func TestTray_NotifyRollback(t *testing.T) {
 	api := &mockSystrayAPI{}
 	client := &mockIPCClient{}
-	tr := newWithDeps(api, newMockMenuAPI(), client, testPollInterval, true, false)
+	tr := newWithDeps(api, newMockMenuAPI(), client, testPollInterval, true, false, false, nil)
 
 	tr.NotifyRollback("2.1.0")
 
@@ -706,7 +706,7 @@ func TestTray_NotifyRollback(t *testing.T) {
 func TestTray_NotifyRollback_Deduplicated(t *testing.T) {
 	api := &mockSystrayAPI{}
 	client := &mockIPCClient{}
-	tr := newWithDeps(api, newMockMenuAPI(), client, testPollInterval, true, false)
+	tr := newWithDeps(api, newMockMenuAPI(), client, testPollInterval, true, false, false, nil)
 
 	tr.NotifyRollback("2.1.0")
 	callsAfterFirst := api.getCalls()
@@ -724,7 +724,7 @@ func TestTray_NotifyRollback_Deduplicated(t *testing.T) {
 func TestTray_NotifyRollback_DifferentVersions(t *testing.T) {
 	api := &mockSystrayAPI{}
 	client := &mockIPCClient{}
-	tr := newWithDeps(api, newMockMenuAPI(), client, testPollInterval, true, false)
+	tr := newWithDeps(api, newMockMenuAPI(), client, testPollInterval, true, false, false, nil)
 
 	tr.NotifyRollback("2.1.0")
 	callsAfterFirst := api.getCalls()
@@ -746,7 +746,7 @@ func TestTray_NotifyRollback_DifferentVersions(t *testing.T) {
 func TestTray_NotifyRollback_NilMenuItem(t *testing.T) {
 	api := &mockSystrayAPI{}
 	client := &mockIPCClient{}
-	tr := newWithDeps(api, newMockMenuAPI(), client, testPollInterval, true, false)
+	tr := newWithDeps(api, newMockMenuAPI(), client, testPollInterval, true, false, false, nil)
 
 	// menuUpdateReady is nil — should not panic
 	tr.NotifyRollback("3.0.0")
@@ -760,7 +760,7 @@ func TestTray_LeakAlert_IPCError_ResetsFlag(t *testing.T) {
 	client := &mockIPCClient{
 		response: ipc.Response{Status: ipc.StatusConnected, IP: "1.2.3.4"},
 	}
-	tr := newWithDeps(api, newMockMenuAPI(), client, testPollInterval, true, false)
+	tr := newWithDeps(api, newMockMenuAPI(), client, testPollInterval, true, false, false, nil)
 
 	// Simulate an active leak alert (e.g., from a prior poll).
 	tr.leakAlertActive = true
@@ -782,7 +782,7 @@ func TestTray_ConnectAndPoll_LeakAlert_Shown(t *testing.T) {
 			LeakStatus: ipc.StatusLeakFail,
 		},
 	}
-	tr := newWithDeps(api, newMockMenuAPI(), client, testPollInterval, true, false)
+	tr := newWithDeps(api, newMockMenuAPI(), client, testPollInterval, true, false, false, nil)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	go tr.connectAndPoll(ctx)
@@ -808,7 +808,7 @@ func TestTray_ConnectAndPoll_LeakRecovery_ResetsFlag(t *testing.T) {
 			LeakStatus: ipc.StatusLeakPass,
 		},
 	}
-	tr := newWithDeps(api, newMockMenuAPI(), client, testPollInterval, true, false)
+	tr := newWithDeps(api, newMockMenuAPI(), client, testPollInterval, true, false, false, nil)
 
 	// Seed a pre-existing active alert.
 	tr.leakAlertActive = true
@@ -831,7 +831,7 @@ func TestTray_HandleBlocklistToggle_FromEnabled_SendsFalse(t *testing.T) {
 	client := &mockIPCClient{
 		response: ipc.Response{Status: ipc.StatusOK},
 	}
-	tr := newWithDeps(api, newMockMenuAPI(), client, testPollInterval, true, true)
+	tr := newWithDeps(api, newMockMenuAPI(), client, testPollInterval, true, true, false, nil)
 
 	ctx := context.Background()
 	tr.handleBlocklistToggle(ctx)
@@ -858,7 +858,7 @@ func TestTray_HandleBlocklistToggle_FromDisabled_SendsTrue(t *testing.T) {
 	client := &mockIPCClient{
 		response: ipc.Response{Status: ipc.StatusOK},
 	}
-	tr := newWithDeps(api, newMockMenuAPI(), client, testPollInterval, true, false)
+	tr := newWithDeps(api, newMockMenuAPI(), client, testPollInterval, true, false, false, nil)
 
 	ctx := context.Background()
 	tr.handleBlocklistToggle(ctx)
@@ -885,7 +885,7 @@ func TestTray_HandleBlocklistToggle_IPCError_ShowsTooltip(t *testing.T) {
 	client := &mockIPCClient{
 		sendErr: fmt.Errorf("ipc: broken pipe"),
 	}
-	tr := newWithDeps(api, newMockMenuAPI(), client, testPollInterval, true, true)
+	tr := newWithDeps(api, newMockMenuAPI(), client, testPollInterval, true, true, false, nil)
 
 	ctx := context.Background()
 	tr.handleBlocklistToggle(ctx)
@@ -906,7 +906,7 @@ func TestTray_HandleBlocklistToggle_IPCError_ShowsTooltip(t *testing.T) {
 func TestTray_ClearUpdateNotification_NilMenuItem(t *testing.T) {
 	api := &mockSystrayAPI{}
 	client := &mockIPCClient{}
-	tr := newWithDeps(api, newMockMenuAPI(), client, testPollInterval, true, false)
+	tr := newWithDeps(api, newMockMenuAPI(), client, testPollInterval, true, false, false, nil)
 
 	// Should not panic with nil menuUpdateReady
 	tr.ClearUpdateNotification()

@@ -12,15 +12,19 @@ import (
 
 // Server wraps an HTTP/3 server for the stateless relay.
 type Server struct {
-	Addr        string
-	CertFile    string
-	KeyFile     string
-	Handler     http.Handler
-	STUNHandler http.Handler
-	SigningKey   ed25519.PrivateKey
-	Limiter     *Limiter
-	StartTime   time.Time
-	h3          *http3.Server
+	Addr           string
+	CertFile       string
+	KeyFile        string
+	Handler        http.Handler
+	STUNHandler    http.Handler
+	ConnectHandler http.Handler
+	SigningKey      ed25519.PrivateKey
+	Limiter        *Limiter
+	IPLimiter      *IPLimiter
+	CFIPValidator  *CloudflareIPValidator
+	StartTime      time.Time
+	Insecure       bool // dev mode: trust non-CF sources
+	h3             *http3.Server
 }
 
 // NewServer creates a relay server configured for TLS 1.3 with Ed25519 certificates.
@@ -52,17 +56,34 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 		mux.Handle("/dns-query", LimitMiddleware(s.Limiter, s.Handler))
 	}
 	mux.Handle("/health", LimitMiddleware(s.Limiter, NewHealthHandler(s.Limiter, s.StartTime)))
+
+	// Create verify handler and wire CF validator for session token issuance.
 	if s.SigningKey != nil {
-		mux.Handle("/verify", NewVerifyHandler(s.SigningKey))
+		vh := NewVerifyHandler(s.SigningKey)
+		if s.CFIPValidator != nil {
+			vh.SetCFValidator(s.CFIPValidator)
+		}
+		mux.Handle("/verify", vh)
 	}
 	if s.STUNHandler != nil {
 		mux.Handle("/stun-relay", LimitMiddleware(s.Limiter, s.STUNHandler))
+	}
+	if s.ConnectHandler != nil {
+		mux.Handle("/connect", LimitMiddleware(s.Limiter, s.ConnectHandler))
 	}
 
 	s.h3 = &http3.Server{
 		Addr:      s.Addr,
 		Handler:   mux,
 		TLSConfig: tlsCfg,
+	}
+
+	// Start background goroutines for IP limiter cleanup and CF IP refresh.
+	if s.IPLimiter != nil {
+		go s.IPLimiter.StartCleanup(ctx)
+	}
+	if s.CFIPValidator != nil {
+		go s.CFIPValidator.StartRefresh(ctx)
 	}
 
 	errCh := make(chan error, 1)
