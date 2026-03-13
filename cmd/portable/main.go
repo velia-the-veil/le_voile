@@ -91,6 +91,8 @@ func main() {
 		RegistryEnabled:      cfg.Registry.Enabled,
 		RegistryURL:          cfg.Registry.URL,
 		RegistryMasterPubKey: cfg.Registry.MasterPublicKey,
+		HTTPProxyEnabled:     cfg.HTTPProxy.Enabled,
+		HTTPProxyPort:        cfg.HTTPProxy.Port,
 	}
 	if cfg.Update.CheckInterval != "" {
 		d, err := time.ParseDuration(cfg.Update.CheckInterval)

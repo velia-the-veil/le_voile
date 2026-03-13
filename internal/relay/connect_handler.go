@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -81,6 +82,8 @@ func (h *ConnectHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
+	// Sanitize: remove Authorization header to prevent accidental log/forward leakage.
+	r.Header.Del("Authorization")
 
 	payload, err := VerifySessionToken(h.signingKey, token)
 	if err != nil {
@@ -112,15 +115,12 @@ func (h *ConnectHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		defer h.ipLimiter.Release(clientIP)
 	}
 
-	// Read target from JSON body.
-	body, err := io.ReadAll(io.LimitReader(r.Body, maxConnectBodySize+1))
-	if err != nil || len(body) > maxConnectBodySize {
-		http.Error(w, "Bad Request", http.StatusBadRequest)
-		return
-	}
-
+	// Read target from JSON body using a streaming decoder.
+	// IMPORTANT: Do NOT use io.ReadAll — the body is a multiplexed stream
+	// (JSON target + upstream data). ReadAll would block waiting for the stream to end.
+	decoder := json.NewDecoder(io.LimitReader(r.Body, maxConnectBodySize))
 	var req connectRequest
-	if err := json.Unmarshal(body, &req); err != nil || req.Target == "" {
+	if err := decoder.Decode(&req); err != nil || req.Target == "" {
 		http.Error(w, "Bad Request", http.StatusBadRequest)
 		return
 	}
@@ -149,20 +149,25 @@ func (h *ConnectHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Bidirectional relay with idle timeout.
+	// Pass remaining body (after JSON) as the client upstream reader.
+	clientReader := io.MultiReader(decoder.Buffered(), r.Body)
 	ctx := r.Context()
-	relay(ctx, r.Body, w, destConn)
+	relay(ctx, clientReader, w, destConn)
 }
 
 // relay copies data bidirectionally between the HTTP stream and the destination.
+// Both directions run in goroutines; when either finishes, the other is unblocked
+// via deadline manipulation and context cancellation.
 func relay(ctx context.Context, clientReader io.Reader, clientWriter io.Writer, dest net.Conn) {
-	idleTimer := time.NewTimer(connectIdleTimeout)
-	defer idleTimer.Stop()
-
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
+	var wg sync.WaitGroup
+	wg.Add(2)
+
 	// dest → client
 	go func() {
+		defer wg.Done()
 		defer cancel()
 		buf := make([]byte, 32*1024)
 		for {
@@ -175,7 +180,6 @@ func relay(ctx context.Context, clientReader io.Reader, clientWriter io.Writer, 
 				if f, ok := clientWriter.(http.Flusher); ok {
 					f.Flush()
 				}
-				idleTimer.Reset(connectIdleTimeout)
 			}
 			if err != nil {
 				return
@@ -184,26 +188,31 @@ func relay(ctx context.Context, clientReader io.Reader, clientWriter io.Writer, 
 	}()
 
 	// client → dest
-	buf := make([]byte, 32*1024)
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-idleTimer.C:
-			return
-		default:
-		}
-		n, err := clientReader.Read(buf)
-		if n > 0 {
-			if _, wErr := dest.Write(buf[:n]); wErr != nil {
+	go func() {
+		defer wg.Done()
+		defer cancel()
+		// When client stream ends, unblock dest.Read via a past deadline.
+		defer dest.SetReadDeadline(time.Now())
+		buf := make([]byte, 32*1024)
+		for {
+			n, err := clientReader.Read(buf)
+			if n > 0 {
+				dest.SetWriteDeadline(time.Now().Add(connectIdleTimeout))
+				if _, wErr := dest.Write(buf[:n]); wErr != nil {
+					return
+				}
+			}
+			if err != nil {
 				return
 			}
-			idleTimer.Reset(connectIdleTimeout)
 		}
-		if err != nil {
-			return
-		}
-	}
+	}()
+
+	// Wait for context cancellation (from either goroutine or parent).
+	<-ctx.Done()
+	// Force-unblock both directions.
+	dest.SetDeadline(time.Now())
+	wg.Wait()
 }
 
 // resolveAndValidateConnect resolves a host:port and validates against SSRF.

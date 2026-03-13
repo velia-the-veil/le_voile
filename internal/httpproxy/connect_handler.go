@@ -67,67 +67,25 @@ func (h *connectHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	relayDomain := h.tunnelClient.RelayDomain()
 	relayURL := "https://" + relayDomain + "/connect"
 
-	// Create the relay request using the tunnel's HTTP/3 client.
-	// Use io.Pipe for bidirectional streaming: we write browser data into the pipe,
-	// the HTTP/3 client sends it as the request body to the relay.
-	pr, pw := io.Pipe()
-
-	relayReq, err := http.NewRequestWithContext(r.Context(), http.MethodPost, relayURL, pr)
-	if err != nil {
-		pw.Close()
-		http.Error(w, "Internal Error", http.StatusInternalServerError)
-		return
-	}
-	relayReq.Header.Set("Authorization", "Bearer "+h.tunnelClient.SessionToken())
-	relayReq.Header.Set("Content-Type", "application/octet-stream")
-
-	// First, send the JSON target as the beginning of the body.
-	// The relay reads the JSON target, then streams the rest bidirectionally.
-	// Actually, per the spec, the target is in the POST body JSON and the relay
-	// opens a TCP connection and relays. The HTTP/3 body is then used for streaming.
-	// We need a different approach: send target as JSON first, then stream.
-	// But this complicates the protocol. Let's use a simpler approach:
-	// The relay reads the full JSON body to get the target, dials, and then
-	// the response body is the downstream data, and we need an upstream pipe.
-	//
-	// Actually looking at the relay handler implementation, it reads the body as JSON,
-	// dials, then responds 200 and relays via r.Body (upstream) and w (downstream).
-	// So the client needs to:
-	// 1. Send JSON target in the request body
-	// 2. After relay responds 200, relay browser data through the request body
-	// 3. Read relay response body for downstream data
-	//
-	// The challenge: we can't write JSON first and then stream through the same body.
-	// Solution: Use two separate phases. The request body contains only the JSON target.
-	// The relay uses response body for downstream and we don't need upstream through body.
-	// Wait - this is HTTP/3 streaming. The relay reads the request body as a stream.
-	//
-	// Let me reconsider the architecture: for HTTP CONNECT proxy, we need full-duplex.
-	// With HTTP/3:
-	// - Client → Relay: request body (stream)
-	// - Relay → Client: response body (stream)
-	//
-	// We prepend the JSON target to the request body, then stream browser data after it.
-	pw.Close() // close unused pipe
-
-	// Simpler approach: send target as JSON body, relay connects and streams back.
-	// For upstream (browser → destination), we use a fresh pipe.
+	// Use io.Pipe for upstream streaming: browser → pipe → relay request body.
+	// The JSON target is prepended via MultiReader so the relay reads it first,
+	// then the browser's upstream data flows through the same request body stream.
 	upstreamPR, upstreamPW := io.Pipe()
 
 	// Prepend JSON target to the upstream.
 	prefixedReader := io.MultiReader(bytes.NewReader(bodyJSON), upstreamPR)
 
-	relayReq2, err := http.NewRequestWithContext(r.Context(), http.MethodPost, relayURL, prefixedReader)
+	relayReq, err := http.NewRequestWithContext(r.Context(), http.MethodPost, relayURL, prefixedReader)
 	if err != nil {
 		upstreamPW.Close()
 		http.Error(w, "Internal Error", http.StatusInternalServerError)
 		return
 	}
-	relayReq2.Header.Set("Authorization", "Bearer "+h.tunnelClient.SessionToken())
-	relayReq2.Header.Set("Content-Type", "application/json")
+	relayReq.Header.Set("Authorization", "Bearer "+h.tunnelClient.SessionToken())
+	relayReq.Header.Set("Content-Type", "application/json")
 
 	// Send to relay via the tunnel's HTTP/3 client.
-	relayResp, err := h.tunnelClient.HTTPClient().Do(relayReq2)
+	relayResp, err := h.tunnelClient.HTTPClient().Do(relayReq)
 	if err != nil {
 		upstreamPW.Close()
 		http.Error(w, fmt.Sprintf("Relay Error: %v", err), http.StatusBadGateway)
@@ -162,7 +120,6 @@ func (h *connectHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		defer h.wg.Done()
 		defer conn.Close()
 		defer relayResp.Body.Close()
-		defer upstreamPW.Close()
 
 		// Send 200 Connection Established to the browser.
 		bufrw.WriteString("HTTP/1.1 200 Connection Established\r\n\r\n")
@@ -171,22 +128,23 @@ func (h *connectHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// Bidirectional relay:
 		// browser → upstream pipe → relay request body → destination
 		// destination → relay response body → browser
-		done := make(chan struct{}, 2)
+		var relayWg sync.WaitGroup
+		relayWg.Add(2)
 
 		// Relay response → browser
 		go func() {
+			defer relayWg.Done()
 			io.Copy(conn, relayResp.Body)
-			done <- struct{}{}
 		}()
 
 		// Browser → relay request body
 		go func() {
+			defer relayWg.Done()
+			defer upstreamPW.Close() // signals EOF to relay request body
 			io.Copy(upstreamPW, conn)
-			upstreamPW.Close()
-			done <- struct{}{}
 		}()
 
-		// Wait for either direction to finish.
-		<-done
+		// Wait for BOTH directions to finish.
+		relayWg.Wait()
 	}()
 }

@@ -256,7 +256,7 @@ func (sp *SysProxy) removePersistedFile() {
 }
 
 func (sp *SysProxy) isOurProxy(server string) bool {
-	return strings.Contains(server, "127.0.0.1:50113")
+	return strings.HasPrefix(server, "127.0.0.1:")
 }
 
 func (sp *SysProxy) readRegistryString(name string) (string, error) {
