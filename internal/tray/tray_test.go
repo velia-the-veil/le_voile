@@ -903,6 +903,122 @@ func TestTray_HandleBlocklistToggle_IPCError_ShowsTooltip(t *testing.T) {
 	}
 }
 
+// --- handleHTTPProxyToggle tests ---
+
+func TestTray_HandleHTTPProxyToggle_FromDisabled_SendsTrue(t *testing.T) {
+	api := &mockSystrayAPI{}
+	client := &mockIPCClient{
+		response: ipc.Response{
+			Status:          ipc.StatusOK,
+			HTTPProxyActive: true,
+			HTTPProxyAddr:   "127.0.0.1:50113",
+			HTTPProxySeq:    1,
+		},
+	}
+	tr := newWithDeps(api, newMockMenuAPI(), client, testPollInterval, true, false, false, nil)
+
+	ctx := context.Background()
+	tr.handleHTTPProxyToggle(ctx)
+
+	req := client.getLastRequest()
+	if req.Action != ipc.ActionSetHTTPProxy {
+		t.Errorf("expected set_http_proxy action, got %q", req.Action)
+	}
+	if req.Value != "true" {
+		t.Errorf("expected value 'true' (was httpProxyEnabled=false), got %q", req.Value)
+	}
+
+	tr.mu.Lock()
+	enabled := tr.httpProxyEnabled
+	seq := tr.httpProxySeq
+	tr.mu.Unlock()
+
+	if !enabled {
+		t.Error("expected httpProxyEnabled=true after toggle from false")
+	}
+	if seq != 1 {
+		t.Errorf("expected httpProxySeq=1, got %d", seq)
+	}
+}
+
+func TestTray_HandleHTTPProxyToggle_FromEnabled_SendsFalse(t *testing.T) {
+	api := &mockSystrayAPI{}
+	client := &mockIPCClient{
+		response: ipc.Response{
+			Status:          ipc.StatusOK,
+			HTTPProxyActive: false,
+			HTTPProxyAddr:   "",
+			HTTPProxySeq:    2,
+		},
+	}
+	tr := newWithDeps(api, newMockMenuAPI(), client, testPollInterval, true, false, true, nil)
+
+	ctx := context.Background()
+	tr.handleHTTPProxyToggle(ctx)
+
+	req := client.getLastRequest()
+	if req.Action != ipc.ActionSetHTTPProxy {
+		t.Errorf("expected set_http_proxy action, got %q", req.Action)
+	}
+	if req.Value != "false" {
+		t.Errorf("expected value 'false' (was httpProxyEnabled=true), got %q", req.Value)
+	}
+
+	tr.mu.Lock()
+	enabled := tr.httpProxyEnabled
+	tr.mu.Unlock()
+
+	if enabled {
+		t.Error("expected httpProxyEnabled=false after toggle from true")
+	}
+}
+
+func TestTray_HandleHTTPProxyToggle_IPCError_ShowsTooltip(t *testing.T) {
+	api := &mockSystrayAPI{}
+	client := &mockIPCClient{
+		sendErr: fmt.Errorf("ipc: broken pipe"),
+	}
+	tr := newWithDeps(api, newMockMenuAPI(), client, testPollInterval, true, false, true, nil)
+
+	ctx := context.Background()
+	tr.handleHTTPProxyToggle(ctx)
+
+	if got := api.getTooltip(); got != "Erreur proxy HTTP : ipc: broken pipe" {
+		t.Errorf("expected error tooltip, got %q", got)
+	}
+
+	tr.mu.Lock()
+	enabled := tr.httpProxyEnabled
+	tr.mu.Unlock()
+
+	if !enabled {
+		t.Error("expected httpProxyEnabled to remain true after IPC error")
+	}
+}
+
+func TestTray_HandleHTTPProxyToggle_ServiceError_ShowsTooltip(t *testing.T) {
+	api := &mockSystrayAPI{}
+	client := &mockIPCClient{
+		response: ipc.Response{Status: ipc.StatusError, Error: "port_in_use"},
+	}
+	tr := newWithDeps(api, newMockMenuAPI(), client, testPollInterval, true, false, false, nil)
+
+	ctx := context.Background()
+	tr.handleHTTPProxyToggle(ctx)
+
+	if got := api.getTooltip(); got != "Erreur proxy HTTP : port_in_use" {
+		t.Errorf("expected error tooltip, got %q", got)
+	}
+
+	tr.mu.Lock()
+	enabled := tr.httpProxyEnabled
+	tr.mu.Unlock()
+
+	if enabled {
+		t.Error("expected httpProxyEnabled to remain false after service error")
+	}
+}
+
 func TestTray_ClearUpdateNotification_NilMenuItem(t *testing.T) {
 	api := &mockSystrayAPI{}
 	client := &mockIPCClient{}
