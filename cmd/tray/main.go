@@ -12,13 +12,17 @@ var version string
 func main() {
 	autoStart := true
 	blocklistEnabled := false
+	httpProxyEnabled := false
+	relayDomain := ""
 	if cfgPath, err := config.DefaultPath(); err == nil {
 		if cfg, err := config.Load(cfgPath); err == nil {
 			autoStart = cfg.Client.AutoStart
 			blocklistEnabled = cfg.Blocklist.Enabled
+			httpProxyEnabled = cfg.HTTPProxy.Enabled
+			relayDomain = cfg.Relay.Domain
 		}
 	}
 
-	t := tray.NewWithConfig(autoStart, false, blocklistEnabled)
+	t := tray.NewWithConfig(autoStart, false, blocklistEnabled, httpProxyEnabled, relayDomain)
 	t.Run()
 }

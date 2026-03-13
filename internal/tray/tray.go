@@ -78,12 +78,17 @@ type Tray struct {
 	notifiedRollbackVer string            // last version passed to NotifyRollback (dedup guard)
 	leakAlertActive    bool // true while a leak alert tooltip is being shown (AC3)
 	blocklistEnabled   bool // current blocklist state (mirrors service config)
+	httpProxyEnabled   bool // current HTTP proxy state
+	httpProxySeq       uint64 // last seen sequence number
+	sysProxy           *SysProxy
+	relayDomain        string
 
 	menuToggle      *systray.MenuItem
 	menuLeakCheck   *systray.MenuItem
 	menuUpdateReady *systray.MenuItem
 	menuAutoStart   *systray.MenuItem
 	menuBlocklist   *systray.MenuItem
+	menuHTTPProxy   *systray.MenuItem
 	menuQuit        *systray.MenuItem
 }
 
@@ -98,9 +103,10 @@ func New() *Tray {
 	}
 }
 
-// NewWithConfig creates a Tray with the auto_start and blocklist preferences loaded from config.
+// NewWithConfig creates a Tray with the auto_start, blocklist, and HTTP proxy preferences loaded from config.
 // If portableMode is true, the auto-start menu option is hidden.
-func NewWithConfig(autoStart bool, portableMode bool, blocklistEnabled bool) *Tray {
+// relayDomain is used by SysProxy for ProxyOverride (bypass the relay itself).
+func NewWithConfig(autoStart bool, portableMode bool, blocklistEnabled bool, httpProxyEnabled bool, relayDomain string) *Tray {
 	return &Tray{
 		api:              defaultSystrayAPI{},
 		menuAPI:          defaultSystrayMenuAPI{},
@@ -109,11 +115,14 @@ func NewWithConfig(autoStart bool, portableMode bool, blocklistEnabled bool) *Tr
 		autoStart:        autoStart,
 		portableMode:     portableMode,
 		blocklistEnabled: blocklistEnabled,
+		httpProxyEnabled: httpProxyEnabled,
+		relayDomain:      relayDomain,
+		sysProxy:         NewSysProxy(relayDomain),
 	}
 }
 
 // newWithDeps creates a Tray with injected dependencies (for testing).
-func newWithDeps(api SystrayAPI, menuAPI SystrayMenuAPI, client IPCClient, poll time.Duration, autoStart bool, blocklistEnabled bool) *Tray {
+func newWithDeps(api SystrayAPI, menuAPI SystrayMenuAPI, client IPCClient, poll time.Duration, autoStart bool, blocklistEnabled bool, httpProxyEnabled bool, sysProxy *SysProxy) *Tray {
 	return &Tray{
 		api:              api,
 		menuAPI:          menuAPI,
@@ -121,6 +130,8 @@ func newWithDeps(api SystrayAPI, menuAPI SystrayMenuAPI, client IPCClient, poll 
 		pollInterval:     poll,
 		autoStart:        autoStart,
 		blocklistEnabled: blocklistEnabled,
+		httpProxyEnabled: httpProxyEnabled,
+		sysProxy:         sysProxy,
 	}
 }
 
@@ -162,9 +173,20 @@ func (t *Tray) onReady() {
 		blocklistTitle = "Blocklist DNS : activée"
 	}
 	t.menuBlocklist = t.menuAPI.AddMenuItemCheckbox(blocklistTitle, "Filtrer publicités et trackers via StevenBlack/hosts", t.blocklistEnabled)
+
+	httpProxyTitle := "Proxy HTTP : désactivé"
+	if t.httpProxyEnabled {
+		httpProxyTitle = "Proxy HTTP : activé"
+	}
+	t.menuHTTPProxy = t.menuAPI.AddMenuItemCheckbox(httpProxyTitle, "Tunneliser le trafic web via le relay (camouflage IP)", t.httpProxyEnabled)
 	t.menuAPI.AddSeparator()
 
 	t.menuQuit = t.menuAPI.AddMenuItem("Quitter", "Quitter Le Voile")
+
+	// Recover WinINET proxy if a previous tray instance crashed.
+	if t.sysProxy != nil {
+		t.sysProxy.RecoverOrphan()
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	t.cancel = cancel
@@ -174,6 +196,14 @@ func (t *Tray) onReady() {
 }
 
 func (t *Tray) onExit() {
+	// Restore WinINET proxy if it was active — tray is shutting down.
+	t.mu.Lock()
+	wasProxyActive := t.httpProxyEnabled
+	t.mu.Unlock()
+	if wasProxyActive {
+		t.syncSysProxy(false, "")
+	}
+
 	if t.cancel != nil {
 		t.cancel()
 	}
@@ -199,6 +229,8 @@ func (t *Tray) menuHandler(ctx context.Context) {
 			t.handleAutoStartToggle(ctx)
 		case <-t.menuBlocklist.ClickedCh:
 			t.handleBlocklistToggle(ctx)
+		case <-t.menuHTTPProxy.ClickedCh:
+			t.handleHTTPProxyToggle(ctx)
 		case <-t.menuQuit.ClickedCh:
 			t.handleQuit(ctx)
 		}
@@ -322,6 +354,61 @@ func (t *Tray) handleBlocklistToggle(ctx context.Context) {
 		}
 	} else if resp.Error != "" {
 		t.api.SetTooltip(fmt.Sprintf("Erreur blocklist : %s", resp.Error))
+	}
+}
+
+func (t *Tray) handleHTTPProxyToggle(ctx context.Context) {
+	t.mu.Lock()
+	wasEnabled := t.httpProxyEnabled
+	t.mu.Unlock()
+
+	newValue := "true"
+	if wasEnabled {
+		newValue = "false"
+	}
+
+	resp, err := t.client.SendContext(ctx, ipc.Request{
+		Action: ipc.ActionSetHTTPProxy,
+		Value:  newValue,
+	})
+	if err != nil {
+		t.api.SetTooltip(fmt.Sprintf("Erreur proxy HTTP : %s", err))
+		return
+	}
+
+	if resp.Status == ipc.StatusOK {
+		t.mu.Lock()
+		t.httpProxyEnabled = !wasEnabled
+		t.httpProxySeq = resp.HTTPProxySeq
+		t.mu.Unlock()
+
+		if t.menuHTTPProxy != nil {
+			if wasEnabled {
+				t.menuHTTPProxy.Uncheck()
+				t.menuHTTPProxy.SetTitle("Proxy HTTP : désactivé")
+			} else {
+				t.menuHTTPProxy.Check()
+				t.menuHTTPProxy.SetTitle("Proxy HTTP : activé")
+			}
+		}
+
+		// Update WinINET proxy based on new state.
+		t.syncSysProxy(!wasEnabled, resp.HTTPProxyAddr)
+	} else if resp.Error != "" {
+		t.api.SetTooltip(fmt.Sprintf("Erreur proxy HTTP : %s", resp.Error))
+	}
+}
+
+// syncSysProxy configures or restores the WinINET system proxy.
+func (t *Tray) syncSysProxy(active bool, addr string) {
+	if t.sysProxy == nil {
+		return
+	}
+	if active && addr != "" {
+		t.sysProxy.Save()
+		t.sysProxy.Set(addr)
+	} else {
+		t.sysProxy.Restore()
 	}
 }
 
@@ -489,14 +576,16 @@ func (t *Tray) handleIPCError(ctx context.Context, err error) {
 	t.mu.Lock()
 	t.last = ""
 	t.connected = false
-	t.mu.Unlock()
-
+	wasProxyActive := t.httpProxyEnabled
+	t.httpProxyEnabled = false
 	// Reset leak alert flag so future leaks detected after reconnect are notified.
-	// Without this reset, a leak alert active at the time of disconnect would
-	// permanently suppress all future alerts (leakAlertActive stays true).
-	t.mu.Lock()
 	t.leakAlertActive = false
 	t.mu.Unlock()
+
+	// Restore WinINET immediately if the proxy was active — service may have crashed.
+	if wasProxyActive {
+		t.syncSysProxy(false, "")
+	}
 
 	t.api.SetIcon(IconDisconnected)
 	t.api.SetTooltip(fmt.Sprintf("Non protégé — %s", err))
@@ -511,7 +600,7 @@ func (t *Tray) handleIPCError(ctx context.Context, err error) {
 
 func (t *Tray) updateTrayState(resp ipc.Response) {
 	t.mu.Lock()
-	stateKey := resp.Status + "|" + resp.IP + "|" + resp.Error + "|" + fmt.Sprintf("%v", resp.BlocklistEnabled)
+	stateKey := resp.Status + "|" + resp.IP + "|" + resp.Error + "|" + fmt.Sprintf("%v|%d", resp.BlocklistEnabled, resp.HTTPProxySeq)
 	if t.last == stateKey {
 		t.mu.Unlock()
 		return
@@ -523,6 +612,13 @@ func (t *Tray) updateTrayState(resp ipc.Response) {
 	blocklistChanged := resp.BlocklistEnabled != t.blocklistEnabled
 	if blocklistChanged {
 		t.blocklistEnabled = resp.BlocklistEnabled
+	}
+
+	// Capture HTTP proxy state change via sequence number comparison.
+	httpProxyChanged := resp.HTTPProxySeq != t.httpProxySeq
+	if httpProxyChanged {
+		t.httpProxySeq = resp.HTTPProxySeq
+		t.httpProxyEnabled = resp.HTTPProxyActive
 	}
 
 	switch resp.Status {
@@ -544,6 +640,20 @@ func (t *Tray) updateTrayState(resp ipc.Response) {
 			t.menuBlocklist.Uncheck()
 			t.menuBlocklist.SetTitle("Blocklist DNS : désactivée")
 		}
+	}
+
+	// Synchronise HTTP proxy menu label and WinINET outside the lock.
+	if httpProxyChanged {
+		if t.menuHTTPProxy != nil {
+			if resp.HTTPProxyActive {
+				t.menuHTTPProxy.Check()
+				t.menuHTTPProxy.SetTitle("Proxy HTTP : activé")
+			} else {
+				t.menuHTTPProxy.Uncheck()
+				t.menuHTTPProxy.SetTitle("Proxy HTTP : désactivé")
+			}
+		}
+		t.syncSysProxy(resp.HTTPProxyActive, resp.HTTPProxyAddr)
 	}
 
 	switch resp.Status {

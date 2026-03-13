@@ -48,6 +48,8 @@ func Handle(prg *svc.Program, req ipc.Request, opts Options) ipc.Response {
 		return handleUpdateStatus(prg)
 	case ipc.ActionSetBlocklist:
 		return handleSetBlocklist(prg, req, opts)
+	case ipc.ActionSetHTTPProxy:
+		return handleSetHTTPProxy(prg, req, opts)
 	default:
 		return ipc.Response{Status: ipc.StatusError, Error: "unknown_action"}
 	}
@@ -65,6 +67,9 @@ func handleGetStatus(prg *svc.Program) ipc.Response {
 		}
 		fillLeakStatus(prg, &resp)
 		resp.BlocklistEnabled = prg.BlocklistActive()
+		resp.HTTPProxyActive = prg.HTTPProxyActive()
+		resp.HTTPProxyAddr = prg.HTTPProxyAddr()
+		resp.HTTPProxySeq = prg.HTTPProxySeq()
 		return resp
 	}
 	state := tc.State().Get()
@@ -90,6 +95,9 @@ func handleGetStatus(prg *svc.Program) ipc.Response {
 	fillLeakStatus(prg, &resp)
 
 	resp.BlocklistEnabled = prg.BlocklistActive()
+	resp.HTTPProxyActive = prg.HTTPProxyActive()
+	resp.HTTPProxyAddr = prg.HTTPProxyAddr()
+	resp.HTTPProxySeq = prg.HTTPProxySeq()
 	return resp
 }
 
@@ -223,7 +231,17 @@ func handleLeakCheck(prg *svc.Program) ipc.Response {
 		req := leakcheck.BuildBindingRequest()
 		resp, err := tc.SendSTUNRelay(ctx, req, "stun.l.google.com:19302")
 		if err != nil {
-			return nil, fmt.Errorf("leakcheck: tunnel stun relay: %w", err)
+			// Retry once for transient QUIC stream errors.
+			select {
+			case <-ctx.Done():
+				return nil, fmt.Errorf("leakcheck: tunnel stun relay: %w", err)
+			case <-time.After(500 * time.Millisecond):
+			}
+			req = leakcheck.BuildBindingRequest()
+			resp, err = tc.SendSTUNRelay(ctx, req, "stun.l.google.com:19302")
+			if err != nil {
+				return nil, fmt.Errorf("leakcheck: tunnel stun relay: %w", err)
+			}
 		}
 		return leakcheck.ParseXORMappedAddress(resp)
 	}
@@ -335,6 +353,43 @@ func handleSetBlocklist(prg *svc.Program, req ipc.Request, opts Options) ipc.Res
 	}
 
 	return ipc.Response{Status: ipc.StatusOK, BlocklistEnabled: enabled}
+}
+
+func handleSetHTTPProxy(prg *svc.Program, req ipc.Request, opts Options) ipc.Response {
+	if req.Value != "true" && req.Value != "false" {
+		return ipc.Response{Status: ipc.StatusError, Error: "invalid_value"}
+	}
+	enabled := req.Value == "true"
+
+	cfgPath := opts.ConfigPathFn()
+	if cfgPath == "" {
+		return ipc.Response{Status: ipc.StatusError, Error: "no_config_file"}
+	}
+
+	cfg, err := config.Load(cfgPath)
+	if err != nil {
+		return ipc.Response{Status: ipc.StatusError, Error: err.Error()}
+	}
+
+	cfg.HTTPProxy.Enabled = enabled
+	if err := cfg.Save(cfgPath); err != nil {
+		return ipc.Response{Status: ipc.StatusError, Error: err.Error()}
+	}
+
+	if enabled {
+		if err := prg.EnableHTTPProxy(); err != nil {
+			return ipc.Response{Status: ipc.StatusError, Error: err.Error()}
+		}
+	} else {
+		prg.DisableHTTPProxy()
+	}
+
+	return ipc.Response{
+		Status:          ipc.StatusOK,
+		HTTPProxyActive: prg.HTTPProxyActive(),
+		HTTPProxyAddr:   prg.HTTPProxyAddr(),
+		HTTPProxySeq:    prg.HTTPProxySeq(),
+	}
 }
 
 // FormatUptime formats a duration as "Xh Ym" or "Xm Ys".

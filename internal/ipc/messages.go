@@ -21,7 +21,8 @@ const (
 	ActionCheckUpdate  = "check_update"
 	ActionUpdateStatus = "update_status"
 	ActionNotifyUpdate = "notify_update"
-	ActionSetBlocklist = "set_blocklist"
+	ActionSetBlocklist  = "set_blocklist"
+	ActionSetHTTPProxy = "set_http_proxy"
 )
 
 // Status constants for IPC responses.
@@ -65,4 +66,7 @@ type Response struct {
 	LeakStatus       string `json:"leak_status,omitempty"`
 	LeakLastCheck    string `json:"leak_last_check,omitempty"`
 	BlocklistEnabled bool   `json:"blocklist_enabled,omitempty"`
+	HTTPProxyActive  bool   `json:"http_proxy_active,omitempty"`
+	HTTPProxyAddr    string `json:"http_proxy_addr,omitempty"`
+	HTTPProxySeq     uint64 `json:"http_proxy_seq,omitempty"`
 }

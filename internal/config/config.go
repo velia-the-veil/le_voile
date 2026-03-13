@@ -17,6 +17,13 @@ type Config struct {
 	Update    UpdateConfig    `toml:"update"`
 	Blocklist BlocklistConfig `toml:"blocklist"`
 	Registry  RegistryConfig  `toml:"registry"`
+	HTTPProxy HTTPProxyConfig `toml:"http_proxy"`
+}
+
+// HTTPProxyConfig holds HTTP CONNECT proxy settings for IP camouflage.
+type HTTPProxyConfig struct {
+	Enabled bool `toml:"enabled"`
+	Port    int  `toml:"port"`
 }
 
 // BlocklistConfig holds DNS blocklist settings.
@@ -80,6 +87,10 @@ func Load(path string) (*Config, error) {
 			Enabled:         false,
 			URL:             "https://levoile.dev",
 			RefreshInterval: "1h",
+		},
+		HTTPProxy: HTTPProxyConfig{
+			Enabled: false,
+			Port:    50113,
 		},
 	}
 

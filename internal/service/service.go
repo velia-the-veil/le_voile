@@ -16,6 +16,7 @@ import (
 
 	"github.com/velia-the-veil/le_voile/internal/blocklist"
 	"github.com/velia-the-veil/le_voile/internal/dns"
+	"github.com/velia-the-veil/le_voile/internal/httpproxy"
 	"github.com/velia-the-veil/le_voile/internal/leakcheck"
 	"github.com/velia-the-veil/le_voile/internal/registry"
 	"github.com/velia-the-veil/le_voile/internal/stun"
@@ -56,6 +57,9 @@ type Config struct {
 	RegistryURL             string
 	RegistryMasterPubKey    string
 	RegistryRefreshInterval time.Duration
+
+	HTTPProxyEnabled bool
+	HTTPProxyPort    int
 }
 
 // Program implements kardianos/service.Interface for lifecycle management.
@@ -111,6 +115,15 @@ type Program struct {
 	stunMu     sync.Mutex
 	stunCancel context.CancelFunc
 	stunErrCh  chan error
+
+	// httpProxyMu protects HTTP proxy lifecycle.
+	httpProxyMu     sync.Mutex
+	httpProxyCancel context.CancelFunc
+	httpProxyErrCh  chan error
+	httpProxy       *httpproxy.Server
+	httpProxyActive atomic.Bool
+	httpProxySeq    atomic.Uint64
+	httpProxyAddr   atomic.Value // string
 }
 
 // NewProgram creates a Program with the given configuration.
@@ -252,6 +265,35 @@ func (p *Program) BlocklistManager() *blocklist.Manager {
 // BlocklistActive reports whether blocklist filtering is currently active.
 func (p *Program) BlocklistActive() bool {
 	return p.blocklistActive.Load()
+}
+
+// HTTPProxyActive reports whether the HTTP proxy is currently running.
+func (p *Program) HTTPProxyActive() bool {
+	return p.httpProxyActive.Load()
+}
+
+// HTTPProxyAddr returns the address the HTTP proxy is listening on.
+func (p *Program) HTTPProxyAddr() string {
+	v := p.httpProxyAddr.Load()
+	if v == nil {
+		return ""
+	}
+	return v.(string)
+}
+
+// HTTPProxySeq returns the monotone sequence number for proxy state changes.
+func (p *Program) HTTPProxySeq() uint64 {
+	return p.httpProxySeq.Load()
+}
+
+// EnableHTTPProxy starts the HTTP proxy at runtime.
+func (p *Program) EnableHTTPProxy() error {
+	return p.startHTTPProxy(p.ctx)
+}
+
+// DisableHTTPProxy stops the HTTP proxy at runtime.
+func (p *Program) DisableHTTPProxy() {
+	p.stopHTTPProxy()
 }
 
 // EnableBlocklist activates DNS blocklist filtering at runtime.
@@ -446,6 +488,14 @@ func (p *Program) run() {
 		return
 	}
 
+	// --- 2a. HTTP proxy start (if enabled) ---
+	if p.config.HTTPProxyEnabled {
+		if err := p.startHTTPProxy(ctx); err != nil {
+			fmt.Fprintf(serviceStderr, "service: http proxy start: %v\n", err)
+			// Non-fatal: continue without HTTP proxy.
+		}
+	}
+
 	// --- 2b. STUN interceptor start (after tunnel connected, best-effort) ---
 	p.startSTUN(ctx)
 
@@ -485,10 +535,16 @@ func (p *Program) run() {
 	// Wrap stopProxy/startProxy to also disable/enable STUN components.
 	ks := dns.NewKillSwitch(dnsMgr, func() {
 		p.setSTUNEnabled(false)
+		p.stopHTTPProxy()
 		p.stopProxy()
 	}, func(reconnCtx context.Context) error {
 		err := p.startProxy(reconnCtx)
 		if err == nil {
+			if p.config.HTTPProxyEnabled {
+				if hpErr := p.startHTTPProxy(reconnCtx); hpErr != nil {
+					fmt.Fprintf(serviceStderr, "service: http proxy restart: %v\n", hpErr)
+				}
+			}
 			p.setSTUNEnabled(true)
 		}
 		return err
@@ -506,14 +562,24 @@ func (p *Program) run() {
 
 	// --- 5b. Leak scheduler start ---
 	getPublicIP := func(lkCtx context.Context) (net.IP, error) {
-		req := leakcheck.BuildBindingRequest()
 		stunServer := p.config.STUNDefaultServer
 		if stunServer == "" {
 			stunServer = "stun.l.google.com:19302"
 		}
+		req := leakcheck.BuildBindingRequest()
 		resp, err := client.SendSTUNRelay(lkCtx, req, stunServer)
 		if err != nil {
-			return nil, fmt.Errorf("leakcheck: tunnel stun relay: %w", err)
+			// Retry once for transient QUIC stream errors.
+			select {
+			case <-lkCtx.Done():
+				return nil, fmt.Errorf("leakcheck: tunnel stun relay: %w", err)
+			case <-time.After(500 * time.Millisecond):
+			}
+			req = leakcheck.BuildBindingRequest()
+			resp, err = client.SendSTUNRelay(lkCtx, req, stunServer)
+			if err != nil {
+				return nil, fmt.Errorf("leakcheck: tunnel stun relay: %w", err)
+			}
 		}
 		return leakcheck.ParseXORMappedAddress(resp)
 	}
@@ -665,6 +731,9 @@ func (p *Program) shutdown() {
 
 	// 2b. Stop STUN interceptor (before DNS restore)
 	p.stopSTUN()
+
+	// 2c. Stop HTTP proxy (before kill switch deactivate)
+	p.stopHTTPProxy()
 
 	// 3. Deactivate kill switch if active
 	if p.killSwitch != nil && p.killSwitch.IsActive() {
@@ -1007,6 +1076,82 @@ func (p *Program) setSTUNEnabled(enabled bool) {
 	}
 	if relayer != nil {
 		relayer.SetEnabled(enabled)
+	}
+}
+
+// startHTTPProxy starts the local HTTP CONNECT proxy (pattern: startProxy).
+func (p *Program) startHTTPProxy(proxyCtx context.Context) error {
+	p.httpProxyMu.Lock()
+	defer p.httpProxyMu.Unlock()
+
+	if p.httpProxy != nil {
+		return nil // already running
+	}
+
+	port := p.config.HTTPProxyPort
+	if port == 0 {
+		port = 50113
+	}
+	listenAddr := fmt.Sprintf("127.0.0.1:%d", port)
+
+	srv := httpproxy.NewServer(listenAddr, p.tunnelClient)
+	hpCtx, hpCancel := context.WithCancel(proxyCtx)
+	errCh := make(chan error, 1)
+
+	go func() {
+		errCh <- srv.Start(hpCtx)
+	}()
+
+	select {
+	case <-srv.Ready():
+		p.httpProxyCancel = hpCancel
+		p.httpProxyErrCh = errCh
+		p.httpProxy = srv
+		p.httpProxyActive.Store(true)
+		p.httpProxyAddr.Store(srv.ListenAddr())
+		p.httpProxySeq.Add(1)
+		return nil
+	case err := <-errCh:
+		hpCancel()
+		return fmt.Errorf("http proxy start: %w", err)
+	}
+}
+
+// stopHTTPProxy stops the local HTTP CONNECT proxy with 5s draining.
+func (p *Program) stopHTTPProxy() {
+	p.httpProxyMu.Lock()
+	cancel := p.httpProxyCancel
+	errCh := p.httpProxyErrCh
+	srv := p.httpProxy
+	p.httpProxyCancel = nil
+	p.httpProxyErrCh = nil
+	p.httpProxy = nil
+	p.httpProxyMu.Unlock()
+
+	if cancel != nil {
+		cancel()
+	}
+	if errCh != nil {
+		<-errCh
+	}
+
+	// Wait for active CONNECT connections to drain (max 5s).
+	if srv != nil {
+		wgDone := make(chan struct{})
+		go func() {
+			srv.WaitGroup().Wait()
+			close(wgDone)
+		}()
+		select {
+		case <-wgDone:
+		case <-time.After(5 * time.Second):
+		}
+	}
+
+	wasActive := p.httpProxyActive.Swap(false)
+	if wasActive {
+		p.httpProxyAddr.Store("")
+		p.httpProxySeq.Add(1)
 	}
 }
 

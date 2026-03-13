@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"sync"
 	"time"
@@ -46,17 +47,43 @@ type verifyRequest struct {
 
 // verifyResponse is the JSON reply from the relay /verify endpoint.
 type verifyResponse struct {
-	Signature string `json:"signature"`
+	Signature    string `json:"signature"`
+	SessionToken string `json:"session_token,omitempty"`
 }
+
+// ErrTokenExpired is returned when the session token has expired and refresh failed.
+var ErrTokenExpired = errors.New("tunnel: session token expired")
+
+// Token refresh constants.
+const (
+	tokenRefreshMargin    = 5 * time.Minute  // refresh 5min before expiry
+	tokenRefreshBackoffInit = 1 * time.Second
+	tokenRefreshBackoffMax  = 60 * time.Second
+	tokenCircuitBreakerMax  = 5  // consecutive failures before circuit breaker opens
+	tokenCircuitBreakerPause = 60 * time.Second
+)
 
 // Client manages an HTTP/3 tunnel connection to the relay.
 type Client struct {
 	mu          sync.RWMutex
 	relayDomain string
+	relayIP     string // resolved IP of the relay, used to bypass system DNS
 	relayPubKey ed25519.PublicKey
 	httpClient  *http.Client
 	transport   *http3.Transport
 	state       *StateManager
+
+	// Session token for proxy CONNECT authentication.
+	sessionToken       string // raw token string
+	sessionTokenIssued int64  // unix timestamp
+	sessionTokenTTL    int64  // seconds
+
+	// Token refresh single-flight + circuit breaker.
+	refreshMu       sync.Mutex
+	refreshFailures int
+	refreshBackoff  time.Duration
+	circuitOpen     bool
+	circuitOpenedAt time.Time
 }
 
 // NewClient creates a tunnel client configured for HTTP/3 with TLS 1.3.
@@ -72,16 +99,31 @@ func NewClient(relayDomain string, relayPubKeyBase64 string, opts ...ClientOptio
 		return nil, fmt.Errorf("tunnel: new client: %w", err)
 	}
 
+	// Resolve relay IP at startup, BEFORE system DNS is redirected to the local
+	// proxy. This prevents a deadlock where the tunnel needs DNS to connect, but
+	// DNS is routed through the tunnel that isn't connected yet.
+	relayIP := relayDomain
+	if ip := net.ParseIP(relayDomain); ip == nil {
+		// Domain name, not an IP — resolve it now.
+		ips, err := net.LookupIP(relayDomain)
+		if err != nil || len(ips) == 0 {
+			return nil, fmt.Errorf("tunnel: resolve relay %q: %w", relayDomain, err)
+		}
+		relayIP = ips[0].String()
+	}
+
 	// Create Client first so the TLS closure can read c.relayPubKey under lock,
 	// ensuring UpdateRelay updates are visible to future TLS handshakes.
 	c := &Client{
 		relayDomain: relayDomain,
+		relayIP:     relayIP,
 		relayPubKey: pubKey,
 		state:       NewStateManager(),
 	}
 
 	tr := &http3.Transport{
 		TLSClientConfig: &tls.Config{
+			ServerName: relayDomain, // SNI must match the cert, not the IP
 			NextProtos:         []string{http3.NextProtoH3},
 			MinVersion:         tls.VersionTLS13,
 			InsecureSkipVerify: o.insecure || o.skipCAOnly,
@@ -138,6 +180,15 @@ func WithInsecureSkipCAOnly() ClientOption {
 	return func(o *clientOptions) { o.skipCAOnly = true }
 }
 
+// relayURL builds a URL using the resolved IP to avoid DNS lookups.
+// QUIC uses the TLS ServerName (set in the transport config) for SNI.
+func (c *Client) relayURL(path string) string {
+	c.mu.RLock()
+	ip := c.relayIP
+	c.mu.RUnlock()
+	return "https://" + ip + path
+}
+
 // Connect establishes the tunnel by verifying the relay's Ed25519 identity.
 func (c *Client) Connect(ctx context.Context) error {
 	c.state.Set(StateConnecting)
@@ -166,11 +217,7 @@ func (c *Client) SendDoHQuery(ctx context.Context, dnsPayload []byte) ([]byte, e
 	ctx, cancel := context.WithTimeout(ctx, dohTimeout)
 	defer cancel()
 
-	c.mu.RLock()
-	domain := c.relayDomain
-	c.mu.RUnlock()
-
-	url := "https://" + domain + "/dns-query"
+	url := c.relayURL("/dns-query")
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(dnsPayload))
 	if err != nil {
 		return nil, fmt.Errorf("tunnel: send doh: %w", err)
@@ -204,11 +251,7 @@ func (c *Client) SendSTUNRelay(ctx context.Context, stunPacket []byte, targetAdd
 	ctx, cancel := context.WithTimeout(ctx, stunRelayTimeout)
 	defer cancel()
 
-	c.mu.RLock()
-	domain := c.relayDomain
-	c.mu.RUnlock()
-
-	url := "https://" + domain + "/stun-relay"
+	url := c.relayURL("/stun-relay")
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(stunPacket))
 	if err != nil {
 		return nil, fmt.Errorf("tunnel: send stun relay: %w", err)
@@ -260,8 +303,18 @@ func (c *Client) UpdateRelay(relayDomain string, relayPubKeyBase64 string) error
 	if err != nil {
 		return fmt.Errorf("tunnel: update relay: %w", err)
 	}
+	// Re-resolve IP for the new relay domain.
+	relayIP := relayDomain
+	if ip := net.ParseIP(relayDomain); ip == nil {
+		ips, lookupErr := net.LookupIP(relayDomain)
+		if lookupErr != nil || len(ips) == 0 {
+			return fmt.Errorf("tunnel: update relay: resolve %q: %w", relayDomain, lookupErr)
+		}
+		relayIP = ips[0].String()
+	}
 	c.mu.Lock()
 	c.relayDomain = relayDomain
+	c.relayIP = relayIP
 	c.relayPubKey = pubKey
 	c.mu.Unlock()
 	return nil
@@ -274,10 +327,103 @@ func (c *Client) RelayDomain() string {
 	return c.relayDomain
 }
 
-func (c *Client) verifyRelay(ctx context.Context) error {
-	// Read relay coordinates under lock for thread-safety with UpdateRelay.
+// SessionToken returns the current session token (thread-safe).
+func (c *Client) SessionToken() string {
 	c.mu.RLock()
-	domain := c.relayDomain
+	defer c.mu.RUnlock()
+	return c.sessionToken
+}
+
+// SessionTokenNeedsRefresh returns true if the token is expired or near expiry.
+func (c *Client) SessionTokenNeedsRefresh() bool {
+	c.mu.RLock()
+	token := c.sessionToken
+	issued := c.sessionTokenIssued
+	ttl := c.sessionTokenTTL
+	c.mu.RUnlock()
+	if token == "" {
+		return true
+	}
+	expiresAt := issued + ttl
+	margin := int64(tokenRefreshMargin.Seconds())
+	return time.Now().Unix() >= expiresAt-margin
+}
+
+// SessionTokenExpired returns true if the token is fully expired.
+func (c *Client) SessionTokenExpired() bool {
+	c.mu.RLock()
+	token := c.sessionToken
+	issued := c.sessionTokenIssued
+	ttl := c.sessionTokenTTL
+	c.mu.RUnlock()
+	if token == "" {
+		return true
+	}
+	return time.Now().Unix() >= issued+ttl
+}
+
+// RefreshSessionToken attempts to refresh the session token via verifyRelay.
+// Single-flight (mutex), backoff, and circuit breaker.
+func (c *Client) RefreshSessionToken(ctx context.Context) error {
+	c.refreshMu.Lock()
+	defer c.refreshMu.Unlock()
+
+	// Circuit breaker check.
+	if c.circuitOpen {
+		if time.Since(c.circuitOpenedAt) < tokenCircuitBreakerPause {
+			if !c.SessionTokenExpired() {
+				return nil // token still valid, skip refresh
+			}
+			return ErrTokenExpired
+		}
+		// Reset circuit breaker after pause.
+		c.circuitOpen = false
+		c.refreshFailures = 0
+		c.refreshBackoff = 0
+	}
+
+	// Double-check: maybe another goroutine refreshed while we waited.
+	if !c.SessionTokenNeedsRefresh() {
+		return nil
+	}
+
+	if err := c.verifyRelay(ctx); err != nil {
+		c.refreshFailures++
+		if c.refreshBackoff == 0 {
+			c.refreshBackoff = tokenRefreshBackoffInit
+		} else {
+			c.refreshBackoff *= 2
+			if c.refreshBackoff > tokenRefreshBackoffMax {
+				c.refreshBackoff = tokenRefreshBackoffMax
+			}
+		}
+		if c.refreshFailures >= tokenCircuitBreakerMax {
+			c.circuitOpen = true
+			c.circuitOpenedAt = time.Now()
+		}
+		if !c.SessionTokenExpired() {
+			return nil // token still valid, use it
+		}
+		return fmt.Errorf("tunnel: refresh token: %w", err)
+	}
+
+	// Reset on success.
+	c.refreshFailures = 0
+	c.refreshBackoff = 0
+	return nil
+}
+
+// EnsureSessionToken refreshes the token if needed before a CONNECT request.
+func (c *Client) EnsureSessionToken(ctx context.Context) error {
+	if !c.SessionTokenNeedsRefresh() {
+		return nil
+	}
+	return c.RefreshSessionToken(ctx)
+}
+
+func (c *Client) verifyRelay(ctx context.Context) error {
+	// Read relay public key under lock for thread-safety with UpdateRelay.
+	c.mu.RLock()
 	pubKey := c.relayPubKey
 	c.mu.RUnlock()
 
@@ -293,7 +439,7 @@ func (c *Client) verifyRelay(ctx context.Context) error {
 		return fmt.Errorf("tunnel: connect: marshal request: %w", err)
 	}
 
-	url := "https://" + domain + "/verify"
+	url := c.relayURL("/verify")
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(reqBody))
 	if err != nil {
 		return fmt.Errorf("tunnel: connect: %w", err)
@@ -322,6 +468,15 @@ func (c *Client) verifyRelay(ctx context.Context) error {
 
 	if !lecrypto.Verify(pubKey, nonce, sig) {
 		return ErrVerificationFailed
+	}
+
+	// Store session token if provided.
+	if vResp.SessionToken != "" {
+		c.mu.Lock()
+		c.sessionToken = vResp.SessionToken
+		c.sessionTokenIssued = time.Now().Unix()
+		c.sessionTokenTTL = 14400 // 4h default
+		c.mu.Unlock()
 	}
 
 	return nil
