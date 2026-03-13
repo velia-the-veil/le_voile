@@ -30,9 +30,11 @@ func NewPlatformListener() Listener {
 // The pipe is restricted to SYSTEM and the built-in Administrators group.
 func (pl *platformListener) Listen() (net.Listener, error) {
 	cfg := &winio.PipeConfig{
-		// D: — DACL; A — Allow; GA — Generic All
-		// BA = Built-in Administrators; SY = Local System
-		SecurityDescriptor: "D:P(A;;GA;;;BA)(A;;GA;;;SY)",
+		// D:P — DACL (protected, no inheritance)
+		// A — Allow; GA — Generic All; GR — Generic Read; GW — Generic Write
+		// BA = Built-in Administrators; SY = Local System; IU = Interactive Users
+		// IU gets read+write only (enough for IPC commands), not full control.
+		SecurityDescriptor: "D:P(A;;GA;;;BA)(A;;GA;;;SY)(A;;GRGW;;;IU)",
 	}
 	l, err := winio.ListenPipe(PipeName, cfg)
 	if err != nil {

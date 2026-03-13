@@ -4,7 +4,7 @@
 
 [relay]
 domain = "levoile.dev"
-public_key_ed25519 = ""
+public_key_ed25519 = "rjgDdexo2SOeNXhdy0fUKAONXeQGAyN2d3ixCeuXOpk="
 
 [client]
 auto_start = true
