@@ -310,16 +310,30 @@ func (p *Program) DisableBlocklist() {
 	}
 }
 
-// run executes the full lifecycle: tunnel connect -> proxy start -> DNS set ->
-// watchdog start -> reconnector start. It blocks until context is cancelled,
-// then performs shutdown in reverse order.
+// run executes the full lifecycle: IPC start -> tunnel connect -> proxy start ->
+// DNS set -> watchdog start -> reconnector start. It blocks until context is
+// cancelled, then performs shutdown in reverse order.
 func (p *Program) run() {
 	defer close(p.done)
 
 	ctx := p.ctx
 	p.startTime = time.Now()
 
-	// --- 0. Check for staged update and install before anything else ---
+	// --- 0. Start IPC server early so the tray can always connect ---
+	// This must happen before tunnel connect: if the tunnel fails, the tray
+	// should still be able to show "Disconnected" rather than "IPC not connected".
+	p.mu.Lock()
+	ipcStart := p.ipcStart
+	p.mu.Unlock()
+	if ipcStart != nil {
+		go func() {
+			if err := ipcStart(ctx); err != nil {
+				fmt.Fprintf(serviceStderr, "service: ipc start: %v\n", err)
+			}
+		}()
+	}
+
+	// --- 0a. Check for staged update and install before anything else ---
 	if p.config.UpdateEnabled && p.config.UpdateStagingDir != "" {
 		p.tryInstallStagedUpdate(ctx)
 	}
@@ -448,6 +462,19 @@ func (p *Program) run() {
 		client.Disconnect()
 		return
 	}
+	// Safety net: if run() exits for ANY reason after DNS was redirected,
+	// restore the original resolver so the user isn't left without internet.
+	// The normal path (ctx.Done → shutdown) also restores DNS, but this defer
+	// catches panics and unexpected early returns.
+	dnsRestored := false
+	defer func() {
+		if !dnsRestored && p.dnsManager != nil {
+			restoreCtx := context.Background()
+			if err := p.dnsManager.RestoreResolver(restoreCtx); err != nil {
+				fmt.Fprintf(serviceStderr, "service: emergency dns restore: %v\n", err)
+			}
+		}
+	}()
 
 	// --- 4. Watchdog start ---
 	wd := watchdog.NewWatchdog("127.0.0.1", dns.CheckCurrentResolver, dns.ForceResolver)
@@ -568,17 +595,7 @@ func (p *Program) run() {
 		p.proxyMu.Unlock()
 	}
 
-	// --- 6. IPC server start (if registered) ---
-	p.mu.Lock()
-	ipcStart := p.ipcStart
-	p.mu.Unlock()
-	if ipcStart != nil {
-		go func() {
-			if err := ipcStart(ctx); err != nil {
-				fmt.Fprintf(serviceStderr, "service: ipc start: %v\n", err)
-			}
-		}()
-	}
+	// --- 6. (IPC already started in step 0) ---
 
 	// --- 7. Updater start (if enabled) ---
 	if p.config.UpdateEnabled && p.config.UpdateStagingDir != "" {
@@ -608,6 +625,7 @@ func (p *Program) run() {
 
 	// --- Shutdown sequence (reverse order) ---
 	p.shutdown()
+	dnsRestored = true
 }
 
 // shutdown performs the reverse-order cleanup.
