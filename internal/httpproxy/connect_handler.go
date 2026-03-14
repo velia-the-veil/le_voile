@@ -143,10 +143,10 @@ func (h *connectHandler) handleConnect(w http.ResponseWriter, r *http.Request) {
 		// destination → relay response body → browser
 		//
 		// When either direction finishes (remote closes, browser disconnects),
-		// we must force-close both ends to unblock the other goroutine.
-		// Without this, the surviving io.Copy blocks indefinitely because
-		// hijacked connections have no read deadline, causing CLOSE_WAIT
-		// accumulation and goroutine leaks during kill switch cycles.
+		// force-close both ends to unblock the other goroutine. Without this,
+		// the surviving io.Copy blocks indefinitely because hijacked connections
+		// have no read deadline, causing CLOSE_WAIT accumulation and goroutine
+		// leaks during kill switch cycles.
 		done := make(chan struct{}, 2)
 
 		// Relay response → browser
@@ -279,23 +279,21 @@ func (h *connectHandler) handleHTTP(w http.ResponseWriter, r *http.Request) {
 		defer relayResp.Body.Close()
 		defer upstreamPW.Close()
 
-		// Write the original HTTP request into the tunnel (non-blocking goroutine).
+		// Write the original HTTP request into the tunnel.
 		reqDone := make(chan struct{})
 		go func() {
 			defer close(reqDone)
 			outReq.Write(upstreamPW)
-			upstreamPW.Close() // signal EOF to relay request body
+			upstreamPW.Close()
 		}()
 
 		// Copy the raw HTTP response from the tunnel to the browser.
-		// The response is a complete HTTP/1.x response (status line + headers + body).
 		if bufrw.Writer.Buffered() > 0 {
 			bufrw.Flush()
 		}
 		io.Copy(conn, relayResp.Body)
 
-		// Response finished — force-close conn and pipe to unblock the
-		// outReq.Write goroutine if it's still writing to the pipe.
+		// Response finished — force-close to unblock outReq.Write if stuck.
 		conn.Close()
 		upstreamPW.Close()
 		<-reqDone
