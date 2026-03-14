@@ -4,10 +4,12 @@ package tray
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"sync"
 	"time"
 
 	"fyne.io/systray"
+	"github.com/velia-the-veil/le_voile/internal/dns"
 	"github.com/velia-the-veil/le_voile/internal/ipc"
 )
 
@@ -74,6 +76,7 @@ type Tray struct {
 	last          string // last known state to avoid redundant updates
 	connected     bool   // current connection state for menu logic
 	restoreCancel      context.CancelFunc // cancels the previous restoreTooltipAfter goroutine
+	dnsRecoveryCancel  context.CancelFunc // cancels pending DNS orphan recovery
 	notifiedVer        string             // last version passed to NotifyUpdateReady (dedup guard)
 	notifiedRollbackVer string            // last version passed to NotifyRollback (dedup guard)
 	leakAlertActive    bool // true while a leak alert tooltip is being shown (AC3)
@@ -196,13 +199,25 @@ func (t *Tray) onReady() {
 }
 
 func (t *Tray) onExit() {
-	// Restore WinINET proxy if it was active — tray is shutting down.
+	// Cancel any pending DNS recovery timer.
+	t.cancelDNSRecovery()
+
+	// Tell the service to stop — both run or neither runs.
+	quitCtx, cancel := context.WithTimeout(context.Background(), quitTimeout)
+	defer cancel()
+	t.client.SendContext(quitCtx, ipc.Request{Action: ipc.ActionQuit})
+
+	// Restore WinINET proxy — tray is shutting down.
 	t.mu.Lock()
 	wasProxyActive := t.httpProxyEnabled
 	t.mu.Unlock()
 	if wasProxyActive {
 		t.syncSysProxy(false, "")
 	}
+
+	// Safety net: restore DNS from persisted file in case the service
+	// doesn't shut down cleanly. No-op if the service already restored.
+	dns.RecoverOrphanDNS(context.Background())
 
 	if t.cancel != nil {
 		t.cancel()
@@ -499,10 +514,7 @@ func (t *Tray) NotifyRollback(version string) {
 }
 
 func (t *Tray) handleQuit(ctx context.Context) {
-	quitCtx, cancel := context.WithTimeout(ctx, quitTimeout)
-	defer cancel()
-
-	t.client.SendContext(quitCtx, ipc.Request{Action: ipc.ActionQuit})
+	// onExit handles service shutdown, DNS/proxy restore.
 	t.menuAPI.Quit()
 }
 
@@ -572,6 +584,10 @@ func (t *Tray) reconnectIPC(ctx context.Context) {
 	}
 }
 
+// dnsRecoveryDelay is how long the tray waits for the service to come back
+// before restoring orphaned DNS. Gives SCM time to auto-restart the service.
+const dnsRecoveryDelay = 10 * time.Second
+
 func (t *Tray) handleIPCError(ctx context.Context, err error) {
 	t.mu.Lock()
 	t.last = ""
@@ -587,6 +603,11 @@ func (t *Tray) handleIPCError(ctx context.Context, err error) {
 		t.syncSysProxy(false, "")
 	}
 
+	// Schedule DNS orphan recovery — if the service doesn't come back within
+	// dnsRecoveryDelay, restore DNS from the persisted state file so the user
+	// doesn't lose internet. Cancelled if reconnectIPC succeeds first.
+	t.startDNSRecoveryTimer(ctx)
+
 	t.api.SetIcon(IconDisconnected)
 	t.api.SetTooltip(fmt.Sprintf("Non protégé — %s", err))
 
@@ -596,6 +617,46 @@ func (t *Tray) handleIPCError(ctx context.Context, err error) {
 
 	t.client.Close()
 	t.reconnectIPC(ctx)
+
+	// Service came back — cancel pending DNS recovery if it hasn't fired yet.
+	t.cancelDNSRecovery()
+}
+
+// startDNSRecoveryTimer starts a background goroutine that will restore DNS
+// after dnsRecoveryDelay if not cancelled. Only one timer is active at a time.
+func (t *Tray) startDNSRecoveryTimer(ctx context.Context) {
+	t.mu.Lock()
+	if t.dnsRecoveryCancel != nil {
+		t.dnsRecoveryCancel()
+	}
+	recoveryCtx, cancel := context.WithCancel(ctx)
+	t.dnsRecoveryCancel = cancel
+	t.mu.Unlock()
+
+	go func() {
+		select {
+		case <-recoveryCtx.Done():
+			return // service came back or tray exiting
+		case <-time.After(dnsRecoveryDelay):
+		}
+
+		slog.Warn("[diag] tray: service down for 15s, recovering orphaned DNS")
+		if err := dns.RecoverOrphanDNS(context.Background()); err != nil {
+			slog.Error("[diag] tray: DNS orphan recovery failed", "err", err)
+		} else {
+			slog.Info("[diag] tray: DNS orphan recovery succeeded")
+		}
+	}()
+}
+
+// cancelDNSRecovery cancels any pending DNS recovery timer.
+func (t *Tray) cancelDNSRecovery() {
+	t.mu.Lock()
+	if t.dnsRecoveryCancel != nil {
+		t.dnsRecoveryCancel()
+		t.dnsRecoveryCancel = nil
+	}
+	t.mu.Unlock()
 }
 
 func (t *Tray) updateTrayState(resp ipc.Response) {

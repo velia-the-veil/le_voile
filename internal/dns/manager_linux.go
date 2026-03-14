@@ -194,3 +194,23 @@ func (m *linuxManager) restoreResolvConf() error {
 	m.originalDNS = ""
 	return nil
 }
+
+// RecoverOrphanDNS restores DNS from backup resolv.conf if a previous session crashed.
+func RecoverOrphanDNS(_ context.Context) error {
+	if _, err := os.Stat(resolvConfBackup); err != nil {
+		return nil // no backup → nothing to recover
+	}
+	backup, err := os.ReadFile(resolvConfBackup)
+	if err != nil {
+		return nil
+	}
+	perm := os.FileMode(0644)
+	if info, err := os.Stat(resolvConfPath); err == nil {
+		perm = info.Mode().Perm()
+	}
+	if err := os.WriteFile(resolvConfPath, backup, perm); err != nil {
+		return fmt.Errorf("dns: recover orphan: %w", err)
+	}
+	os.Remove(resolvConfBackup)
+	return nil
+}

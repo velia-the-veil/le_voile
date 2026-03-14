@@ -3,6 +3,7 @@ package tunnel
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"sync"
 	"time"
 )
@@ -155,6 +156,8 @@ func (r *Reconnector) handleDisconnect(ctx context.Context) {
 		r.mu.Unlock()
 	}()
 
+	slog.Warn("[diag] Reconnector: handleDisconnect triggered")
+
 	// Tear down the old QUIC transport so Connect() gets a fresh one.
 	// Without this, auto-disconnect (consecutive DoH failures) leaves a dead
 	// transport that Connect() would reuse, causing an infinite cycle.
@@ -185,7 +188,9 @@ func (r *Reconnector) handleDisconnect(ctx context.Context) {
 		case <-time.After(backoff):
 		}
 
+		slog.Info("[diag] Reconnector: attempting connect", "retry", retries, "backoff", backoff)
 		if err := r.connectFn(ctx); err != nil {
+			slog.Warn("[diag] Reconnector: connect failed", "err", err, "retry", retries)
 			if ctx.Err() != nil {
 				return
 			}
@@ -208,6 +213,7 @@ func (r *Reconnector) handleDisconnect(ctx context.Context) {
 		}
 
 		// Reconnection successful — deactivate kill switch.
+		slog.Info("[diag] Reconnector: reconnected successfully")
 		r.deactivateKillSwitch(ctx)
 		return
 	}

@@ -397,7 +397,7 @@ func TestTray_HandleToggle_Disconnected_SendsConnect(t *testing.T) {
 
 // --- handleQuit tests ---
 
-func TestTray_HandleQuit_SendsQuitAndCallsSystrayQuit(t *testing.T) {
+func TestTray_HandleQuit_CallsSystrayQuit(t *testing.T) {
 	api := &mockSystrayAPI{}
 	menuAPI := newMockMenuAPI()
 	client := &mockIPCClient{
@@ -408,13 +408,26 @@ func TestTray_HandleQuit_SendsQuitAndCallsSystrayQuit(t *testing.T) {
 	ctx := context.Background()
 	tr.handleQuit(ctx)
 
-	req := client.getLastRequest()
-	if req.Action != ipc.ActionQuit {
-		t.Errorf("expected quit action, got %q", req.Action)
-	}
-
+	// handleQuit delegates to onExit (via systray.Quit) which sends ActionQuit.
 	if !menuAPI.wasQuitCalled() {
 		t.Error("expected systray.Quit() to be called")
+	}
+}
+
+func TestTray_OnExit_SendsQuitAndRestoresDNS(t *testing.T) {
+	api := &mockSystrayAPI{}
+	client := &mockIPCClient{
+		response: ipc.Response{Status: ipc.StatusDisconnected},
+	}
+	tr := newWithDeps(api, newMockMenuAPI(), client, testPollInterval, true, false, false, nil)
+	_, cancel := context.WithCancel(context.Background())
+	tr.cancel = cancel
+
+	tr.onExit()
+
+	req := client.getLastRequest()
+	if req.Action != ipc.ActionQuit {
+		t.Errorf("expected quit action from onExit, got %q", req.Action)
 	}
 }
 
