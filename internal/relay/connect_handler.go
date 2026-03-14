@@ -47,7 +47,7 @@ func NewConnectHandler(pubKey ed25519.PublicKey, cfv *CloudflareIPValidator, ipL
 // ServeHTTP handles POST requests to /connect.
 func (h *ConnectHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if h.logFunc != nil {
-		h.logFunc("incoming %s from %s", r.Method, r.RemoteAddr)
+		h.logFunc("incoming %s", r.Method)
 	}
 
 	// Only POST allowed.
