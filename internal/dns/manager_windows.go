@@ -4,14 +4,28 @@ package dns
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 )
 
 // interfaceLister abstracts network interface discovery for testing.
 type interfaceLister func() ([]string, error)
+
+// dnsStateFile is the persistent file storing original DNS before Le Voile modifies it.
+// Located in ProgramData so the SYSTEM service account can access it.
+const dnsStateFile = "dns-original.json"
+
+// dnsPersistedState is the JSON structure saved to disk.
+type dnsPersistedState struct {
+	IPv4 map[string]string `json:"ipv4"` // interface → original IPv4 DNS
+	IPv6 map[string]string `json:"ipv6"` // interface → original IPv6 DNS
+}
 
 // windowsManager implements DNSManager using netsh on Windows.
 type windowsManager struct {
@@ -90,6 +104,8 @@ func (m *windowsManager) SetResolver(ctx context.Context, addr string) error {
 		modified = append(modified, iface)
 	}
 
+	// Persist to disk so a crash doesn't orphan the DNS config.
+	m.persistState()
 	return nil
 }
 
@@ -155,6 +171,7 @@ func (m *windowsManager) RestoreResolver(ctx context.Context) error {
 
 	m.originalDNS = nil
 	m.originalDNSv6 = nil
+	removePersistedState()
 	return lastErr
 }
 
@@ -211,6 +228,110 @@ func parseDNSFromNetsh(output string) string {
 	}
 
 	return ""
+}
+
+// dnsStatePath returns the full path to the persisted DNS state file.
+func dnsStatePath() string {
+	dir := os.Getenv("ProgramData")
+	if dir == "" {
+		dir = `C:\ProgramData`
+	}
+	return filepath.Join(dir, "LeVoile", dnsStateFile)
+}
+
+// persistState writes the original DNS state to disk so it can survive a crash.
+func (m *windowsManager) persistState() {
+	state := dnsPersistedState{
+		IPv4: m.originalDNS,
+		IPv6: m.originalDNSv6,
+	}
+	data, err := json.Marshal(state)
+	if err != nil {
+		slog.Warn("[diag] dns: failed to marshal state", "err", err)
+		return
+	}
+	path := dnsStatePath()
+	os.MkdirAll(filepath.Dir(path), 0755)
+	if err := os.WriteFile(path, data, 0644); err != nil {
+		slog.Warn("[diag] dns: failed to persist state", "err", err)
+	}
+}
+
+// removePersistedState deletes the persisted DNS state file after successful restore.
+func removePersistedState() {
+	os.Remove(dnsStatePath())
+}
+
+// RecoverOrphanDNS checks if a previous session left DNS pointing at 127.0.0.1
+// without cleaning up (crash/force-kill). If so, restores the original DNS from
+// the persisted state file. Safe to call on every startup.
+func RecoverOrphanDNS(ctx context.Context) error {
+	path := dnsStatePath()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil // no persisted state → nothing to recover
+	}
+
+	var state dnsPersistedState
+	if err := json.Unmarshal(data, &state); err != nil {
+		slog.Warn("[diag] dns: corrupt orphan state file, removing", "err", err)
+		os.Remove(path)
+		return nil
+	}
+
+	if len(state.IPv4) == 0 {
+		os.Remove(path)
+		return nil
+	}
+
+	// Check if DNS is still orphaned (pointing at 127.0.0.1)
+	mgr := &windowsManager{run: defaultRunner, listInterfaces: activeInterfaces}
+	interfaces, err := mgr.listInterfaces()
+	if err != nil || len(interfaces) == 0 {
+		return nil
+	}
+
+	// Check first active interface — if it's not 127.0.0.1, user already fixed it
+	current, err := mgr.getCurrentDNS(ctx, interfaces[0])
+	if err != nil || (current != "127.0.0.1" && current != "::1") {
+		slog.Info("[diag] dns: orphan state file found but DNS already restored, cleaning up")
+		os.Remove(path)
+		return nil
+	}
+
+	slog.Warn("[diag] dns: recovering orphaned DNS from previous crash")
+
+	var lastErr error
+	for iface, original := range state.IPv4 {
+		nameArg := fmt.Sprintf(`name="%s"`, iface)
+		if original == "" || strings.EqualFold(original, "dhcp") {
+			_, err = defaultRunner(ctx, "netsh", "interface", "ip", "set", "dns", nameArg, "dhcp")
+		} else {
+			_, err = defaultRunner(ctx, "netsh", "interface", "ip", "set", "dns", nameArg, "static", original)
+		}
+		if err != nil {
+			lastErr = fmt.Errorf("dns: recover orphan ipv4 for %q: %w", iface, err)
+		}
+
+		originalV6 := state.IPv6[iface]
+		if originalV6 == "" || strings.EqualFold(originalV6, "dhcp") {
+			_, err = defaultRunner(ctx, "netsh", "interface", "ipv6", "set", "dns", nameArg, "dhcp")
+		} else {
+			_, err = defaultRunner(ctx, "netsh", "interface", "ipv6", "set", "dns", nameArg, "static", originalV6)
+		}
+		if err != nil {
+			lastErr = fmt.Errorf("dns: recover orphan ipv6 for %q: %w", iface, err)
+		}
+	}
+
+	os.Remove(path)
+
+	if lastErr != nil {
+		slog.Error("[diag] dns: orphan recovery had errors", "err", lastErr)
+		return lastErr
+	}
+	slog.Info("[diag] dns: orphan recovery complete")
+	return nil
 }
 
 // activeInterfaces returns the names of all active, non-loopback network interfaces.

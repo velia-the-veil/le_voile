@@ -160,6 +160,11 @@ func (m *darwinManager) getDNSServers(ctx context.Context, service string) ([]st
 	return parseDNSServers(string(out)), nil
 }
 
+// RecoverOrphanDNS is a no-op on macOS — DNS recovery is not yet implemented.
+func RecoverOrphanDNS(_ context.Context) error {
+	return nil
+}
+
 // parseDNSServers parses the output of networksetup -getdnsservers.
 func parseDNSServers(output string) []string {
 	trimmed := strings.TrimSpace(output)

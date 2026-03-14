@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"os"
 	"path/filepath"
@@ -150,10 +151,22 @@ func (p *Program) Start(s service.Service) error {
 	return nil
 }
 
+// shutdownTimeout is the maximum time Stop waits for graceful shutdown
+// before returning to let the OS terminate the process.
+const shutdownTimeout = 10 * time.Second
+
 // Stop implements service.Interface. It MUST block until shutdown is complete.
+// If shutdown takes longer than shutdownTimeout, Stop returns anyway so the
+// OS service manager doesn't kill the process before DNS is restored.
 func (p *Program) Stop(s service.Service) error {
+	slog.Info("[diag] Stop: initiating shutdown")
 	p.cancel()
-	<-p.done
+	select {
+	case <-p.done:
+		slog.Info("[diag] Stop: graceful shutdown complete")
+	case <-time.After(shutdownTimeout):
+		slog.Error("[diag] Stop: shutdown timed out, forcing exit")
+	}
 	return nil
 }
 
@@ -557,7 +570,10 @@ func (p *Program) run() {
 	p.killSwitch = ks
 
 	var reconnOpts []tunnel.ReconnectorOption
-	reconnOpts = append(reconnOpts, tunnel.WithDisconnectFn(client.Disconnect))
+	reconnOpts = append(reconnOpts, tunnel.WithDisconnectFn(func() error {
+		client.ResetTransport()
+		return nil
+	}))
 	if p.failoverMgr != nil {
 		reconnOpts = append(reconnOpts, tunnel.WithFailoverFn(p.failoverMgr.HandleFailover))
 	}

@@ -4,8 +4,10 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"time"
 
@@ -204,6 +206,16 @@ func main() {
 			fmt.Fprintln(os.Stderr, "Available commands: install, uninstall, start, stop, run")
 			os.Exit(1)
 		}
+	}
+
+	// --- Diagnostic file logger ---
+	diagDir := filepath.Join(os.Getenv("ProgramData"), "LeVoile")
+	os.MkdirAll(diagDir, 0755)
+	diagFile, err := os.OpenFile(filepath.Join(diagDir, "diag.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	if err == nil {
+		slog.SetDefault(slog.New(slog.NewTextHandler(diagFile, &slog.HandlerOptions{Level: slog.LevelDebug})))
+		defer diagFile.Close()
+		slog.Info("[diag] service starting", "version", version)
 	}
 
 	// Resolve config (only needed for run mode).
