@@ -132,6 +132,7 @@ func (h *connectHandler) handleConnect(w http.ResponseWriter, r *http.Request) {
 		defer relayCancel()
 		defer conn.Close()
 		defer relayResp.Body.Close()
+		defer upstreamPW.Close()
 
 		// Send 200 Connection Established to the browser.
 		bufrw.WriteString("HTTP/1.1 200 Connection Established\r\n\r\n")
@@ -140,24 +141,32 @@ func (h *connectHandler) handleConnect(w http.ResponseWriter, r *http.Request) {
 		// Bidirectional relay:
 		// browser → upstream pipe → relay request body → destination
 		// destination → relay response body → browser
-		var relayWg sync.WaitGroup
-		relayWg.Add(2)
+		//
+		// When either direction finishes (remote closes, browser disconnects),
+		// we must force-close both ends to unblock the other goroutine.
+		// Without this, the surviving io.Copy blocks indefinitely because
+		// hijacked connections have no read deadline, causing CLOSE_WAIT
+		// accumulation and goroutine leaks during kill switch cycles.
+		done := make(chan struct{}, 2)
 
 		// Relay response → browser
 		go func() {
-			defer relayWg.Done()
 			io.Copy(conn, relayResp.Body)
+			done <- struct{}{}
 		}()
 
 		// Browser → relay request body
 		go func() {
-			defer relayWg.Done()
-			defer upstreamPW.Close() // signals EOF to relay request body
 			io.Copy(upstreamPW, conn)
+			done <- struct{}{}
 		}()
 
-		// Wait for BOTH directions to finish.
-		relayWg.Wait()
+		// Wait for first direction to finish, then force-unblock the other.
+		<-done
+		conn.Close()
+		relayResp.Body.Close()
+		upstreamPW.Close()
+		<-done
 	}()
 }
 
@@ -244,16 +253,12 @@ func (h *connectHandler) handleHTTP(w http.ResponseWriter, r *http.Request) {
 	// Close connection after response (no keep-alive through the tunnel).
 	outReq.Header.Set("Connection", "close")
 
-	go func() {
-		defer upstreamPW.Close()
-		outReq.Write(upstreamPW)
-	}()
-
 	// Read the HTTP response from the relay tunnel and forward to the client.
 	// Hijack to get raw access for streaming the response.
 	hj, ok := w.(http.Hijacker)
 	if !ok {
 		relayCancel()
+		upstreamPW.Close()
 		relayResp.Body.Close()
 		http.Error(w, "Hijack not supported", http.StatusInternalServerError)
 		return
@@ -261,6 +266,7 @@ func (h *connectHandler) handleHTTP(w http.ResponseWriter, r *http.Request) {
 	conn, bufrw, err := hj.Hijack()
 	if err != nil {
 		relayCancel()
+		upstreamPW.Close()
 		relayResp.Body.Close()
 		return
 	}
@@ -271,6 +277,15 @@ func (h *connectHandler) handleHTTP(w http.ResponseWriter, r *http.Request) {
 		defer relayCancel()
 		defer conn.Close()
 		defer relayResp.Body.Close()
+		defer upstreamPW.Close()
+
+		// Write the original HTTP request into the tunnel (non-blocking goroutine).
+		reqDone := make(chan struct{})
+		go func() {
+			defer close(reqDone)
+			outReq.Write(upstreamPW)
+			upstreamPW.Close() // signal EOF to relay request body
+		}()
 
 		// Copy the raw HTTP response from the tunnel to the browser.
 		// The response is a complete HTTP/1.x response (status line + headers + body).
@@ -278,6 +293,12 @@ func (h *connectHandler) handleHTTP(w http.ResponseWriter, r *http.Request) {
 			bufrw.Flush()
 		}
 		io.Copy(conn, relayResp.Body)
+
+		// Response finished — force-close conn and pipe to unblock the
+		// outReq.Write goroutine if it's still writing to the pipe.
+		conn.Close()
+		upstreamPW.Close()
+		<-reqDone
 	}()
 }
 
