@@ -14,7 +14,10 @@ import (
 	"github.com/velia-the-veil/le_voile/internal/relay"
 )
 
+const buildTag = "2026-03-14-v2-no-iplimiter"
+
 func main() {
+	fmt.Fprintf(os.Stderr, "relay: starting build=%s\n", buildTag)
 	addr := flag.String("addr", "0.0.0.0:443", "listen address for HTTP/3 relay")
 	certFile := flag.String("cert", "cert.pem", "path to TLS certificate PEM file")
 	keyFile := flag.String("key", "key.pem", "path to TLS private key PEM file")
@@ -44,6 +47,22 @@ func main() {
 			os.Exit(1)
 		}
 		srv.SigningKey = key
+
+		// Enable Cloudflare IP validation for session tokens.
+		// In dev/direct mode (no Cloudflare proxy), use insecure=true
+		// so the relay trusts the direct source IP.
+		cfv := relay.NewCloudflareIPValidator(true, nil)
+		srv.CFIPValidator = cfv
+
+		// Enable HTTP CONNECT proxy handler.
+		// IPLimiter disabled: single-user relay, no abuse risk.
+		// Pass nil so ConnectHandler skips per-IP limiting entirely.
+		srv.ConnectHandler = relay.NewConnectHandler(
+			key.Public().(ed25519.PublicKey), cfv, nil,
+			func(format string, args ...any) {
+				fmt.Fprintf(os.Stderr, "relay: connect: "+format+"\n", args...)
+			},
+		)
 	}
 
 	if err := srv.ListenAndServe(ctx); err != nil {

@@ -46,6 +46,10 @@ func NewConnectHandler(pubKey ed25519.PublicKey, cfv *CloudflareIPValidator, ipL
 
 // ServeHTTP handles POST requests to /connect.
 func (h *ConnectHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if h.logFunc != nil {
+		h.logFunc("incoming %s from %s", r.Method, r.RemoteAddr)
+	}
+
 	// Only POST allowed.
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
@@ -150,15 +154,20 @@ func (h *ConnectHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// Bidirectional relay with idle timeout.
 	// Pass remaining body (after JSON) as the client upstream reader.
+	// Pass r.Body as closer so the relay can unblock clientReader.Read()
+	// when the destination side times out or disconnects.
 	clientReader := io.MultiReader(decoder.Buffered(), r.Body)
 	ctx := r.Context()
-	relay(ctx, clientReader, w, destConn)
+	relay(ctx, clientReader, w, destConn, r.Body)
 }
 
 // relay copies data bidirectionally between the HTTP stream and the destination.
 // Both directions run in goroutines; when either finishes, the other is unblocked
 // via deadline manipulation and context cancellation.
-func relay(ctx context.Context, clientReader io.Reader, clientWriter io.Writer, dest net.Conn) {
+// bodyCloser is closed to unblock clientReader.Read() when the relay ends —
+// without this, reads on the HTTP/3 request body block indefinitely, leaking
+// the goroutine and its IP limiter slot.
+func relay(ctx context.Context, clientReader io.Reader, clientWriter io.Writer, dest net.Conn, bodyCloser io.Closer) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
@@ -212,6 +221,12 @@ func relay(ctx context.Context, clientReader io.Reader, clientWriter io.Writer, 
 	<-ctx.Done()
 	// Force-unblock both directions.
 	dest.SetDeadline(time.Now())
+	// Close the request body to unblock clientReader.Read() — the HTTP/3
+	// stream read has no deadline mechanism, so closing is the only way
+	// to prevent the client→dest goroutine from blocking forever.
+	if bodyCloser != nil {
+		bodyCloser.Close()
+	}
 	wg.Wait()
 }
 

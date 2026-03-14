@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/quic-go/quic-go"
 	"github.com/quic-go/quic-go/http3"
 )
 
@@ -69,13 +70,21 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 		mux.Handle("/stun-relay", LimitMiddleware(s.Limiter, s.STUNHandler))
 	}
 	if s.ConnectHandler != nil {
-		mux.Handle("/connect", LimitMiddleware(s.Limiter, s.ConnectHandler))
+		// /connect uses its own per-IP limiter (IPLimiter), not the global
+		// connection limiter. CONNECT tunnels are long-lived streams that
+		// would exhaust the global short-request limiter (150 slots).
+		mux.Handle("/connect", s.ConnectHandler)
 	}
 
 	s.h3 = &http3.Server{
 		Addr:      s.Addr,
 		Handler:   mux,
 		TLSConfig: tlsCfg,
+		QUICConfig: &quic.Config{
+			MaxIncomingStreams: 1000,             // default 100 — too low for browser proxy
+			MaxIdleTimeout:    180 * time.Second, // match client
+			KeepAlivePeriod:   30 * time.Second,  // prevent NAT/firewall timeout
+		},
 	}
 
 	// Start background goroutines for IP limiter cleanup and CF IP refresh.

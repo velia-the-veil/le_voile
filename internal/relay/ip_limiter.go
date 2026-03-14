@@ -8,7 +8,9 @@ import (
 )
 
 // IPLimiterMaxPerIP is the maximum concurrent connections per IP.
-const IPLimiterMaxPerIP int64 = 20
+// Set high because a web browser routing all traffic through the proxy
+// opens many parallel CONNECT tunnels (one per destination host).
+const IPLimiterMaxPerIP int64 = 200
 
 // ipState tracks per-IP connection state using atomic operations.
 type ipState struct {

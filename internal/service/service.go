@@ -524,6 +524,10 @@ func (p *Program) run() {
 				fmt.Fprintf(serviceStderr, "service: emergency dns restore: %v\n", err)
 			}
 		}
+		// Always restart Dnscache on exit (normal or crash).
+		if err := dns.RestartDnscache(); err != nil {
+			fmt.Fprintf(serviceStderr, "service: emergency dnscache restart: %v\n", err)
+		}
 	}()
 
 	// --- 4. Watchdog start ---
@@ -765,6 +769,11 @@ func (p *Program) shutdown() {
 	// 6. Stop DNS proxy
 	p.stopProxy()
 
+	// 6a. Restart Windows Dnscache service (was stopped to free port 53).
+	if err := dns.RestartDnscache(); err != nil {
+		fmt.Fprintf(serviceStderr, "service: %v\n", err)
+	}
+
 	// 7. Close state channel and disconnect tunnel
 	if p.tunnelClient != nil {
 		p.tunnelClient.State().Close()
@@ -929,6 +938,12 @@ func (p *Program) SetInstalledVersion(version string) {
 func (p *Program) startProxy(proxyCtx context.Context) error {
 	p.proxyMu.Lock()
 	defer p.proxyMu.Unlock()
+
+	// Stop Windows Dnscache service to free port 53.
+	if err := dns.StopDnscache(); err != nil {
+		fmt.Fprintf(serviceStderr, "service: %v\n", err)
+		// Best-effort: continue and try to bind anyway.
+	}
 
 	var lastErr error
 	for attempt := 0; attempt < 2; attempt++ {
