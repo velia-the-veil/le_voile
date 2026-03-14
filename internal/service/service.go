@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"log/slog"
 	"net"
 	"os"
 	"path/filepath"
@@ -159,13 +158,10 @@ const shutdownTimeout = 10 * time.Second
 // If shutdown takes longer than shutdownTimeout, Stop returns anyway so the
 // OS service manager doesn't kill the process before DNS is restored.
 func (p *Program) Stop(s service.Service) error {
-	slog.Info("[diag] Stop: initiating shutdown")
 	p.cancel()
 	select {
 	case <-p.done:
-		slog.Info("[diag] Stop: graceful shutdown complete")
 	case <-time.After(shutdownTimeout):
-		slog.Error("[diag] Stop: shutdown timed out, forcing exit")
 	}
 	return nil
 }
@@ -607,16 +603,10 @@ func (p *Program) run() {
 	checker := leakcheck.NewWebRTCLeakChecker(getPublicIP)
 
 	var lkScheduler *leakcheck.PeriodicScheduler
-	onLeak := func(report *leakcheck.FullLeakReport) {
-		// Log the leak details instead of disconnecting. The leak checker sends
-		// STUN directly via net.DialUDP which bypasses the tunnel — if the STUN
-		// interceptor isn't active, this always reports a false positive because
-		// the direct STUN IP (real) differs from the tunnel IP (relay).
-		slog.Warn("[diag] leak checker: leak detected (no disconnect)",
-			"status", report.Status,
-			"stun_ip", report.STUNIP,
-			"http_ip", report.HTTPIP,
-		)
+	onLeak := func(_ *leakcheck.FullLeakReport) {
+		// No-op: the leak checker sends STUN directly via net.DialUDP which
+		// bypasses the tunnel — if the STUN interceptor isn't active, this
+		// always reports a false positive. Do NOT disconnect the tunnel here.
 	}
 	lkScheduler = leakcheck.NewPeriodicScheduler(
 		10*time.Minute,

@@ -12,7 +12,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log/slog"
 	"net"
 	"net/http"
 	"strings"
@@ -239,14 +238,11 @@ func (c *Client) Connect(ctx context.Context) error {
 	if err := c.verifyRelay(ctx); err != nil {
 		c.state.Set(StateDisconnected)
 		if ctx.Err() != nil {
-			slog.Warn("[diag] Connect: verify timeout", "err", err)
 			return ErrConnectionTimeout
 		}
-		slog.Warn("[diag] Connect: verify failed", "err", err)
 		return err
 	}
 
-	slog.Info("[diag] Connect: tunnel established")
 	c.resetDoHFailures()
 	c.state.Set(StateConnected)
 	return nil
@@ -274,7 +270,6 @@ func (c *Client) SendDoHQuery(ctx context.Context, dnsPayload []byte) ([]byte, e
 	resp, err := c.getHTTPClient().Do(req)
 	if err != nil {
 		c.recordDoHFailure()
-		slog.Warn("[diag] DoH: transport error", "err", err)
 		return nil, fmt.Errorf("tunnel: send doh: %w", err)
 	}
 	defer resp.Body.Close()
@@ -283,7 +278,6 @@ func (c *Client) SendDoHQuery(ctx context.Context, dnsPayload []byte) ([]byte, e
 	c.resetDoHFailures()
 
 	if resp.StatusCode != http.StatusOK {
-		slog.Warn("[diag] DoH: bad status", "status", resp.StatusCode)
 		return nil, fmt.Errorf("tunnel: send doh: server returned status %d", resp.StatusCode)
 	}
 
@@ -388,9 +382,7 @@ func (c *Client) recordDoHFailure() {
 	failures := c.consecutiveFailures
 	c.failureMu.Unlock()
 
-	slog.Warn("[diag] DoH failure recorded", "consecutive", failures, "max", maxConsecutiveDoHFailures)
 	if failures >= maxConsecutiveDoHFailures && c.state.Get() == StateConnected {
-		slog.Error("[diag] DoH: max failures reached, disconnecting")
 		c.state.Set(StateDisconnected)
 	}
 }

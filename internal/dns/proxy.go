@@ -3,7 +3,6 @@ package dns
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"net"
 	"strings"
 	"sync"
@@ -138,8 +137,7 @@ func (p *Proxy) handleQuery(ctx context.Context, payload []byte, clientAddr *net
 
 	resp, err := p.queryFunc(ctx, payload)
 	if err != nil {
-		domain := extractDomain(payload)
-		slog.Warn("[diag] DNS proxy: query failed", "domain", domain, "err", err)
+		// Silently drop — no logging per architecture constraint.
 		return
 	}
 

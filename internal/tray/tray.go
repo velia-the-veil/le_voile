@@ -4,7 +4,6 @@ package tray
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"sync"
 	"time"
 
@@ -226,7 +225,6 @@ func (t *Tray) shutdownServiceAndRestore() {
 	t.cancelDNSRecovery()
 
 	// Tell the service to stop and wait for acknowledgment.
-	slog.Info("[diag] tray: sending quit to service")
 	quitCtx, cancel := context.WithTimeout(context.Background(), quitTimeout)
 	defer cancel()
 	t.client.SendContext(quitCtx, ipc.Request{Action: ipc.ActionQuit})
@@ -239,7 +237,6 @@ func (t *Tray) shutdownServiceAndRestore() {
 	// Safety net: restore DNS from persisted file in case the service
 	// didn't shut down cleanly. No-op if the service already restored.
 	dns.RecoverOrphanDNS(context.Background())
-	slog.Info("[diag] tray: shutdown complete")
 }
 
 func (t *Tray) menuHandler(ctx context.Context) {
@@ -658,12 +655,7 @@ func (t *Tray) startDNSRecoveryTimer(ctx context.Context) {
 		case <-time.After(dnsRecoveryDelay):
 		}
 
-		slog.Warn("[diag] tray: service down for 15s, recovering orphaned DNS")
-		if err := dns.RecoverOrphanDNS(context.Background()); err != nil {
-			slog.Error("[diag] tray: DNS orphan recovery failed", "err", err)
-		} else {
-			slog.Info("[diag] tray: DNS orphan recovery succeeded")
-		}
+		dns.RecoverOrphanDNS(context.Background())
 	}()
 }
 
