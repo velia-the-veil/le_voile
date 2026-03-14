@@ -33,6 +33,9 @@ coverage.html
 *.swo
 *~
 
+# TLS certificates and private keys
+*.pem
+
 # Runtime config (may contain credentials)
 config.toml
 
