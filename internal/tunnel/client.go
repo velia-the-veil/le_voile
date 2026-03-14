@@ -178,11 +178,10 @@ func (c *Client) buildTransport() *http3.Transport {
 				c.mu.RUnlock()
 				if err := lecrypto.VerifyEd25519CertPin(cert, pinnedKey); err != nil {
 					if errors.Is(err, lecrypto.ErrPinningFailed) {
-						// Ed25519 cert with wrong key — real MITM signal.
 						return fmt.Errorf("%w: %v", ErrPinningFailed, err)
 					}
 					// Non-Ed25519 cert (e.g., Let's Encrypt ECDSA): skip pinning,
-					// rely on standard CA chain validation + /verify Ed25519 auth.
+					// rely on CA chain validation + /verify Ed25519 auth.
 				}
 				return nil
 			},
