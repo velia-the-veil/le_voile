@@ -6,7 +6,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log/slog"
 	"net"
 	"os"
 	"path/filepath"
@@ -247,14 +246,11 @@ func (m *windowsManager) persistState() {
 	}
 	data, err := json.Marshal(state)
 	if err != nil {
-		slog.Warn("[diag] dns: failed to marshal state", "err", err)
 		return
 	}
 	path := dnsStatePath()
 	os.MkdirAll(filepath.Dir(path), 0755)
-	if err := os.WriteFile(path, data, 0644); err != nil {
-		slog.Warn("[diag] dns: failed to persist state", "err", err)
-	}
+	os.WriteFile(path, data, 0644)
 }
 
 // removePersistedState deletes the persisted DNS state file after successful restore.
@@ -274,7 +270,6 @@ func RecoverOrphanDNS(ctx context.Context) error {
 
 	var state dnsPersistedState
 	if err := json.Unmarshal(data, &state); err != nil {
-		slog.Warn("[diag] dns: corrupt orphan state file, removing", "err", err)
 		os.Remove(path)
 		return nil
 	}
@@ -294,12 +289,9 @@ func RecoverOrphanDNS(ctx context.Context) error {
 	// Check first active interface — if it's not 127.0.0.1, user already fixed it
 	current, err := mgr.getCurrentDNS(ctx, interfaces[0])
 	if err != nil || (current != "127.0.0.1" && current != "::1") {
-		slog.Info("[diag] dns: orphan state file found but DNS already restored, cleaning up")
 		os.Remove(path)
 		return nil
 	}
-
-	slog.Warn("[diag] dns: recovering orphaned DNS from previous crash")
 
 	var lastErr error
 	for iface, original := range state.IPv4 {
@@ -326,12 +318,7 @@ func RecoverOrphanDNS(ctx context.Context) error {
 
 	os.Remove(path)
 
-	if lastErr != nil {
-		slog.Error("[diag] dns: orphan recovery had errors", "err", lastErr)
-		return lastErr
-	}
-	slog.Info("[diag] dns: orphan recovery complete")
-	return nil
+	return lastErr
 }
 
 // activeInterfaces returns the names of all active, non-loopback network interfaces.

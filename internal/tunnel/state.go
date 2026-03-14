@@ -1,12 +1,7 @@
 // Package tunnel manages the encrypted QUIC tunnel connection.
 package tunnel
 
-import (
-	"fmt"
-	"log/slog"
-	"runtime"
-	"sync"
-)
+import "sync"
 
 // ConnState represents the current state of the tunnel connection.
 type ConnState string
@@ -38,20 +33,6 @@ func NewStateManager() *StateManager {
 // If the channel is full, it drains the oldest entry to make room, ensuring critical
 // transitions like StateDisconnected are never silently dropped.
 func (sm *StateManager) Set(state ConnState) {
-	if state == StateDisconnected {
-		// Capture full call chain to trace WHO triggers the disconnect.
-		var caller1, caller2, caller3 string
-		if _, file, line, ok := runtime.Caller(1); ok {
-			caller1 = fmt.Sprintf("%s:%d", file, line)
-		}
-		if _, file, line, ok := runtime.Caller(2); ok {
-			caller2 = fmt.Sprintf("%s:%d", file, line)
-		}
-		if _, file, line, ok := runtime.Caller(3); ok {
-			caller3 = fmt.Sprintf("%s:%d", file, line)
-		}
-		slog.Warn("[diag] StateDisconnected SET", "caller1", caller1, "caller2", caller2, "caller3", caller3)
-	}
 	sm.mu.Lock()
 	sm.current = state
 	sm.mu.Unlock()
