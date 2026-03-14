@@ -557,6 +557,7 @@ func (p *Program) run() {
 	p.killSwitch = ks
 
 	var reconnOpts []tunnel.ReconnectorOption
+	reconnOpts = append(reconnOpts, tunnel.WithDisconnectFn(client.Disconnect))
 	if p.failoverMgr != nil {
 		reconnOpts = append(reconnOpts, tunnel.WithFailoverFn(p.failoverMgr.HandleFailover))
 	}

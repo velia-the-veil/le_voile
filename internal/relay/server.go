@@ -82,8 +82,8 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 		TLSConfig: tlsCfg,
 		QUICConfig: &quic.Config{
 			MaxIncomingStreams: 1000,             // default 100 — too low for browser proxy
-			MaxIdleTimeout:    180 * time.Second, // match client
-			KeepAlivePeriod:   30 * time.Second,  // prevent NAT/firewall timeout
+			MaxIdleTimeout:    90 * time.Second,  // match client
+			KeepAlivePeriod:   10 * time.Second,  // survive aggressive NAT timeouts
 		},
 	}
 

@@ -34,6 +34,16 @@ type ConnectFunc func(ctx context.Context) error
 // ReconnectorOption configures a Reconnector.
 type ReconnectorOption func(*Reconnector)
 
+// WithDisconnectFn sets a function called before each reconnection cycle to
+// tear down the old QUIC transport and prepare a fresh one. Without this,
+// Connect() reuses a potentially dead HTTP/3 transport after auto-disconnect
+// triggered by consecutive DoH failures.
+func WithDisconnectFn(fn func() error) ReconnectorOption {
+	return func(r *Reconnector) {
+		r.disconnectFn = fn
+	}
+}
+
 // WithFailoverFn sets a failover function to call after MaxRetriesBeforeFailover
 // consecutive connection failures on the current relay.
 func WithFailoverFn(fn func(ctx context.Context) error) ReconnectorOption {
@@ -51,10 +61,11 @@ type Reconnector struct {
 	cancel       context.CancelFunc
 	done         chan struct{}
 
-	connectFn  ConnectFunc
-	killSwitch KillSwitchController
-	updates    <-chan ConnState
-	failoverFn func(ctx context.Context) error
+	connectFn    ConnectFunc
+	disconnectFn func() error
+	killSwitch   KillSwitchController
+	updates      <-chan ConnState
+	failoverFn   func(ctx context.Context) error
 }
 
 // NewReconnector creates a Reconnector that listens for state changes on
@@ -143,6 +154,13 @@ func (r *Reconnector) handleDisconnect(ctx context.Context) {
 		r.reconnecting = false
 		r.mu.Unlock()
 	}()
+
+	// Tear down the old QUIC transport so Connect() gets a fresh one.
+	// Without this, auto-disconnect (consecutive DoH failures) leaves a dead
+	// transport that Connect() would reuse, causing an infinite cycle.
+	if r.disconnectFn != nil {
+		r.disconnectFn()
+	}
 
 	// Activate kill switch — block DNS during reconnection (NFR5).
 	// Retry once on failure to maximize DNS leak protection.

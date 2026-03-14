@@ -32,8 +32,8 @@ var (
 )
 
 const (
-	connectTimeout     = 3 * time.Second
-	dohTimeout         = 5 * time.Second
+	connectTimeout     = 5 * time.Second
+	dohTimeout         = 8 * time.Second
 	stunRelayTimeout   = 5 * time.Second
 	nonceSize          = 32
 	maxCertChainLength = 3   // reject certificate chains longer than this
@@ -67,7 +67,7 @@ const (
 // maxConsecutiveDoHFailures is the number of consecutive transport-level
 // failures in SendDoHQuery before the client auto-transitions to
 // StateDisconnected, triggering the Reconnector.
-const maxConsecutiveDoHFailures = 3
+const maxConsecutiveDoHFailures = 5
 
 // Client manages an HTTP/3 tunnel connection to the relay.
 type Client struct {
@@ -187,8 +187,8 @@ func (c *Client) buildTransport() *http3.Transport {
 			},
 		},
 		QUICConfig: &quic.Config{
-			MaxIdleTimeout:  180 * time.Second, // 3 min idle before disconnect
-			KeepAlivePeriod: 30 * time.Second,  // ping every 30s to prevent NAT/firewall timeout
+			MaxIdleTimeout:  90 * time.Second, // 90s idle before disconnect
+			KeepAlivePeriod: 10 * time.Second, // ping every 10s to survive aggressive NAT timeouts
 		},
 	}
 }
