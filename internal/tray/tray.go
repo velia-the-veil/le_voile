@@ -17,7 +17,7 @@ const (
 	defaultPollInterval = 2 * time.Second
 	reconnectInitial    = 1 * time.Second
 	reconnectMax        = 10 * time.Second
-	quitTimeout         = 3 * time.Second
+	quitTimeout         = 10 * time.Second
 )
 
 // SystrayAPI abstracts systray calls for testability.
@@ -77,6 +77,7 @@ type Tray struct {
 	connected     bool   // current connection state for menu logic
 	restoreCancel      context.CancelFunc // cancels the previous restoreTooltipAfter goroutine
 	dnsRecoveryCancel  context.CancelFunc // cancels pending DNS orphan recovery
+	shutdownDone       bool               // prevents double shutdown
 	notifiedVer        string             // last version passed to NotifyUpdateReady (dedup guard)
 	notifiedRollbackVer string            // last version passed to NotifyRollback (dedup guard)
 	leakAlertActive    bool // true while a leak alert tooltip is being shown (AC3)
@@ -199,30 +200,46 @@ func (t *Tray) onReady() {
 }
 
 func (t *Tray) onExit() {
-	// Cancel any pending DNS recovery timer.
-	t.cancelDNSRecovery()
-
-	// Tell the service to stop — both run or neither runs.
-	quitCtx, cancel := context.WithTimeout(context.Background(), quitTimeout)
-	defer cancel()
-	t.client.SendContext(quitCtx, ipc.Request{Action: ipc.ActionQuit})
-
-	// Restore WinINET proxy — tray is shutting down.
-	t.mu.Lock()
-	wasProxyActive := t.httpProxyEnabled
-	t.mu.Unlock()
-	if wasProxyActive {
-		t.syncSysProxy(false, "")
-	}
-
-	// Safety net: restore DNS from persisted file in case the service
-	// doesn't shut down cleanly. No-op if the service already restored.
-	dns.RecoverOrphanDNS(context.Background())
+	// Cleanup may already have run from handleQuit. Run again as safety net
+	// in case the tray is closed externally (e.g., task manager, OS shutdown).
+	t.shutdownServiceAndRestore()
 
 	if t.cancel != nil {
 		t.cancel()
 	}
 	t.client.Close()
+}
+
+// shutdownServiceAndRestore stops the service, restores DNS and proxy.
+// Idempotent — safe to call multiple times.
+func (t *Tray) shutdownServiceAndRestore() {
+	t.mu.Lock()
+	if t.shutdownDone {
+		t.mu.Unlock()
+		return
+	}
+	t.shutdownDone = true
+	wasProxyActive := t.httpProxyEnabled
+	t.mu.Unlock()
+
+	// Cancel any pending DNS recovery timer.
+	t.cancelDNSRecovery()
+
+	// Tell the service to stop and wait for acknowledgment.
+	slog.Info("[diag] tray: sending quit to service")
+	quitCtx, cancel := context.WithTimeout(context.Background(), quitTimeout)
+	defer cancel()
+	t.client.SendContext(quitCtx, ipc.Request{Action: ipc.ActionQuit})
+
+	// Restore WinINET proxy.
+	if wasProxyActive {
+		t.syncSysProxy(false, "")
+	}
+
+	// Safety net: restore DNS from persisted file in case the service
+	// didn't shut down cleanly. No-op if the service already restored.
+	dns.RecoverOrphanDNS(context.Background())
+	slog.Info("[diag] tray: shutdown complete")
 }
 
 func (t *Tray) menuHandler(ctx context.Context) {
@@ -514,7 +531,8 @@ func (t *Tray) NotifyRollback(version string) {
 }
 
 func (t *Tray) handleQuit(ctx context.Context) {
-	// onExit handles service shutdown, DNS/proxy restore.
+	// Stop service and restore DNS/proxy BEFORE closing the tray.
+	t.shutdownServiceAndRestore()
 	t.menuAPI.Quit()
 }
 
