@@ -607,38 +607,16 @@ func (p *Program) run() {
 	checker := leakcheck.NewWebRTCLeakChecker(getPublicIP)
 
 	var lkScheduler *leakcheck.PeriodicScheduler
-	onLeak := func(_ *leakcheck.FullLeakReport) {
-		// Force tunnel disconnect → Reconnector picks up StateDisconnected and reconnects (AC4).
-		if p.tunnelClient != nil {
-			_ = p.tunnelClient.Disconnect()
-		}
-		// Schedule a re-test 30 seconds after the alert (AC4).
-		// Calling Disconnect activates the kill switch while the Reconnector
-		// re-establishes the tunnel. runCheck skips when KillSwitch.IsActive() (AC5),
-		// so we wait for the kill switch to deactivate before triggering the re-test.
-		go func() {
-			select {
-			case <-ctx.Done():
-				return
-			case <-time.After(30 * time.Second):
-			}
-			// Wait for kill switch to deactivate (reconnect complete), up to 2 minutes.
-			// If the tunnel never reconnects, the periodic tick will catch future leaks.
-			retestDeadline := time.NewTimer(2 * time.Minute)
-			defer retestDeadline.Stop()
-			for ks.IsActive() {
-				select {
-				case <-ctx.Done():
-					return
-				case <-retestDeadline.C:
-					return
-				case <-time.After(2 * time.Second):
-				}
-			}
-			if lkScheduler != nil {
-				lkScheduler.TriggerCheck(ctx)
-			}
-		}()
+	onLeak := func(report *leakcheck.FullLeakReport) {
+		// Log the leak details instead of disconnecting. The leak checker sends
+		// STUN directly via net.DialUDP which bypasses the tunnel — if the STUN
+		// interceptor isn't active, this always reports a false positive because
+		// the direct STUN IP (real) differs from the tunnel IP (relay).
+		slog.Warn("[diag] leak checker: leak detected (no disconnect)",
+			"status", report.Status,
+			"stun_ip", report.STUNIP,
+			"http_ip", report.HTTPIP,
+		)
 	}
 	lkScheduler = leakcheck.NewPeriodicScheduler(
 		10*time.Minute,
