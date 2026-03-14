@@ -5,7 +5,6 @@
 [relay]
 domain = "relay.levoile.dev"
 public_key_ed25519 = "rjgDdexo2SOeNXhdy0fUKAONXeQGAyN2d3ixCeuXOpk="
-insecure = true  # dev only — remove when using a valid TLS certificate
 
 [client]
 auto_start = true
