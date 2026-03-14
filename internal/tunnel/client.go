@@ -14,6 +14,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -151,7 +152,10 @@ func NewClient(relayDomain string, relayPubKeyBase64 string, opts ...ClientOptio
 				return nil
 			},
 		},
-		QUICConfig: &quic.Config{},
+		QUICConfig: &quic.Config{
+			MaxIdleTimeout:  180 * time.Second, // 3 min idle before disconnect
+			KeepAlivePeriod: 30 * time.Second,  // ping every 30s to prevent NAT/firewall timeout
+		},
 	}
 
 	c.httpClient = &http.Client{Transport: tr}
@@ -186,7 +190,11 @@ func (c *Client) relayURL(path string) string {
 	c.mu.RLock()
 	ip := c.relayIP
 	c.mu.RUnlock()
-	return "https://" + ip + path
+	host := ip
+	if strings.Contains(ip, ":") {
+		host = "[" + ip + "]"
+	}
+	return "https://" + host + path
 }
 
 // Connect establishes the tunnel by verifying the relay's Ed25519 identity.

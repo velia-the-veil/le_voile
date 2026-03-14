@@ -70,7 +70,7 @@ func (p *Proxy) Start(ctx context.Context) error {
 		return fmt.Errorf("dns: proxy resolve addr: %w", err)
 	}
 
-	conn, err := net.ListenUDP("udp", addr)
+	conn, err := listenUDPReuseAddr("udp", addr)
 	if err != nil {
 		return fmt.Errorf("dns: proxy listen: %w", err)
 	}

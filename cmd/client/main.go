@@ -41,6 +41,9 @@ type resolvedConfig struct {
 	registryURL             string
 	registryMasterPubKey    string
 	registryRefreshInterval time.Duration
+
+	httpProxyEnabled bool
+	httpProxyPort    int
 }
 
 // resolveConfig loads config from file and applies CLI flag overrides.
@@ -119,6 +122,10 @@ func resolveConfig(cfgPath, flagDomain, flagPubKey string, flagInsecure bool) (r
 		}
 		rc.registryRefreshInterval = d
 	}
+
+	// Resolve HTTP proxy config.
+	rc.httpProxyEnabled = cfg.HTTPProxy.Enabled
+	rc.httpProxyPort = cfg.HTTPProxy.Port
 
 	return rc, nil
 }
@@ -224,6 +231,8 @@ func main() {
 		RegistryURL:             rc.registryURL,
 		RegistryMasterPubKey:    rc.registryMasterPubKey,
 		RegistryRefreshInterval: rc.registryRefreshInterval,
+		HTTPProxyEnabled:        rc.httpProxyEnabled,
+		HTTPProxyPort:           rc.httpProxyPort,
 	})
 
 	// Set up IPC server with handler that bridges to the service.

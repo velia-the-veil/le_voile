@@ -100,8 +100,48 @@ func (sp *SysProxy) Set(addr string) error {
 	}
 	defer k.Close()
 
-	// Build ProxyOverride: bypass loopback + relay domain.
-	override := fmt.Sprintf("localhost;127.0.0.1;*.local;<local>;%s", sp.relayDomain)
+	// Build ProxyOverride: bypass list for domains that must NOT go through
+	// the CONNECT proxy. Three categories:
+	//  1. Loopback & relay: prevent loops
+	//  2. OCSP/CRL: prevent circular TLS dependency (Schannel checks)
+	//  3. Streaming/CDN: heavy traffic that would saturate the relay and
+	//     that rate-limits datacenter IPs aggressively
+	bypass := []string{
+		// Loopback & local
+		"localhost", "127.0.0.1", "*.local", "<local>", sp.relayDomain,
+
+		// OCSP/CRL — certificate revocation checks
+		"ocsp.digicert.com", "crl3.digicert.com", "crl4.digicert.com",
+		"ocsp.sectigo.com", "crl.sectigo.com",
+		"ocsp.globalsign.com", "crl.globalsign.com",
+		"ocsp.pki.goog", "pki.goog",
+		"ocsp.entrust.net", "crl.entrust.net",
+		"ocsp.comodoca.com", "crl.comodoca.com",
+		"ocsp.usertrust.com", "crl.usertrust.com",
+		"ocsp.letsencrypt.org", "r3.o.lencr.org", "x1.c.lencr.org",
+		"ocsp.godaddy.com", "crl.godaddy.com",
+		"ocsp.verisign.com", "crl.verisign.com",
+		"ocsp.thawte.com", "crl.thawte.com",
+		"ocsp.geotrust.com", "crl.geotrust.com",
+		"*.symcb.com", "*.symcd.com",
+		"ctldl.windowsupdate.com",
+
+		// Microsoft / Windows Update
+		"*.windowsupdate.com", "*.microsoft.com",
+
+		// Amazon/AWS CA
+		"crt.rootca1.amazontrust.com", "ocsp.rootca1.amazontrust.com",
+		"*.amazontrust.com",
+
+		// Video/media CDNs only — bypass heavy streams, keep main domains proxied
+		"*.googlevideo.com",   // YouTube video streams (bulk bandwidth)
+		"*.nflxvideo.net",     // Netflix video streams
+		"*.ttvnw.net",         // Twitch video streams
+		"*.akamaized.net",     // Akamai CDN (video delivery)
+		"*.akamaihd.net",      // Akamai CDN
+		"*.fbcdn.net",         // Facebook/Meta CDN (video/images)
+	}
+	override := strings.Join(bypass, ";")
 
 	if err := k.SetDWordValue("ProxyEnable", 1); err != nil {
 		return fmt.Errorf("sysproxy: set ProxyEnable: %w", err)

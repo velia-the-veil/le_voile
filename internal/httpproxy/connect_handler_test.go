@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-func TestNonConnectRequestClosesConnection(t *testing.T) {
+func TestNonConnectNonAbsoluteURLReturns400(t *testing.T) {
 	mock := &mockTunnelClient{
 		sessionToken: "test-token",
 		relayDomain:  "relay.example.com",
@@ -27,25 +27,19 @@ func TestNonConnectRequestClosesConnection(t *testing.T) {
 	srv := httptest.NewServer(handler)
 	defer srv.Close()
 
-	// Make a plain GET request — should get connection reset.
+	// Make a plain GET request with a relative URL — should get 400
+	// because handleHTTP requires absolute proxy-style URLs.
 	client := &http.Client{
 		Timeout: 2 * time.Second,
 	}
 	resp, err := client.Get(srv.URL + "/anything")
-	if err == nil {
-		resp.Body.Close()
-		t.Fatal("expected error due to connection reset, but got a response")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
+	defer resp.Body.Close()
 
-	// The error should indicate a connection problem (EOF, reset, or closed).
-	errStr := err.Error()
-	isConnErr := strings.Contains(errStr, "EOF") ||
-		strings.Contains(errStr, "reset") ||
-		strings.Contains(errStr, "closed") ||
-		strings.Contains(errStr, "forcibly") ||
-		strings.Contains(errStr, "connection")
-	if !isConnErr {
-		t.Fatalf("expected connection-related error, got: %v", err)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d", resp.StatusCode)
 	}
 }
 
