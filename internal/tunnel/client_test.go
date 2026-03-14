@@ -127,9 +127,11 @@ func newTestClient(t *testing.T, addr string, pubKeyBase64 string) *Client {
 
 	return &Client{
 		relayDomain: addr,
+		relayIP:     addr,
 		relayPubKey: pubKey,
 		httpClient:  &http.Client{Transport: tr},
 		transport:   tr,
+		insecure:    true,
 		state:       NewStateManager(),
 	}
 }
@@ -141,13 +143,14 @@ func TestClient_NewClient_ValidKey(t *testing.T) {
 	}
 
 	pubB64 := lecrypto.ExportPublicKeyBase64(pub)
-	client, err := NewClient("levoile.dev", pubB64)
+	// Use a raw IP so NewClient skips DNS resolution.
+	client, err := NewClient("127.0.0.1", pubB64)
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
 
-	if client.relayDomain != "levoile.dev" {
-		t.Errorf("relayDomain = %q, want %q", client.relayDomain, "levoile.dev")
+	if client.relayDomain != "127.0.0.1" {
+		t.Errorf("relayDomain = %q, want %q", client.relayDomain, "127.0.0.1")
 	}
 	if client.state.Get() != StateDisconnected {
 		t.Errorf("initial state = %q, want %q", client.state.Get(), StateDisconnected)
@@ -554,7 +557,7 @@ func TestClient_UpdateRelay_ThreadSafe(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			_ = client.UpdateRelay("new.example.com", pubB64)
+			_ = client.UpdateRelay("192.0.2.1", pubB64)
 		}()
 		wg.Add(1)
 		go func() {
@@ -582,10 +585,11 @@ func TestClient_RelayDomain_AfterUpdate(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := client.UpdateRelay("new.example.com", pubB64); err != nil {
+	// Use an IP address to avoid DNS resolution in test environment.
+	if err := client.UpdateRelay("192.0.2.1", pubB64); err != nil {
 		t.Fatalf("UpdateRelay: %v", err)
 	}
-	if got := client.RelayDomain(); got != "new.example.com" {
-		t.Errorf("RelayDomain() = %q, want %q", got, "new.example.com")
+	if got := client.RelayDomain(); got != "192.0.2.1" {
+		t.Errorf("RelayDomain() = %q, want %q", got, "192.0.2.1")
 	}
 }

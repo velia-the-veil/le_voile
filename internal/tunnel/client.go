@@ -64,6 +64,11 @@ const (
 	tokenCircuitBreakerPause = 60 * time.Second
 )
 
+// maxConsecutiveDoHFailures is the number of consecutive transport-level
+// failures in SendDoHQuery before the client auto-transitions to
+// StateDisconnected, triggering the Reconnector.
+const maxConsecutiveDoHFailures = 3
+
 // Client manages an HTTP/3 tunnel connection to the relay.
 type Client struct {
 	mu          sync.RWMutex
@@ -73,6 +78,10 @@ type Client struct {
 	httpClient  *http.Client
 	transport   *http3.Transport
 	state       *StateManager
+
+	// TLS options stored for transport recreation after Disconnect.
+	insecure   bool
+	skipCAOnly bool
 
 	// Session token for proxy CONNECT authentication.
 	sessionToken       string // raw token string
@@ -85,6 +94,10 @@ type Client struct {
 	refreshBackoff  time.Duration
 	circuitOpen     bool
 	circuitOpenedAt time.Time
+
+	// Consecutive DoH transport failure counter for auto-disconnect.
+	failureMu            sync.Mutex
+	consecutiveFailures  int
 }
 
 // NewClient creates a tunnel client configured for HTTP/3 with TLS 1.3.
@@ -105,12 +118,17 @@ func NewClient(relayDomain string, relayPubKeyBase64 string, opts ...ClientOptio
 	// DNS is routed through the tunnel that isn't connected yet.
 	relayIP := relayDomain
 	if ip := net.ParseIP(relayDomain); ip == nil {
-		// Domain name, not an IP — resolve it now.
-		ips, err := net.LookupIP(relayDomain)
-		if err != nil || len(ips) == 0 {
-			return nil, fmt.Errorf("tunnel: resolve relay %q: %w", relayDomain, err)
+		// Not a bare IP — check for host:port (e.g., "127.0.0.1:8443" in tests).
+		if host, _, splitErr := net.SplitHostPort(relayDomain); splitErr == nil && net.ParseIP(host) != nil {
+			relayIP = relayDomain // IP:port — use as-is
+		} else {
+			// Domain name — resolve it now.
+			ips, err := net.LookupIP(relayDomain)
+			if err != nil || len(ips) == 0 {
+				return nil, fmt.Errorf("tunnel: resolve relay %q: %w", relayDomain, err)
+			}
+			relayIP = ips[0].String()
 		}
-		relayIP = ips[0].String()
 	}
 
 	// Create Client first so the TLS closure can read c.relayPubKey under lock,
@@ -119,17 +137,29 @@ func NewClient(relayDomain string, relayPubKeyBase64 string, opts ...ClientOptio
 		relayDomain: relayDomain,
 		relayIP:     relayIP,
 		relayPubKey: pubKey,
+		insecure:    o.insecure,
+		skipCAOnly:  o.skipCAOnly,
 		state:       NewStateManager(),
 	}
 
-	tr := &http3.Transport{
+	tr := c.buildTransport()
+	c.httpClient = &http.Client{Transport: tr}
+	c.transport = tr
+
+	return c, nil
+}
+
+// buildTransport creates a fresh HTTP/3 transport with TLS pinning.
+// Must be called with c.mu held or before concurrent access is possible.
+func (c *Client) buildTransport() *http3.Transport {
+	return &http3.Transport{
 		TLSClientConfig: &tls.Config{
-			ServerName: relayDomain, // SNI must match the cert, not the IP
+			ServerName:         c.relayDomain, // SNI must match the cert, not the IP
 			NextProtos:         []string{http3.NextProtoH3},
 			MinVersion:         tls.VersionTLS13,
-			InsecureSkipVerify: o.insecure || o.skipCAOnly,
+			InsecureSkipVerify: c.insecure || c.skipCAOnly,
 			VerifyPeerCertificate: func(rawCerts [][]byte, _ [][]*x509.Certificate) error {
-				if o.insecure {
+				if c.insecure {
 					return nil // development mode bypass — never set in production builds
 				}
 				if len(rawCerts) == 0 {
@@ -157,11 +187,6 @@ func NewClient(relayDomain string, relayPubKeyBase64 string, opts ...ClientOptio
 			KeepAlivePeriod: 30 * time.Second,  // ping every 30s to prevent NAT/firewall timeout
 		},
 	}
-
-	c.httpClient = &http.Client{Transport: tr}
-	c.transport = tr
-
-	return c, nil
 }
 
 // clientOptions holds optional client configuration.
@@ -191,7 +216,9 @@ func (c *Client) relayURL(path string) string {
 	ip := c.relayIP
 	c.mu.RUnlock()
 	host := ip
-	if strings.Contains(ip, ":") {
+	// Bracket bare IPv6 addresses only. If the address contains a port
+	// (host:port format), net.ParseIP returns nil and no bracketing is applied.
+	if strings.Contains(ip, ":") && net.ParseIP(ip) != nil {
 		host = "[" + ip + "]"
 	}
 	return "https://" + host + path
@@ -212,11 +239,15 @@ func (c *Client) Connect(ctx context.Context) error {
 		return err
 	}
 
+	c.resetDoHFailures()
 	c.state.Set(StateConnected)
 	return nil
 }
 
 // SendDoHQuery sends a DNS wire-format query through the tunnel.
+// Transport-level failures are tracked; after maxConsecutiveDoHFailures
+// the client auto-transitions to StateDisconnected so the Reconnector
+// can re-establish the tunnel.
 func (c *Client) SendDoHQuery(ctx context.Context, dnsPayload []byte) ([]byte, error) {
 	if c.state.Get() != StateConnected {
 		return nil, ErrNotConnected
@@ -232,11 +263,15 @@ func (c *Client) SendDoHQuery(ctx context.Context, dnsPayload []byte) ([]byte, e
 	}
 	req.Header.Set("Content-Type", "application/dns-message")
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.getHTTPClient().Do(req)
 	if err != nil {
+		c.recordDoHFailure()
 		return nil, fmt.Errorf("tunnel: send doh: %w", err)
 	}
 	defer resp.Body.Close()
+
+	// Transport succeeded — reset failure counter.
+	c.resetDoHFailures()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("tunnel: send doh: server returned status %d", resp.StatusCode)
@@ -267,7 +302,7 @@ func (c *Client) SendSTUNRelay(ctx context.Context, stunPacket []byte, targetAdd
 	req.Header.Set("Content-Type", "application/stun-message")
 	req.Header.Set("X-Stun-Target", targetAddr)
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.getHTTPClient().Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("tunnel: send stun relay: %w", err)
 	}
@@ -285,11 +320,25 @@ func (c *Client) SendSTUNRelay(ctx context.Context, stunPacket []byte, targetAdd
 	return body, nil
 }
 
-// Disconnect closes the tunnel and releases QUIC resources.
+// Disconnect closes the current QUIC connection and prepares a fresh
+// transport so that subsequent Connect calls can re-establish the tunnel.
+// Previous versions permanently closed the transport, making reconnection
+// impossible — the Reconnector would loop on dead transport errors.
 func (c *Client) Disconnect() error {
 	c.state.Set(StateDisconnected)
-	if err := c.transport.Close(); err != nil {
-		return fmt.Errorf("tunnel: disconnect: %w", err)
+	c.resetDoHFailures()
+
+	c.mu.Lock()
+	oldTransport := c.transport
+	newTransport := c.buildTransport()
+	c.transport = newTransport
+	c.httpClient = &http.Client{Transport: newTransport}
+	c.mu.Unlock()
+
+	// Close old transport after replacing — ongoing requests will get errors
+	// but the connection was already broken or intentionally torn down.
+	if oldTransport != nil {
+		oldTransport.Close()
 	}
 	return nil
 }
@@ -299,9 +348,39 @@ func (c *Client) State() *StateManager {
 	return c.state
 }
 
-// HTTPClient returns the underlying HTTP client for test injection.
+// HTTPClient returns the underlying HTTP client (thread-safe).
 func (c *Client) HTTPClient() *http.Client {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	return c.httpClient
+}
+
+// getHTTPClient returns the current HTTP client under read lock.
+func (c *Client) getHTTPClient() *http.Client {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.httpClient
+}
+
+// recordDoHFailure increments the consecutive failure counter and triggers
+// a state transition to StateDisconnected after maxConsecutiveDoHFailures.
+// This ensures the Reconnector detects silent QUIC connection loss.
+func (c *Client) recordDoHFailure() {
+	c.failureMu.Lock()
+	c.consecutiveFailures++
+	failures := c.consecutiveFailures
+	c.failureMu.Unlock()
+
+	if failures >= maxConsecutiveDoHFailures && c.state.Get() == StateConnected {
+		c.state.Set(StateDisconnected)
+	}
+}
+
+// resetDoHFailures clears the consecutive failure counter.
+func (c *Client) resetDoHFailures() {
+	c.failureMu.Lock()
+	c.consecutiveFailures = 0
+	c.failureMu.Unlock()
 }
 
 // UpdateRelay updates the relay domain and public key in a thread-safe manner.
@@ -314,11 +393,15 @@ func (c *Client) UpdateRelay(relayDomain string, relayPubKeyBase64 string) error
 	// Re-resolve IP for the new relay domain.
 	relayIP := relayDomain
 	if ip := net.ParseIP(relayDomain); ip == nil {
-		ips, lookupErr := net.LookupIP(relayDomain)
-		if lookupErr != nil || len(ips) == 0 {
-			return fmt.Errorf("tunnel: update relay: resolve %q: %w", relayDomain, lookupErr)
+		if host, _, splitErr := net.SplitHostPort(relayDomain); splitErr == nil && net.ParseIP(host) != nil {
+			relayIP = relayDomain
+		} else {
+			ips, lookupErr := net.LookupIP(relayDomain)
+			if lookupErr != nil || len(ips) == 0 {
+				return fmt.Errorf("tunnel: update relay: resolve %q: %w", relayDomain, lookupErr)
+			}
+			relayIP = ips[0].String()
 		}
-		relayIP = ips[0].String()
 	}
 	c.mu.Lock()
 	c.relayDomain = relayDomain
@@ -454,7 +537,7 @@ func (c *Client) verifyRelay(ctx context.Context) error {
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.getHTTPClient().Do(req)
 	if err != nil {
 		return fmt.Errorf("tunnel: connect: %w", err)
 	}

@@ -157,8 +157,10 @@ func TestClient_VerifyRelay_WrongSignature(t *testing.T) {
 
 	client := &Client{
 		relayDomain: ts.Listener.Addr().String(),
+		relayIP:     ts.Listener.Addr().String(),
 		relayPubKey: pubKey,
 		httpClient:  ts.Client(),
+		insecure:    true,
 		state:       NewStateManager(),
 	}
 
@@ -267,6 +269,7 @@ func TestClient_ConnectTimeout_VeryShort(t *testing.T) {
 			Timeout: 100 * time.Millisecond,
 		},
 		transport: &http3.Transport{},
+		insecure:  true,
 		state:     NewStateManager(),
 	}
 
@@ -277,5 +280,175 @@ func TestClient_ConnectTimeout_VeryShort(t *testing.T) {
 
 	if client.state.Get() != StateDisconnected {
 		t.Errorf("state = %q after timeout, want %q", client.state.Get(), StateDisconnected)
+	}
+}
+
+// TestClient_Disconnect_ThenReconnect verifies that after Disconnect(),
+// the transport is recreated and Connect() can succeed again.
+// This was the root cause of tunnel drops: Disconnect() permanently
+// closed the transport, making the Reconnector loop on dead transport errors.
+func TestClient_Disconnect_ThenReconnect(t *testing.T) {
+	pub, priv, err := lecrypto.GenerateKeyPair()
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+
+	addr, _, cleanup := startTestRelay(t, priv)
+	defer cleanup()
+
+	pubB64 := lecrypto.ExportPublicKeyBase64(pub)
+	client := newTestClient(t, addr, pubB64)
+
+	// First connect
+	if err := client.Connect(context.Background()); err != nil {
+		t.Fatalf("first Connect: %v", err)
+	}
+	if client.state.Get() != StateConnected {
+		t.Fatalf("state after first connect = %q, want connected", client.state.Get())
+	}
+
+	// Disconnect (previously this would permanently kill the transport)
+	if err := client.Disconnect(); err != nil {
+		t.Fatalf("Disconnect: %v", err)
+	}
+	if client.state.Get() != StateDisconnected {
+		t.Fatalf("state after disconnect = %q, want disconnected", client.state.Get())
+	}
+
+	// Reconnect — this MUST succeed with the fix
+	if err := client.Connect(context.Background()); err != nil {
+		t.Fatalf("second Connect after Disconnect: %v (transport was not recreated)", err)
+	}
+	if client.state.Get() != StateConnected {
+		t.Errorf("state after reconnect = %q, want connected", client.state.Get())
+	}
+
+	// Verify DoH still works after reconnect
+	dnsPayload := []byte{
+		0x00, 0x01, 0x01, 0x00, 0x00, 0x01, 0x00, 0x00,
+		0x00, 0x00, 0x00, 0x00, 0x07, 'e', 'x', 'a',
+		'm', 'p', 'l', 'e', 0x03, 'c', 'o', 'm',
+		0x00, 0x00, 0x01, 0x00, 0x01,
+	}
+	resp, err := client.SendDoHQuery(context.Background(), dnsPayload)
+	if err != nil {
+		t.Fatalf("SendDoHQuery after reconnect: %v", err)
+	}
+	if len(resp) == 0 {
+		t.Error("expected non-empty DNS response after reconnect")
+	}
+
+	client.Disconnect()
+}
+
+// TestClient_AutoDisconnect_OnConsecutiveDoHFailures verifies that after
+// maxConsecutiveDoHFailures transport errors, the client auto-transitions
+// to StateDisconnected. This triggers the Reconnector.
+func TestClient_AutoDisconnect_OnConsecutiveDoHFailures(t *testing.T) {
+	pub, _, err := lecrypto.GenerateKeyPair()
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	pubB64 := lecrypto.ExportPublicKeyBase64(pub)
+	pubKey, _ := lecrypto.ImportPublicKeyBase64(pubB64)
+
+	// Create a client pointing at a dead address so DoH requests fail.
+	client := &Client{
+		relayDomain: "127.0.0.1",
+		relayIP:     "127.0.0.1",
+		relayPubKey: pubKey,
+		httpClient:  &http.Client{Timeout: 100 * time.Millisecond},
+		transport:   &http3.Transport{},
+		insecure:    true,
+		state:       NewStateManager(),
+	}
+	// Force state to Connected so SendDoHQuery doesn't short-circuit.
+	client.state.Set(StateConnected)
+
+	// Drain the state update for the Connected transition.
+	<-client.state.Updates()
+
+	dnsPayload := []byte{
+		0x00, 0x01, 0x01, 0x00, 0x00, 0x01, 0x00, 0x00,
+		0x00, 0x00, 0x00, 0x00, 0x07, 'e', 'x', 'a',
+		'm', 'p', 'l', 'e', 0x03, 'c', 'o', 'm',
+		0x00, 0x00, 0x01, 0x00, 0x01,
+	}
+
+	// First N-1 failures should NOT trigger disconnect.
+	for i := 0; i < maxConsecutiveDoHFailures-1; i++ {
+		_, err := client.SendDoHQuery(context.Background(), dnsPayload)
+		if err == nil {
+			t.Fatalf("expected error on failure %d", i+1)
+		}
+		if client.state.Get() != StateConnected {
+			t.Fatalf("state changed to %q after only %d failures, want connected until %d",
+				client.state.Get(), i+1, maxConsecutiveDoHFailures)
+		}
+	}
+
+	// The Nth failure should trigger auto-disconnect.
+	_, err = client.SendDoHQuery(context.Background(), dnsPayload)
+	if err == nil {
+		t.Fatal("expected error on final failure")
+	}
+	if client.state.Get() != StateDisconnected {
+		t.Errorf("state = %q after %d consecutive failures, want disconnected",
+			client.state.Get(), maxConsecutiveDoHFailures)
+	}
+
+	// Verify the StateDisconnected was sent to the updates channel.
+	select {
+	case state := <-client.state.Updates():
+		if state != StateDisconnected {
+			t.Errorf("update channel received %q, want disconnected", state)
+		}
+	default:
+		t.Error("expected StateDisconnected on updates channel")
+	}
+}
+
+// TestClient_DoHFailureCounter_ResetsOnSuccess verifies that a successful
+// DoH query resets the consecutive failure counter.
+func TestClient_DoHFailureCounter_ResetsOnSuccess(t *testing.T) {
+	pub, priv, err := lecrypto.GenerateKeyPair()
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+
+	addr, _, cleanup := startTestRelay(t, priv)
+	defer cleanup()
+
+	pubB64 := lecrypto.ExportPublicKeyBase64(pub)
+	client := newTestClient(t, addr, pubB64)
+	defer client.Disconnect()
+
+	if err := client.Connect(context.Background()); err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+
+	// Simulate N-1 failures by directly calling recordDoHFailure.
+	for i := 0; i < maxConsecutiveDoHFailures-1; i++ {
+		client.recordDoHFailure()
+	}
+
+	// A successful DoH query should reset the counter.
+	dnsPayload := []byte{
+		0x00, 0x01, 0x01, 0x00, 0x00, 0x01, 0x00, 0x00,
+		0x00, 0x00, 0x00, 0x00, 0x07, 'e', 'x', 'a',
+		'm', 'p', 'l', 'e', 0x03, 'c', 'o', 'm',
+		0x00, 0x00, 0x01, 0x00, 0x01,
+	}
+	if _, err := client.SendDoHQuery(context.Background(), dnsPayload); err != nil {
+		t.Fatalf("SendDoHQuery: %v", err)
+	}
+
+	// After reset, N-1 more failures should NOT trigger disconnect.
+	for i := 0; i < maxConsecutiveDoHFailures-1; i++ {
+		client.recordDoHFailure()
+	}
+
+	if client.state.Get() != StateConnected {
+		t.Errorf("state = %q, want connected (counter should have reset)", client.state.Get())
 	}
 }
