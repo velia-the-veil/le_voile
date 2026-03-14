@@ -39,6 +39,10 @@ coverage.html
 # Runtime config (may contain credentials)
 config.toml
 
+# BMAD framework and outputs
+/_bmad/
+/_bmad-output/
+
 # OS files
 .DS_Store
 Thumbs.db
