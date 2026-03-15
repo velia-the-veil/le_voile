@@ -206,6 +206,23 @@ func (p *Program) Cancel() {
 	}
 }
 
+// RequestStop asks the OS service manager to stop this service gracefully.
+// Unlike Cancel(), this goes through the SCM so Windows does not treat the
+// exit as a failure and does not trigger the OnFailure restart policy.
+// Falls back to Cancel() when running outside the service manager (e.g. portable mode).
+func (p *Program) RequestStop() {
+	if p.svc != nil {
+		// service.Service.Stop() signals the SCM which calls Program.Stop()
+		// → p.cancel(). The SCM sees a clean stop, not a crash.
+		if err := p.svc.Stop(); err != nil {
+			// Fallback: SCM stop failed, cancel directly.
+			p.Cancel()
+		}
+		return
+	}
+	p.Cancel()
+}
+
 // Updater returns the auto-updater (used by IPC handler). May be nil if updates are disabled.
 func (p *Program) Updater() *updater.Updater {
 	return p.updater

@@ -193,19 +193,20 @@ func handleSetAutoStart(prg *svc.Program, req ipc.Request, opts Options) ipc.Res
 	return ipc.Response{Status: ipc.StatusOK}
 }
 
-// handleQuit stops the reconnector and triggers an orderly shutdown.
-// The tunnel disconnect and DNS restoration are handled by shutdown() in the
-// correct order — no explicit Disconnect() here to avoid double-disconnect.
+// handleQuit stops the reconnector and triggers an orderly shutdown via the
+// OS service manager. Using RequestStop (instead of Cancel) ensures that
+// Windows SCM treats this as a clean stop, not a crash, and does not trigger
+// the OnFailure restart policy.
 func handleQuit(prg *svc.Program) ipc.Response {
 	// Stop reconnector to prevent reconnection during shutdown.
 	if r := prg.Reconnector(); r != nil {
 		r.Stop()
 	}
-	// Cancel triggers shutdown() which handles DNS restore, tunnel disconnect,
-	// and all cleanup in the correct order. Delayed to let IPC response be sent.
+	// RequestStop asks the SCM to stop the service cleanly.
+	// Delayed to let IPC response be sent first.
 	go func() {
 		time.Sleep(100 * time.Millisecond)
-		prg.Cancel()
+		prg.RequestStop()
 	}()
 	return ipc.Response{Status: ipc.StatusDisconnected}
 }
