@@ -44,6 +44,8 @@ type resolvedConfig struct {
 
 	httpProxyEnabled bool
 	httpProxyPort    int
+
+	browserPoliciesEnabled bool
 }
 
 // resolveConfig loads config from file and applies CLI flag overrides.
@@ -126,6 +128,9 @@ func resolveConfig(cfgPath, flagDomain, flagPubKey string, flagInsecure bool) (r
 	// Resolve HTTP proxy config.
 	rc.httpProxyEnabled = cfg.HTTPProxy.Enabled
 	rc.httpProxyPort = cfg.HTTPProxy.Port
+
+	// Resolve browser policies config.
+	rc.browserPoliciesEnabled = cfg.BrowserPolicies.Enabled
 
 	return rc, nil
 }
@@ -233,6 +238,7 @@ func main() {
 		RegistryRefreshInterval: rc.registryRefreshInterval,
 		HTTPProxyEnabled:        rc.httpProxyEnabled,
 		HTTPProxyPort:           rc.httpProxyPort,
+		BrowserPoliciesEnabled: rc.browserPoliciesEnabled,
 	})
 
 	// Set up IPC server with handler that bridges to the service.
