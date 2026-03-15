@@ -4,6 +4,7 @@ package tray
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -79,8 +80,9 @@ type Tray struct {
 	shutdownDone       bool               // prevents double shutdown
 	notifiedVer        string             // last version passed to NotifyUpdateReady (dedup guard)
 	notifiedRollbackVer string            // last version passed to NotifyRollback (dedup guard)
-	leakAlertActive    bool // true while a leak alert tooltip is being shown (AC3)
-	blocklistEnabled   bool // current blocklist state (mirrors service config)
+	leakAlertActive          bool // true while a leak alert tooltip is being shown (AC3)
+	notifiedBrowserPolicies  bool // dedup guard for browser policy tooltip
+	blocklistEnabled         bool // current blocklist state (mirrors service config)
 	httpProxyEnabled   bool // current HTTP proxy state
 	httpProxySeq       uint64 // last seen sequence number
 	sysProxy           *SysProxy
@@ -671,7 +673,7 @@ func (t *Tray) cancelDNSRecovery() {
 
 func (t *Tray) updateTrayState(resp ipc.Response) {
 	t.mu.Lock()
-	stateKey := resp.Status + "|" + resp.IP + "|" + resp.Error + "|" + fmt.Sprintf("%v|%d", resp.BlocklistEnabled, resp.HTTPProxySeq)
+	stateKey := resp.Status + "|" + resp.IP + "|" + resp.Error + "|" + fmt.Sprintf("%v|%d|%d", resp.BlocklistEnabled, resp.HTTPProxySeq, len(resp.BrowserPoliciesApplied))
 	if t.last == stateKey {
 		t.mu.Unlock()
 		return
@@ -725,6 +727,20 @@ func (t *Tray) updateTrayState(resp ipc.Response) {
 			}
 		}
 		t.syncSysProxy(resp.HTTPProxyActive, resp.HTTPProxyAddr)
+	}
+
+	// Notify browser policies via tooltip (one-shot, deduplicated).
+	if len(resp.BrowserPoliciesApplied) > 0 {
+		t.mu.Lock()
+		alreadyNotified := t.notifiedBrowserPolicies
+		t.notifiedBrowserPolicies = true
+		t.mu.Unlock()
+
+		if !alreadyNotified {
+			browsers := strings.Join(resp.BrowserPoliciesApplied, ", ")
+			t.api.SetTooltip(fmt.Sprintf("WebRTC: %s — restart browsers", browsers))
+			go t.restoreTooltipAfter(context.Background(), 15*time.Second)
+		}
 	}
 
 	switch resp.Status {

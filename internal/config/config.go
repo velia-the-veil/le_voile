@@ -17,7 +17,13 @@ type Config struct {
 	Update    UpdateConfig    `toml:"update"`
 	Blocklist BlocklistConfig `toml:"blocklist"`
 	Registry  RegistryConfig  `toml:"registry"`
-	HTTPProxy HTTPProxyConfig `toml:"http_proxy"`
+	HTTPProxy       HTTPProxyConfig       `toml:"http_proxy"`
+	BrowserPolicies BrowserPoliciesConfig `toml:"browser_policies"`
+}
+
+// BrowserPoliciesConfig holds browser WebRTC policy settings.
+type BrowserPoliciesConfig struct {
+	Enabled bool `toml:"enabled"`
 }
 
 // HTTPProxyConfig holds HTTP CONNECT proxy settings for IP camouflage.

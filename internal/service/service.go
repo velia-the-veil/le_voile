@@ -15,6 +15,7 @@ import (
 	"github.com/kardianos/service"
 
 	"github.com/velia-the-veil/le_voile/internal/blocklist"
+	"github.com/velia-the-veil/le_voile/internal/browser"
 	"github.com/velia-the-veil/le_voile/internal/dns"
 	"github.com/velia-the-veil/le_voile/internal/httpproxy"
 	"github.com/velia-the-veil/le_voile/internal/leakcheck"
@@ -60,6 +61,8 @@ type Config struct {
 
 	HTTPProxyEnabled bool
 	HTTPProxyPort    int
+
+	BrowserPoliciesEnabled bool
 }
 
 // Program implements kardianos/service.Interface for lifecycle management.
@@ -115,6 +118,11 @@ type Program struct {
 	stunMu     sync.Mutex
 	stunCancel context.CancelFunc
 	stunErrCh  chan error
+
+	// browserPolicyMu protects browserPolicyMgr and browserPolicyResult.
+	browserPolicyMu     sync.Mutex
+	browserPolicyMgr    browser.PolicyManager
+	browserPolicyResult *browser.ApplyResult
 
 	// httpProxyMu protects HTTP proxy lifecycle.
 	httpProxyMu     sync.Mutex
@@ -290,6 +298,30 @@ func (p *Program) HTTPProxyAddr() string {
 	return v.(string)
 }
 
+// BrowserPolicyApplied returns the list of browsers with policies applied.
+func (p *Program) BrowserPolicyApplied() []string {
+	p.browserPolicyMu.Lock()
+	defer p.browserPolicyMu.Unlock()
+	if p.browserPolicyResult == nil {
+		return nil
+	}
+	return p.browserPolicyResult.Applied
+}
+
+// BrowserPolicyFailed returns the list of browsers that failed policy application.
+func (p *Program) BrowserPolicyFailed() []string {
+	p.browserPolicyMu.Lock()
+	defer p.browserPolicyMu.Unlock()
+	if p.browserPolicyResult == nil {
+		return nil
+	}
+	names := make([]string, len(p.browserPolicyResult.Failed))
+	for i, f := range p.browserPolicyResult.Failed {
+		names[i] = f.Name + ": " + f.Reason
+	}
+	return names
+}
+
 // HTTPProxySeq returns the monotone sequence number for proxy state changes.
 func (p *Program) HTTPProxySeq() uint64 {
 	return p.httpProxySeq.Load()
@@ -384,12 +416,18 @@ func (p *Program) run() {
 		}()
 	}
 
-	// --- 0a. Check for staged update and install before anything else ---
+	// --- 0a. Recover orphan browser policies from previous crash ---
+	// Must run in the service (not tray) because HKLM/etc require SYSTEM/root.
+	if err := browser.RecoverOrphanPolicies(ctx); err != nil {
+		fmt.Fprintf(serviceStderr, "service: recover orphan browser policies: %v\n", err)
+	}
+
+	// --- 0c. Check for staged update and install before anything else ---
 	if p.config.UpdateEnabled && p.config.UpdateStagingDir != "" {
 		p.tryInstallStagedUpdate(ctx)
 	}
 
-	// --- 0b. Dynamic relay discovery (if registry enabled) ---
+	// --- 0d. Dynamic relay discovery (if registry enabled) ---
 	relayDomain := p.config.RelayDomain
 	relayPubKey := p.config.RelayPubKey
 
@@ -508,6 +546,20 @@ func (p *Program) run() {
 	// --- 2b. STUN interceptor start (after tunnel connected, best-effort) ---
 	p.startSTUN(ctx)
 
+	// --- 2c. Browser policies (before DNS to close WebRTC race window) ---
+	if p.config.BrowserPoliciesEnabled {
+		bpMgr := browser.NewPolicyManager()
+		result, bpErr := bpMgr.ApplyPolicies(ctx)
+		if bpErr != nil {
+			fmt.Fprintf(serviceStderr, "service: browser policies apply: %v\n", bpErr)
+			// Non-fatal: continue without browser policies.
+		}
+		p.browserPolicyMu.Lock()
+		p.browserPolicyMgr = bpMgr
+		p.browserPolicyResult = result
+		p.browserPolicyMu.Unlock()
+	}
+
 	// --- 3. DNS set ---
 	dnsMgr := dns.NewManager()
 	p.dnsManager = dnsMgr
@@ -527,6 +579,16 @@ func (p *Program) run() {
 	// catches panics and unexpected early returns.
 	dnsRestored := false
 	defer func() {
+		// Emergency browser policy restore on unexpected exit.
+		p.browserPolicyMu.Lock()
+		bpMgr := p.browserPolicyMgr
+		p.browserPolicyMu.Unlock()
+		if bpMgr != nil {
+			restoreCtx := context.Background()
+			if err := bpMgr.RestorePolicies(restoreCtx); err != nil {
+				fmt.Fprintf(serviceStderr, "service: emergency browser policies restore: %v\n", err)
+			}
+		}
 		if !dnsRestored && p.dnsManager != nil {
 			restoreCtx := context.Background()
 			if err := p.dnsManager.RestoreResolver(restoreCtx); err != nil {
@@ -729,6 +791,18 @@ func (p *Program) shutdown() {
 		restoreCtx := context.Background()
 		if err := p.killSwitch.Deactivate(restoreCtx); err != nil {
 			fmt.Fprintf(serviceStderr, "service: kill switch deactivate: %v\n", err)
+		}
+	}
+
+	// 3b. Restore browser policies (before DNS restore)
+	p.browserPolicyMu.Lock()
+	bpMgr := p.browserPolicyMgr
+	p.browserPolicyMgr = nil
+	p.browserPolicyMu.Unlock()
+	if bpMgr != nil {
+		restoreCtx := context.Background()
+		if err := bpMgr.RestorePolicies(restoreCtx); err != nil {
+			fmt.Fprintf(serviceStderr, "service: browser policies restore: %v\n", err)
 		}
 	}
 

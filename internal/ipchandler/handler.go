@@ -70,6 +70,8 @@ func handleGetStatus(prg *svc.Program) ipc.Response {
 		resp.HTTPProxyActive = prg.HTTPProxyActive()
 		resp.HTTPProxyAddr = prg.HTTPProxyAddr()
 		resp.HTTPProxySeq = prg.HTTPProxySeq()
+		resp.BrowserPoliciesApplied = prg.BrowserPolicyApplied()
+		resp.BrowserPoliciesFailed = prg.BrowserPolicyFailed()
 		return resp
 	}
 	state := tc.State().Get()
@@ -98,6 +100,8 @@ func handleGetStatus(prg *svc.Program) ipc.Response {
 	resp.HTTPProxyActive = prg.HTTPProxyActive()
 	resp.HTTPProxyAddr = prg.HTTPProxyAddr()
 	resp.HTTPProxySeq = prg.HTTPProxySeq()
+	resp.BrowserPoliciesApplied = prg.BrowserPolicyApplied()
+	resp.BrowserPoliciesFailed = prg.BrowserPolicyFailed()
 	return resp
 }
 

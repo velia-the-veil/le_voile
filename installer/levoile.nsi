@@ -80,6 +80,11 @@ Section "Install"
 
   ; Write uninstaller
   WriteUninstaller "$INSTDIR\uninstall.exe"
+
+  ; Note about browser WebRTC protection (portable browsers not covered)
+  MessageBox MB_OK|MB_ICONINFORMATION \
+    "Note: If you enable WebRTC browser protection (browser_policies.enabled in config.toml), \
+portable browsers will not be protected. Only standard-installed browsers benefit from automatic protection."
 SectionEnd
 
 Section "Uninstall"

@@ -69,4 +69,7 @@ type Response struct {
 	HTTPProxyActive  bool   `json:"http_proxy_active,omitempty"`
 	HTTPProxyAddr    string `json:"http_proxy_addr,omitempty"`
 	HTTPProxySeq     uint64 `json:"http_proxy_seq,omitempty"`
+
+	BrowserPoliciesApplied []string `json:"browser_policies_applied,omitempty"`
+	BrowserPoliciesFailed  []string `json:"browser_policies_failed,omitempty"`
 }
