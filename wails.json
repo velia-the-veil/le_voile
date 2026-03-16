@@ -1,0 +1,17 @@
+{
+  "$schema": "https://wails.io/schemas/config.v2.json",
+  "name": "le-voile",
+  "outputfilename": "le-voile-desktop",
+  "frontend:dir": "frontend",
+  "frontend:build": "",
+  "frontend:install": "",
+  "author": {
+    "name": "Velia The Veil"
+  },
+  "info": {
+    "companyName": "Plateforme Liberté",
+    "productName": "Le Voile",
+    "copyright": "2026 Plateforme Liberté",
+    "comments": "VPN desktop client"
+  }
+}
