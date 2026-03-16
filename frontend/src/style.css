@@ -1,0 +1,200 @@
+/* Design tokens — charte plateformeliberte.fr */
+:root {
+    --bg-primary: #0b1526;
+    --bg-secondary: #0e1e38;
+    --accent-blue: #1a6fc4;
+    --accent-glow: #2a8dff;
+    --accent-red: #d42b2b;
+    --status-secure: #4ade80;
+    --status-warning: #fb923c;
+    --status-risk: #ff3c3c;
+    --text-primary: #f0f4ff;
+    --text-secondary: #8a9bb8;
+}
+
+/* Font faces — replace with local .woff2 when available */
+@font-face {
+    font-family: 'Bebas Neue';
+    src: url('../assets/fonts/BebasNeue-Regular.woff2') format('woff2');
+    font-weight: 400;
+    font-display: swap;
+}
+@font-face {
+    font-family: 'Rajdhani';
+    src: url('../assets/fonts/Rajdhani-Regular.woff2') format('woff2');
+    font-weight: 400;
+    font-display: swap;
+}
+@font-face {
+    font-family: 'Rajdhani';
+    src: url('../assets/fonts/rajdhani-semibold.woff2') format('woff2');
+    font-weight: 600;
+    font-display: swap;
+}
+@font-face {
+    font-family: 'Inter';
+    src: url('../assets/fonts/Inter-Regular.woff2') format('woff2');
+    font-weight: 400;
+    font-display: swap;
+}
+@font-face {
+    font-family: 'Inter';
+    src: url('../assets/fonts/Inter-Medium.woff2') format('woff2');
+    font-weight: 500;
+    font-display: swap;
+}
+
+/* Reset */
+*, *::before, *::after {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+html, body {
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    font-family: 'Inter', 'Segoe UI', sans-serif;
+    font-size: 1rem;
+    user-select: none;
+    -webkit-user-select: none;
+}
+
+/* Titlebar */
+.titlebar {
+    display: flex;
+    align-items: center;
+    height: 2rem;
+    background: var(--bg-secondary);
+    padding: 0 0.5rem;
+}
+
+.titlebar-logo {
+    display: flex;
+    align-items: center;
+    color: var(--text-secondary);
+    transition: color 0.3s ease;
+}
+.titlebar-logo svg {
+    width: 1rem;
+    height: 1.25rem;
+}
+
+.titlebar-text {
+    flex: 1;
+    font-family: 'Bebas Neue', 'Arial Black', sans-serif;
+    font-size: 0.875rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    margin-left: 0.5rem;
+    color: var(--text-secondary);
+}
+
+.titlebar-controls {
+    display: flex;
+    gap: 0.25rem;
+}
+
+.titlebar-controls button {
+    background: none;
+    border: none;
+    color: var(--text-secondary);
+    font-size: 0.75rem;
+    width: 1.75rem;
+    height: 1.75rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    border-radius: 0.25rem;
+    transition: background 0.15s ease, color 0.15s ease;
+}
+
+.titlebar-controls button:hover {
+    background: rgba(255, 255, 255, 0.1);
+    color: var(--text-primary);
+}
+
+.btn-close:hover {
+    background: var(--accent-red) !important;
+    color: white !important;
+}
+
+/* Main content */
+main {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: calc(100% - 2rem);
+}
+
+/* Status panel */
+.status-panel {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 1rem;
+}
+
+/* Status dot */
+.status-dot {
+    width: 5rem;
+    height: 5rem;
+    border-radius: 50%;
+    background: var(--status-risk);
+    transition: background-color 0.3s ease, box-shadow 0.3s ease;
+}
+
+/* Connected — green glow */
+.status-dot.connected {
+    background: var(--status-secure);
+    box-shadow: 0 0 1.5rem 0.5rem rgba(74, 222, 128, 0.3);
+}
+
+/* Connecting — orange pulse */
+.status-dot.connecting {
+    background: var(--status-warning);
+    animation: pulse 1.5s ease-in-out infinite;
+}
+
+/* Disconnected — red, no effects */
+.status-dot.disconnected {
+    background: var(--status-risk);
+    box-shadow: none;
+}
+
+@keyframes pulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(251, 146, 60, 0.4); }
+    50% { box-shadow: 0 0 1.5rem 0.75rem rgba(251, 146, 60, 0.2); }
+}
+
+/* Status text */
+.status-text {
+    font-family: 'Rajdhani', 'Segoe UI', sans-serif;
+    font-weight: 600;
+    font-size: 1.25rem;
+    text-align: center;
+    color: var(--text-primary);
+}
+
+.status-ip {
+    font-family: 'Inter', monospace;
+    font-size: 0.875rem;
+    color: var(--text-secondary);
+    text-align: center;
+}
+
+.status-uptime {
+    font-family: 'Inter', monospace;
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    text-align: center;
+}
+
+/* Titlebar logo color states */
+.titlebar-logo.connected { color: var(--status-secure); }
+.titlebar-logo.connecting { color: var(--status-warning); }
+.titlebar-logo.disconnected { color: var(--status-risk); }
