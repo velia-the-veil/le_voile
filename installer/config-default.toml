@@ -15,3 +15,6 @@ enabled = true
 [http_proxy]
 enabled = true
 port = 50113
+
+[browser_policies]
+enabled = true

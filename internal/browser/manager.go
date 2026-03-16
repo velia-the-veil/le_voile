@@ -38,11 +38,13 @@ type browserSavedState struct {
 	Name       string        `json:"name"`
 	Family     BrowserFamily `json:"family"`
 	PolicyPath string        `json:"policy_path"`
-	// OriginalValue is the original registry string/DWORD or file content.
-	// Empty string means the key/file did not exist before Le Voile.
+	// OriginalValue stores the original value (Chromium string or Firefox file content).
 	OriginalValue string `json:"original_value"`
 	// HadOriginal indicates whether a value existed before Le Voile wrote it.
 	HadOriginal bool `json:"had_original"`
+	// OriginalValues stores multiple original values for Firefox registry prefs.
+	// Key = pref name, value = original DWORD as string. Missing key = didn't exist.
+	OriginalValues map[string]string `json:"original_values,omitempty"`
 }
 
 const policyStateFile = "browser-policies-original.json"

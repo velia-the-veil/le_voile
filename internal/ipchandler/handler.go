@@ -193,17 +193,14 @@ func handleSetAutoStart(prg *svc.Program, req ipc.Request, opts Options) ipc.Res
 	return ipc.Response{Status: ipc.StatusOK}
 }
 
-// handleQuit stops the reconnector and triggers an orderly shutdown via the
-// OS service manager. Using RequestStop (instead of Cancel) ensures that
-// Windows SCM treats this as a clean stop, not a crash, and does not trigger
-// the OnFailure restart policy.
+// handleQuit stops the reconnector and triggers service stop through SCM.
+// p.svc.Stop() sends SERVICE_CONTROL_STOP via SCM so kardianos Execute
+// loop exits cleanly → no OnFailure restart. Cancel() alone would leave
+// the Execute loop hanging, causing SCM to treat the exit as a crash.
 func handleQuit(prg *svc.Program) ipc.Response {
-	// Stop reconnector to prevent reconnection during shutdown.
 	if r := prg.Reconnector(); r != nil {
 		r.Stop()
 	}
-	// RequestStop asks the SCM to stop the service cleanly.
-	// Delayed to let IPC response be sent first.
 	go func() {
 		time.Sleep(100 * time.Millisecond)
 		prg.RequestStop()

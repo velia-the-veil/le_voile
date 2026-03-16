@@ -33,8 +33,12 @@ const chromiumPolicyKey = "WebRtcIPHandlingPolicy"
 // chromiumPolicyValue is the value that disables non-proxied UDP.
 const chromiumPolicyValue = "disable_non_proxied_udp"
 
-// firefoxPrefKey is the flat preference key name (not a nested JSON path).
-const firefoxPrefKey = "media.peerconnection.ice.default_address_only"
+// firefoxPrefs are the flat preference key names set via enterprise policies.
+// media.peerconnection.enabled = false disables WebRTC entirely — the only
+// reliable way to prevent all IP leaks in Firefox. Breaks video calls.
+var firefoxPrefs = map[string]interface{}{
+	"media.peerconnection.enabled": false,
+}
 
 // chromiumVendorWindows maps browser name → HKLM registry policy path (Windows).
 var chromiumVendorWindows = map[string]string{

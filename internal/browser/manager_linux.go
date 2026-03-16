@@ -139,7 +139,7 @@ func (m *linuxPolicyManager) applyFirefox(b BrowserInfo) (browserSavedState, err
 		root = make(map[string]interface{})
 	}
 
-	// Deep merge: set policies.Preferences."media.peerconnection.ice.default_address_only" = true
+	// Deep merge: set all firefoxPrefs in policies.Preferences
 	policies, ok := root["policies"].(map[string]interface{})
 	if !ok {
 		policies = make(map[string]interface{})
@@ -152,7 +152,9 @@ func (m *linuxPolicyManager) applyFirefox(b BrowserInfo) (browserSavedState, err
 		policies["Preferences"] = prefs
 	}
 
-	prefs[firefoxPrefKey] = true
+	for prefKey, prefVal := range firefoxPrefs {
+		prefs[prefKey] = prefVal
+	}
 
 	// Marshal and write atomically.
 	data, err := json.MarshalIndent(root, "", "  ")
@@ -241,25 +243,23 @@ func restoreFirefoxLinux(b browserSavedState) error {
 		return nil
 	}
 
-	// Check if the original had a value for this key.
+	// Reverse merge: for each pref we set, restore original or delete.
+	var origPrefs map[string]interface{}
 	var origRoot map[string]interface{}
 	if err := json.Unmarshal([]byte(b.OriginalValue), &origRoot); err == nil {
 		if origPolicies, ok := origRoot["policies"].(map[string]interface{}); ok {
-			if origPrefs, ok := origPolicies["Preferences"].(map[string]interface{}); ok {
-				if origVal, exists := origPrefs[firefoxPrefKey]; exists {
-					// Restore original value.
-					prefs[firefoxPrefKey] = origVal
-				} else {
-					delete(prefs, firefoxPrefKey)
-				}
-			} else {
-				delete(prefs, firefoxPrefKey)
-			}
-		} else {
-			delete(prefs, firefoxPrefKey)
+			origPrefs, _ = origPolicies["Preferences"].(map[string]interface{})
 		}
-	} else {
-		delete(prefs, firefoxPrefKey)
+	}
+
+	for prefKey := range firefoxPrefs {
+		if origPrefs != nil {
+			if origVal, exists := origPrefs[prefKey]; exists {
+				prefs[prefKey] = origVal
+				continue
+			}
+		}
+		delete(prefs, prefKey)
 	}
 
 	// Clean up empty containers to avoid leaving cruft.

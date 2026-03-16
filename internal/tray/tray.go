@@ -226,7 +226,8 @@ func (t *Tray) shutdownServiceAndRestore() {
 	// Cancel any pending DNS recovery timer.
 	t.cancelDNSRecovery()
 
-	// Tell the service to stop and wait for acknowledgment.
+	// Tell the service to stop. The IPC handler calls RequestStop()
+	// which goes through SCM (p.svc.Stop()) for a clean exit.
 	quitCtx, cancel := context.WithTimeout(context.Background(), quitTimeout)
 	defer cancel()
 	t.client.SendContext(quitCtx, ipc.Request{Action: ipc.ActionQuit})
@@ -793,3 +794,4 @@ func (t *Tray) updateTrayState(resp ipc.Response) {
 		}
 	}
 }
+
