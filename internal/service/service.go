@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sync"
 	"sync/atomic"
@@ -206,20 +207,13 @@ func (p *Program) Cancel() {
 	}
 }
 
-// RequestStop asks the OS service manager to stop this service gracefully.
-// Unlike Cancel(), this goes through the SCM so Windows does not treat the
-// exit as a failure and does not trigger the OnFailure restart policy.
-// Falls back to Cancel() when running outside the service manager (e.g. portable mode).
+// RequestStop stops the service without triggering the OnFailure restart.
+// It disables the SCM failure action before cancelling the context, so
+// Windows does not auto-restart the process. The failure action is
+// re-enabled at the next service startup in run().
 func (p *Program) RequestStop() {
-	if p.svc != nil {
-		// service.Service.Stop() signals the SCM which calls Program.Stop()
-		// → p.cancel(). The SCM sees a clean stop, not a crash.
-		if err := p.svc.Stop(); err != nil {
-			// Fallback: SCM stop failed, cancel directly.
-			p.Cancel()
-		}
-		return
-	}
+	// Disable OnFailure restart so SCM doesn't respawn after exit.
+	exec.Command("sc", "failure", ServiceName, "reset=", "0", "actions=", "").Run()
 	p.Cancel()
 }
 
@@ -418,6 +412,9 @@ func (p *Program) run() {
 
 	ctx := p.ctx
 	p.startTime = time.Now()
+
+	// Re-enable OnFailure restart (may have been disabled by RequestStop).
+	exec.Command("sc", "failure", ServiceName, "reset=", "10", "actions=", "restart/5000").Run()
 
 	// --- 0. Start IPC server early so the tray can always connect ---
 	// This must happen before tunnel connect: if the tunnel fails, the tray
@@ -760,6 +757,12 @@ func (p *Program) run() {
 	// --- Shutdown sequence (reverse order) ---
 	p.shutdown()
 	dnsRestored = true
+
+	// Force process exit. When RequestStop() uses Cancel() instead of
+	// SCM stop, the kardianos Execute loop hangs forever waiting for a
+	// signal that never comes. shutdown() has already completed all
+	// cleanup (DNS, browser policies, tunnel). Safe to exit now.
+	os.Exit(0)
 }
 
 // shutdown performs the reverse-order cleanup.

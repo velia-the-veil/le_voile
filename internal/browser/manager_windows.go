@@ -125,12 +125,13 @@ func (m *windowsPolicyManager) applyChromium(b BrowserInfo) (browserSavedState, 
 	return saved, nil
 }
 
-// applyFirefox writes the WebRTC preference to Firefox's registry policy key.
+// applyFirefox writes the WebRTC preferences to Firefox's registry policy key.
 func (m *windowsPolicyManager) applyFirefox(b BrowserInfo) (browserSavedState, error) {
 	saved := browserSavedState{
-		Name:       b.Name,
-		Family:     b.Family,
-		PolicyPath: b.PolicyPath,
+		Name:           b.Name,
+		Family:         b.Family,
+		PolicyPath:     b.PolicyPath,
+		OriginalValues: make(map[string]string),
 	}
 
 	k, err := registry.OpenKey(registry.LOCAL_MACHINE, b.PolicyPath, registry.QUERY_VALUE|registry.SET_VALUE)
@@ -142,15 +143,21 @@ func (m *windowsPolicyManager) applyFirefox(b BrowserInfo) (browserSavedState, e
 	}
 	defer k.Close()
 
-	// Save original DWORD value if it exists.
-	original, _, err := k.GetIntegerValue(firefoxPrefKey)
-	if err == nil {
-		saved.OriginalValue = fmt.Sprintf("%d", original)
-		saved.HadOriginal = true
-	}
+	for prefKey, prefVal := range firefoxPrefs {
+		// Save original DWORD value if it exists.
+		if original, _, err := k.GetIntegerValue(prefKey); err == nil {
+			saved.OriginalValues[prefKey] = fmt.Sprintf("%d", original)
+			saved.HadOriginal = true
+		}
 
-	if err := k.SetDWordValue(firefoxPrefKey, 1); err != nil {
-		return saved, fmt.Errorf("browser: firefox: set value: %w", err)
+		// Convert bool → DWORD (false=0, true=1).
+		var dword uint32
+		if b, ok := prefVal.(bool); ok && b {
+			dword = 1
+		}
+		if err := k.SetDWordValue(prefKey, dword); err != nil {
+			return saved, fmt.Errorf("browser: firefox: set %s: %w", prefKey, err)
+		}
 	}
 
 	return saved, nil
@@ -169,8 +176,20 @@ func (m *windowsPolicyManager) verifyPolicy(b BrowserInfo) bool {
 		val, _, err := k.GetStringValue(chromiumPolicyKey)
 		return err == nil && val == chromiumPolicyValue
 	case Firefox:
-		val, _, err := k.GetIntegerValue(firefoxPrefKey)
-		return err == nil && val == 1
+		for prefKey, prefVal := range firefoxPrefs {
+			val, _, err := k.GetIntegerValue(prefKey)
+			if err != nil {
+				return false
+			}
+			var expected uint32
+			if b, ok := prefVal.(bool); ok && b {
+				expected = 1
+			}
+			if val != uint64(expected) {
+				return false
+			}
+		}
+		return true
 	}
 	return false
 }
@@ -213,14 +232,24 @@ func (m *windowsPolicyManager) restoreOne(b browserSavedState) error {
 		}
 		return k.DeleteValue(chromiumPolicyKey)
 	case Firefox:
-		if b.HadOriginal {
-			var val uint32
-			if _, err := fmt.Sscanf(b.OriginalValue, "%d", &val); err != nil {
-				return fmt.Errorf("browser: firefox restore: parse original value %q: %w", b.OriginalValue, err)
+		var lastErr error
+		for prefKey := range firefoxPrefs {
+			if origStr, ok := b.OriginalValues[prefKey]; ok {
+				var val uint32
+				if _, err := fmt.Sscanf(origStr, "%d", &val); err != nil {
+					lastErr = fmt.Errorf("browser: firefox restore: parse %q=%q: %w", prefKey, origStr, err)
+					continue
+				}
+				if err := k.SetDWordValue(prefKey, val); err != nil {
+					lastErr = err
+				}
+			} else {
+				if err := k.DeleteValue(prefKey); err != nil {
+					// Ignore "not found" errors — value may not have been created.
+				}
 			}
-			return k.SetDWordValue(firefoxPrefKey, val)
 		}
-		return k.DeleteValue(firefoxPrefKey)
+		return lastErr
 	}
 	return nil
 }

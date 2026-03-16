@@ -414,7 +414,7 @@ func TestTray_HandleQuit_CallsSystrayQuit(t *testing.T) {
 	}
 }
 
-func TestTray_OnExit_SendsQuitAndRestoresDNS(t *testing.T) {
+func TestTray_OnExit_RunsShutdown(t *testing.T) {
 	api := &mockSystrayAPI{}
 	client := &mockIPCClient{
 		response: ipc.Response{Status: ipc.StatusDisconnected},
@@ -425,9 +425,11 @@ func TestTray_OnExit_SendsQuitAndRestoresDNS(t *testing.T) {
 
 	tr.onExit()
 
-	req := client.getLastRequest()
-	if req.Action != ipc.ActionQuit {
-		t.Errorf("expected quit action from onExit, got %q", req.Action)
+	tr.mu.Lock()
+	done := tr.shutdownDone
+	tr.mu.Unlock()
+	if !done {
+		t.Error("expected shutdownDone to be true after onExit")
 	}
 }
 

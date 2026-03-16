@@ -98,6 +98,9 @@ func Load(path string) (*Config, error) {
 			Enabled: false,
 			Port:    50113,
 		},
+		BrowserPolicies: BrowserPoliciesConfig{
+			Enabled: true,
+		},
 	}
 
 	if _, err := toml.DecodeFile(path, cfg); err != nil {
