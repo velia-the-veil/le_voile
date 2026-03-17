@@ -17,21 +17,23 @@ import (
 
 func main() {
 	relayDomain := ""
+	skipQuitModal := false
 	cfgPath := config.DiscoverPath("")
 	if cfg, err := config.Load(cfgPath); err == nil {
 		relayDomain = cfg.Relay.Domain
+		skipQuitModal = cfg.Client.SkipQuitModal
 	}
 
-	app := desktop.NewApp(ipc.NewClient(), relayDomain)
+	app := desktop.NewApp(ipc.NewClient(), relayDomain, cfgPath, skipQuitModal)
 
 	if err := wails.Run(&options.App{
 		Title:            "Le Voile",
-		Width:            400,
-		Height:           500,
-		MinWidth:         400,
-		MinHeight:        500,
-		MaxWidth:         400,
-		MaxHeight:        500,
+		Width:            420,
+		Height:           540,
+		MinWidth:         420,
+		MinHeight:        540,
+		MaxWidth:         420,
+		MaxHeight:        540,
 		DisableResize:    true,
 		Frameless:        true,
 		StartHidden:      false,

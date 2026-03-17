@@ -20,14 +20,47 @@
             <button class="btn-close" onclick="closeWindow()">&#x2715;</button>
         </div>
     </div>
-    <main>
-        <div class="status-panel">
-            <div class="status-dot" id="status-dot"></div>
-            <div class="status-text" id="status-text">Chargement...</div>
-            <div class="status-ip" id="status-ip"></div>
-            <div class="status-uptime" id="status-uptime"></div>
-        </div>
+    <main class="layout-split">
+        <aside class="sidebar" id="sidebar">
+            <div class="sidebar-header">Pays</div>
+            <div class="country-list" id="country-list">
+                <!-- Populated dynamically by JS -->
+            </div>
+        </aside>
+        <section class="main-panel">
+            <div class="status-panel">
+                <div class="status-dot" id="status-dot"></div>
+                <div class="country-display" id="country-display">
+                    <span class="country-flag-large" id="country-flag"></span>
+                    <span class="country-name-large" id="country-name"></span>
+                </div>
+                <div class="status-text" id="status-text">Chargement...</div>
+                <div class="status-ip" id="status-ip"></div>
+                <div class="relay-info" id="relay-info"></div>
+                <div class="status-uptime" id="status-uptime"></div>
+                <button class="btn-connect" id="btn-connect" onclick="toggleConnect()">Connecter</button>
+                <a class="test-link" id="test-link" href="#" onclick="openTestLink(event)">Tester ma protection</a>
+            </div>
+        </section>
     </main>
+    <div class="modal-overlay hidden" id="modal-overlay">
+        <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+            <h2 class="modal-title" id="modal-title">Quitter Le Voile ?</h2>
+            <p class="modal-text">
+                Utilisez <strong>&#x2500;</strong> pour réduire la fenêtre en icône tray.
+                <strong>&#x2715;</strong> déconnecte le VPN et quitte Le Voile.
+                Votre connexion ne sera plus protégée.
+            </p>
+            <label class="modal-checkbox">
+                <input type="checkbox" id="modal-skip-checkbox">
+                <span>Ne plus montrer</span>
+            </label>
+            <div class="modal-actions">
+                <button class="btn-cancel" id="btn-modal-cancel" onclick="closeQuitModal()">Annuler</button>
+                <button class="btn-confirm" id="btn-modal-confirm" onclick="confirmQuit()">Confirmer</button>
+            </div>
+        </div>
+    </div>
     <script src="src/app.js"></script>
 </body>
 </html>

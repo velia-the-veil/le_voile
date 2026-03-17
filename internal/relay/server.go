@@ -24,7 +24,8 @@ type Server struct {
 	IPLimiter      *IPLimiter
 	CFIPValidator  *CloudflareIPValidator
 	StartTime      time.Time
-	Insecure       bool // dev mode: trust non-CF sources
+	Insecure       bool   // dev mode: trust non-CF sources
+	RegistryFile   string // path to relay-registry.json (served at /.well-known/relay-registry.json)
 	h3             *http3.Server
 }
 
@@ -76,6 +77,17 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 		mux.Handle("/connect", s.ConnectHandler)
 	}
 
+	// /ip returns the client's visible IP — used by desktop to display exit IP.
+	mux.Handle("/ip", LimitMiddleware(s.Limiter, NewIPHandler(s.CFIPValidator)))
+
+	// Serve relay registry JSON if configured.
+	if s.RegistryFile != "" {
+		mux.HandleFunc("/.well-known/relay-registry.json", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			http.ServeFile(w, r, s.RegistryFile)
+		})
+	}
+
 	s.h3 = &http3.Server{
 		Addr:      s.Addr,
 		Handler:   mux,
@@ -95,15 +107,31 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 		go s.CFIPValidator.StartRefresh(ctx)
 	}
 
-	errCh := make(chan error, 1)
+	errCh := make(chan error, 2)
 	go func() {
 		errCh <- s.h3.ListenAndServe()
 	}()
 
+	// TCP HTTPS listener — serves the same mux over HTTP/1.1 and HTTP/2.
+	// Required for: registry client (HTTP GET), latency checker (/health),
+	// and /ip endpoint used by the desktop client for visible IP detection.
+	tcpServer := &http.Server{
+		Addr:      s.Addr,
+		Handler:   mux,
+		TLSConfig: tlsCfg.Clone(),
+	}
+	go func() {
+		if err := tcpServer.ListenAndServeTLS(s.CertFile, s.KeyFile); err != nil && err != http.ErrServerClosed {
+			errCh <- &ServerError{Op: "tcp-serve", Err: err}
+		}
+	}()
+
 	select {
 	case <-ctx.Done():
+		tcpServer.Shutdown(context.Background())
 		return s.Shutdown(context.Background())
 	case err := <-errCh:
+		tcpServer.Shutdown(context.Background())
 		if err != nil {
 			return &ServerError{Op: "serve", Err: err}
 		}

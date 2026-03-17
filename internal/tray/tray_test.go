@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -1041,4 +1042,15 @@ func TestTray_ClearUpdateNotification_NilMenuItem(t *testing.T) {
 
 	// Should not panic with nil menuUpdateReady
 	tr.ClearUpdateNotification()
+}
+
+func TestDesktopExePath(t *testing.T) {
+	p := desktopExePath()
+	if p == "" {
+		t.Fatal("expected non-empty path")
+	}
+	// Must end with le-voile-desktop.exe
+	if !strings.HasSuffix(p, "le-voile-desktop.exe") {
+		t.Errorf("expected path ending in le-voile-desktop.exe, got %q", p)
+	}
 }

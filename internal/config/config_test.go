@@ -122,6 +122,74 @@ func TestConfig_DefaultPath(t *testing.T) {
 	}
 }
 
+func TestConfig_SavePreferredCountry(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+
+	original := &Config{
+		Client: ClientConfig{
+			AutoStart:        true,
+			PreferredCountry: "is",
+		},
+	}
+
+	if err := original.Save(path); err != nil {
+		t.Fatalf("save error: %v", err)
+	}
+
+	loaded, err := Load(path)
+	if err != nil {
+		t.Fatalf("load error: %v", err)
+	}
+
+	if loaded.Client.PreferredCountry != "is" {
+		t.Errorf("PreferredCountry: got %q, want %q", loaded.Client.PreferredCountry, "is")
+	}
+}
+
+func TestConfig_PreferredCountryDefaultEmpty(t *testing.T) {
+	cfg, err := Load(filepath.Join(t.TempDir(), "nonexistent.toml"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.Client.PreferredCountry != "" {
+		t.Errorf("expected PreferredCountry to default to empty, got %q", cfg.Client.PreferredCountry)
+	}
+}
+
+func TestConfig_SkipQuitModal(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+
+	original := &Config{
+		Client: ClientConfig{
+			AutoStart:     true,
+			SkipQuitModal: true,
+		},
+	}
+
+	if err := original.Save(path); err != nil {
+		t.Fatalf("save error: %v", err)
+	}
+
+	loaded, err := Load(path)
+	if err != nil {
+		t.Fatalf("load error: %v", err)
+	}
+
+	if !loaded.Client.SkipQuitModal {
+		t.Error("expected SkipQuitModal = true after roundtrip")
+	}
+}
+
+func TestConfig_SkipQuitModalDefaultFalse(t *testing.T) {
+	cfg, err := Load(filepath.Join(t.TempDir(), "nonexistent.toml"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.Client.SkipQuitModal {
+		t.Error("expected SkipQuitModal to default to false")
+	}
+}
+
 func TestStagingDir(t *testing.T) {
 	dir, err := StagingDir()
 	if err != nil {
