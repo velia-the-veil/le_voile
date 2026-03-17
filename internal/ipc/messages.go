@@ -22,7 +22,9 @@ const (
 	ActionUpdateStatus = "update_status"
 	ActionNotifyUpdate = "notify_update"
 	ActionSetBlocklist  = "set_blocklist"
-	ActionSetHTTPProxy = "set_http_proxy"
+	ActionSetHTTPProxy  = "set_http_proxy"
+	ActionGetRegistry   = "get_registry"
+	ActionSelectCountry = "select_country"
 )
 
 // Status constants for IPC responses.
@@ -72,4 +74,21 @@ type Response struct {
 
 	BrowserPoliciesApplied []string `json:"browser_policies_applied,omitempty"`
 	BrowserPoliciesFailed  []string `json:"browser_policies_failed,omitempty"`
+
+	RelayDomain  string `json:"relay_domain,omitempty"`  // active relay domain
+	RelayID      string `json:"relay_id,omitempty"`      // active relay ID (e.g. "relay-fr-01")
+	RelayLatency string `json:"relay_latency,omitempty"` // measured latency (e.g. "85ms")
+	Country      string `json:"country,omitempty"`       // country name in French (e.g. "France")
+	CountryFlag  string `json:"country_flag,omitempty"`  // country flag emoji (e.g. "🇫🇷")
+
+	RegistryCountries []RegistryCountry `json:"registry_countries,omitempty"`
+}
+
+// RegistryCountry holds country info for the registry response.
+type RegistryCountry struct {
+	Code       string `json:"code"`        // ISO: "is", "de", "fi", "us"
+	Name       string `json:"name"`        // French: "Islande"
+	Flag       string `json:"flag"`        // Emoji: "🇮🇸"
+	RelayCount int    `json:"relay_count"` // Number of active relays
+	Active     bool   `json:"active"`      // true if currently selected country
 }

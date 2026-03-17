@@ -6,14 +6,21 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"sort"
+	"sync"
 	"time"
 
 	"github.com/velia-the-veil/le_voile/internal/config"
 	"github.com/velia-the-veil/le_voile/internal/ipc"
 	"github.com/velia-the-veil/le_voile/internal/leakcheck"
+	"github.com/velia-the-veil/le_voile/internal/registry"
 	svc "github.com/velia-the-veil/le_voile/internal/service"
 	"github.com/velia-the-veil/le_voile/internal/tunnel"
 )
+
+// configMu serializes config load-modify-save sequences across all IPC handlers
+// to prevent concurrent writes from clobbering each other.
+var configMu sync.Mutex
 
 // Options configures behavior differences between installed and portable modes.
 type Options struct {
@@ -50,6 +57,10 @@ func Handle(prg *svc.Program, req ipc.Request, opts Options) ipc.Response {
 		return handleSetBlocklist(prg, req, opts)
 	case ipc.ActionSetHTTPProxy:
 		return handleSetHTTPProxy(prg, req, opts)
+	case ipc.ActionGetRegistry:
+		return handleGetRegistry(prg)
+	case ipc.ActionSelectCountry:
+		return handleSelectCountry(prg, req, opts)
 	default:
 		return ipc.Response{Status: ipc.StatusError, Error: "unknown_action"}
 	}
@@ -76,10 +87,31 @@ func handleGetStatus(prg *svc.Program) ipc.Response {
 	}
 	state := tc.State().Get()
 	uptime := FormatUptime(time.Since(prg.StartTime()))
+	visibleIP := prg.VisibleIP()
+	relayDomain := tc.RelayDomain()
 	resp := ipc.Response{
-		Status: string(state),
-		IP:     "unknown",
-		Uptime: uptime,
+		Status:      string(state),
+		IP:          visibleIP,
+		Uptime:      uptime,
+		RelayDomain: relayDomain,
+	}
+
+	// Populate relay metadata from discoverer (best-effort).
+	if disc := prg.Discoverer(); disc != nil {
+		for _, r := range disc.Relays() {
+			if r.Domain == relayDomain {
+				resp.RelayID = r.ID
+				if lat := disc.LatencyFor(r.ID); lat > 0 {
+					resp.RelayLatency = fmt.Sprintf("%dms", lat.Milliseconds())
+				}
+				code := registry.ExtractCountryCode(r.ID, r.Domain)
+				if meta, ok := registry.CountryMetaMap[code]; ok {
+					resp.Country = meta.Name
+					resp.CountryFlag = meta.Flag
+				}
+				break
+			}
+		}
 	}
 
 	// Include rollback info for tray polling (highest priority)
@@ -174,15 +206,18 @@ func handleSetAutoStart(prg *svc.Program, req ipc.Request, opts Options) ipc.Res
 		return ipc.Response{Status: ipc.StatusError, Error: "no_config_file"}
 	}
 
+	configMu.Lock()
 	cfg, err := config.Load(cfgPath)
 	if err != nil {
+		configMu.Unlock()
 		return ipc.Response{Status: ipc.StatusError, Error: err.Error()}
 	}
-
 	cfg.Client.AutoStart = autoStart
 	if err := cfg.Save(cfgPath); err != nil {
+		configMu.Unlock()
 		return ipc.Response{Status: ipc.StatusError, Error: err.Error()}
 	}
+	configMu.Unlock()
 
 	if opts.SetStartupTypeFn != nil {
 		if err := opts.SetStartupTypeFn(autoStart); err != nil {
@@ -338,15 +373,18 @@ func handleSetBlocklist(prg *svc.Program, req ipc.Request, opts Options) ipc.Res
 		return ipc.Response{Status: ipc.StatusError, Error: "no_config_file"}
 	}
 
+	configMu.Lock()
 	cfg, err := config.Load(cfgPath)
 	if err != nil {
+		configMu.Unlock()
 		return ipc.Response{Status: ipc.StatusError, Error: err.Error()}
 	}
-
 	cfg.Blocklist.Enabled = enabled
 	if err := cfg.Save(cfgPath); err != nil {
+		configMu.Unlock()
 		return ipc.Response{Status: ipc.StatusError, Error: err.Error()}
 	}
+	configMu.Unlock()
 
 	if enabled {
 		prg.EnableBlocklist()
@@ -368,15 +406,18 @@ func handleSetHTTPProxy(prg *svc.Program, req ipc.Request, opts Options) ipc.Res
 		return ipc.Response{Status: ipc.StatusError, Error: "no_config_file"}
 	}
 
+	configMu.Lock()
 	cfg, err := config.Load(cfgPath)
 	if err != nil {
+		configMu.Unlock()
 		return ipc.Response{Status: ipc.StatusError, Error: err.Error()}
 	}
-
 	cfg.HTTPProxy.Enabled = enabled
 	if err := cfg.Save(cfgPath); err != nil {
+		configMu.Unlock()
 		return ipc.Response{Status: ipc.StatusError, Error: err.Error()}
 	}
+	configMu.Unlock()
 
 	if enabled {
 		if err := prg.EnableHTTPProxy(); err != nil {
@@ -392,6 +433,132 @@ func handleSetHTTPProxy(prg *svc.Program, req ipc.Request, opts Options) ipc.Res
 		HTTPProxyAddr:   prg.HTTPProxyAddr(),
 		HTTPProxySeq:    prg.HTTPProxySeq(),
 	}
+}
+
+func handleGetRegistry(prg *svc.Program) ipc.Response {
+	disc := prg.Discoverer()
+	if disc == nil {
+		return ipc.Response{Status: ipc.StatusError, Error: "registry_disabled"}
+	}
+
+	byCountry := disc.RelaysByCountry()
+
+	// Determine the active country from the current relay domain.
+	activeCode := ""
+	tc := prg.TunnelClient()
+	if tc != nil {
+		domain := tc.RelayDomain()
+		relays := disc.Relays()
+		for _, r := range relays {
+			if r.Domain == domain {
+				activeCode = registry.ExtractCountryCode(r.ID, r.Domain)
+				break
+			}
+		}
+	}
+
+	var countries []ipc.RegistryCountry
+	for code, relays := range byCountry {
+		name, flag := code, ""
+		if meta, ok := registry.CountryMetaMap[code]; ok {
+			name = meta.Name
+			flag = meta.Flag
+		}
+		countries = append(countries, ipc.RegistryCountry{
+			Code:       code,
+			Name:       name,
+			Flag:       flag,
+			RelayCount: len(relays),
+			Active:     code == activeCode,
+		})
+	}
+
+	// Deterministic order: sort by country name for stable sidebar rendering.
+	sort.Slice(countries, func(i, j int) bool {
+		return countries[i].Name < countries[j].Name
+	})
+
+	return ipc.Response{
+		Status:            ipc.StatusOK,
+		RegistryCountries: countries,
+	}
+}
+
+func handleSelectCountry(prg *svc.Program, req ipc.Request, opts Options) ipc.Response {
+	countryCode := req.Value
+	if countryCode == "" {
+		return ipc.Response{Status: ipc.StatusError, Error: "missing_country_code"}
+	}
+	if _, ok := registry.CountryMetaMap[countryCode]; !ok {
+		return ipc.Response{Status: ipc.StatusError, Error: "unknown_country_code"}
+	}
+
+	disc := prg.Discoverer()
+	if disc == nil {
+		return ipc.Response{Status: ipc.StatusError, Error: "registry_disabled"}
+	}
+
+	tc := prg.TunnelClient()
+	if tc == nil {
+		return ipc.Response{Status: ipc.StatusError, Error: "service_not_ready"}
+	}
+
+	// Find a relay in the requested country.
+	byCountry := disc.RelaysByCountry()
+	countryRelays, ok := byCountry[countryCode]
+	if !ok || len(countryRelays) == 0 {
+		return ipc.Response{Status: ipc.StatusError, Error: "no_relays_for_country"}
+	}
+
+	relay := countryRelays[0] // best relay by latency (already sorted)
+
+	// Update the tunnel to use the new relay.
+	if err := tc.UpdateRelay(relay.Domain, relay.PublicKey); err != nil {
+		return ipc.Response{Status: ipc.StatusError, Error: fmt.Sprintf("ipchandler: update relay: %v", err)}
+	}
+
+	// Stop reconnector to prevent race during manual reconnect.
+	if r := prg.Reconnector(); r != nil {
+		r.Stop()
+	}
+
+	// Reconnect through the new relay.
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := tc.Connect(ctx); err != nil {
+		// Restart reconnector so it can retry later.
+		if r := prg.Reconnector(); r != nil {
+			go r.Start(prg.Context())
+		}
+		return ipc.Response{Status: ipc.StatusError, Error: fmt.Sprintf("ipchandler: reconnect: %v", err)}
+	}
+
+	// Restart reconnector for future automatic reconnections.
+	if r := prg.Reconnector(); r != nil {
+		go r.Start(prg.Context())
+	}
+
+	// Save preferred_country to config TOML.
+	cfgPath := opts.ConfigPathFn()
+	if cfgPath != "" {
+		configMu.Lock()
+		if cfg, err := config.Load(cfgPath); err == nil {
+			cfg.Client.PreferredCountry = countryCode
+			if saveErr := cfg.Save(cfgPath); saveErr != nil {
+				configMu.Unlock()
+				return ipc.Response{Status: ipc.StatusError, Error: fmt.Sprintf("ipchandler: save config: %v", saveErr)}
+			}
+		}
+		configMu.Unlock()
+	}
+
+	// Clear stale IP before async detection so GetStatus won't return the old relay's IP.
+	prg.SetVisibleIP("")
+
+	// Detect visible IP after reconnection (reuse service method to avoid duplication).
+	go prg.DetectVisibleIP(prg.Context())
+
+	return ipc.Response{Status: ipc.StatusConnected}
 }
 
 // FormatUptime formats a duration as "Xh Ym" or "Xm Ys".

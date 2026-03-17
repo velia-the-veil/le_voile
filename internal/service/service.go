@@ -6,9 +6,11 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -64,6 +66,8 @@ type Config struct {
 	HTTPProxyPort    int
 
 	BrowserPoliciesEnabled bool
+
+	PreferredCountry string // ISO 2-letter code from config, used for initial relay selection
 }
 
 // Program implements kardianos/service.Interface for lifecycle management.
@@ -133,6 +137,8 @@ type Program struct {
 	httpProxyActive atomic.Bool
 	httpProxySeq    atomic.Uint64
 	httpProxyAddr   atomic.Value // string
+
+	visibleIP atomic.Value // string — detected exit IP of the current relay
 }
 
 // NewProgram creates a Program with the given configuration.
@@ -348,6 +354,25 @@ func (p *Program) DisableHTTPProxy() {
 	p.stopHTTPProxy()
 }
 
+// Discoverer returns the relay discoverer (used by IPC handler). May be nil.
+func (p *Program) Discoverer() *registry.Discoverer {
+	return p.discoverer
+}
+
+// VisibleIP returns the detected exit IP of the current relay.
+func (p *Program) VisibleIP() string {
+	v := p.visibleIP.Load()
+	if v == nil {
+		return ""
+	}
+	return v.(string)
+}
+
+// SetVisibleIP stores the detected exit IP.
+func (p *Program) SetVisibleIP(ip string) {
+	p.visibleIP.Store(ip)
+}
+
 // EnableBlocklist activates DNS blocklist filtering at runtime.
 // Creates and starts the Manager if it was never started, then injects it into
 // both proxies. Safe to call while the service is running.
@@ -468,8 +493,16 @@ func (p *Program) run() {
 
 			relays, discoverErr := p.discoverer.Discover(ctx)
 			if discoverErr == nil && len(relays) > 0 {
-				relayDomain = relays[0].Domain
-				relayPubKey = relays[0].PublicKey
+				chosen := relays[0]
+				// If preferred_country is set, try to find a relay in that country.
+				if p.config.PreferredCountry != "" {
+					byCountry := p.discoverer.RelaysByCountry()
+					if countryRelays, ok := byCountry[p.config.PreferredCountry]; ok && len(countryRelays) > 0 {
+						chosen = countryRelays[0]
+					}
+				}
+				relayDomain = chosen.Domain
+				relayPubKey = chosen.PublicKey
 			}
 			// If discover fails: keep static relayDomain/relayPubKey — no fatal error.
 		}
@@ -511,6 +544,9 @@ func (p *Program) run() {
 	} else if connectCancel != nil {
 		connectCancel()
 	}
+
+	// --- 1a. Detect visible exit IP (best-effort, non-blocking) ---
+	go p.DetectVisibleIP(ctx)
 
 	// --- 1b. Confirm new version works / Cleanup backup after successful tunnel connect ---
 	if p.config.UpdateStagingDir != "" {
@@ -1265,5 +1301,37 @@ func (p *Program) stopSTUN() {
 	}
 	if errCh != nil {
 		<-errCh
+	}
+}
+
+// DetectVisibleIP fetches the exit IP from the relay's /ip endpoint.
+// Safe to call from any goroutine. Creates its own 5s timeout context.
+func (p *Program) DetectVisibleIP(ctx context.Context) {
+	tc := p.tunnelClient
+	if tc == nil {
+		return
+	}
+	detectCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(detectCtx, http.MethodGet, "https://"+tc.RelayDomain()+"/ip", nil)
+	if err != nil {
+		return
+	}
+	resp, err := tc.HTTPClient().Do(req)
+	if err != nil {
+		return
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 64))
+	if err != nil {
+		return
+	}
+	ip := strings.TrimSpace(string(body))
+	if ip != "" {
+		p.SetVisibleIP(ip)
 	}
 }

@@ -4,6 +4,9 @@ package tray
 import (
 	"context"
 	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -88,6 +91,10 @@ type Tray struct {
 	sysProxy           *SysProxy
 	relayDomain        string
 
+	desktopCmd      *exec.Cmd // tracks the desktop subprocess
+	desktopRunning  bool      // true while desktop subprocess is alive (guarded by mu)
+
+	menuOpen        *systray.MenuItem
 	menuToggle      *systray.MenuItem
 	menuLeakCheck   *systray.MenuItem
 	menuUpdateReady *systray.MenuItem
@@ -157,6 +164,7 @@ func (t *Tray) onReady() {
 	t.api.SetTitle("Le Voile")
 
 	// Create menu items
+	t.menuOpen = t.menuAPI.AddMenuItem("Ouvrir la fenêtre", "")
 	t.menuToggle = t.menuAPI.AddMenuItem("Activer Le Voile", "Activer/Désactiver la protection")
 	t.menuLeakCheck = t.menuAPI.AddMenuItem("Vérifier fuite WebRTC", "Tester si votre IP réelle est exposée via WebRTC")
 	t.menuLeakCheck.Hide() // visible only when connected
@@ -253,6 +261,8 @@ func (t *Tray) menuHandler(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			return
+		case <-t.menuOpen.ClickedCh:
+			t.handleOpenDesktop()
 		case <-t.menuToggle.ClickedCh:
 			t.handleToggle(ctx)
 		case <-t.menuLeakCheck.ClickedCh:
@@ -528,6 +538,42 @@ func (t *Tray) NotifyRollback(version string) {
 	}
 	t.api.SetTooltip(fmt.Sprintf("Mise à jour v%s annulée — version précédente restaurée", version))
 	go t.restoreTooltipAfter(context.Background(), 15*time.Second)
+}
+
+// handleOpenDesktop launches the desktop subprocess if not already running.
+func (t *Tray) handleOpenDesktop() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	// If the desktop is already running, do nothing.
+	if t.desktopRunning {
+		return
+	}
+
+	exePath := desktopExePath()
+	t.desktopCmd = exec.Command(exePath)
+	if err := t.desktopCmd.Start(); err != nil {
+		t.api.SetTooltip(fmt.Sprintf("Erreur ouverture fenêtre : %s", err))
+		return
+	}
+	t.desktopRunning = true
+	// Wait in background and reset the flag when the process exits.
+	go func() {
+		t.desktopCmd.Wait()
+		t.mu.Lock()
+		t.desktopRunning = false
+		t.mu.Unlock()
+	}()
+}
+
+// desktopExePath returns the path to the desktop binary, expected to be in
+// the same directory as the tray binary with the name "le-voile-desktop.exe".
+func desktopExePath() string {
+	self, err := os.Executable()
+	if err != nil {
+		return "le-voile-desktop.exe"
+	}
+	return filepath.Join(filepath.Dir(self), "le-voile-desktop.exe")
 }
 
 func (t *Tray) handleQuit(ctx context.Context) {

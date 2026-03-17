@@ -64,7 +64,9 @@ type RelayConfig struct {
 
 // ClientConfig holds client behavior settings.
 type ClientConfig struct {
-	AutoStart bool `toml:"auto_start"`
+	AutoStart        bool   `toml:"auto_start"`
+	PreferredCountry string `toml:"preferred_country,omitempty"` // ISO 2-letter code: "is", "de", "fi", "us"
+	SkipQuitModal    bool   `toml:"skip_quit_modal"`
 }
 
 // STUNConfig holds STUN relay configuration.

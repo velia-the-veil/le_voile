@@ -24,10 +24,11 @@ type Discoverer struct {
 	defaultRelay   RelayEntry
 	latencyChecker *LatencyChecker
 
-	mu     sync.RWMutex
-	relays []RelayEntry
-	stopCh chan struct{}
-	once   sync.Once
+	mu             sync.RWMutex
+	relays         []RelayEntry
+	lastLatencies  map[string]time.Duration // relayID → last measured latency
+	stopCh         chan struct{}
+	once           sync.Once
 }
 
 // NewDiscoverer creates a discoverer with the given client, cache, and fallback relay.
@@ -112,6 +113,18 @@ func (d *Discoverer) sortByLatency(ctx context.Context, relays []RelayEntry) []R
 	if hasReachable {
 		// Save latency rankings to cache (best-effort).
 		_ = d.cache.SaveLatencies(results)
+
+		// Store latencies for IPC consumers (e.g. desktop status display).
+		latMap := make(map[string]time.Duration, len(results))
+		for _, r := range results {
+			if r.Reachable {
+				latMap[r.Relay.ID] = r.Latency
+			}
+		}
+		d.mu.Lock()
+		d.lastLatencies = latMap
+		d.mu.Unlock()
+
 		return SortByLatency(results)
 	}
 
@@ -212,6 +225,17 @@ func (d *Discoverer) setRelays(relays []RelayEntry) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.relays = relays
+}
+
+// LatencyFor returns the last measured latency for the given relay ID.
+// Returns 0 if no measurement is available.
+func (d *Discoverer) LatencyFor(relayID string) time.Duration {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	if d.lastLatencies == nil {
+		return 0
+	}
+	return d.lastLatencies[relayID]
 }
 
 func (d *Discoverer) refreshLoop(ctx context.Context) {

@@ -123,12 +123,36 @@ html, body {
     color: white !important;
 }
 
-/* Main content */
-main {
+/* Layout split — Direction F */
+.layout-split {
     display: flex;
+    height: calc(100% - 2rem);
+}
+
+.sidebar {
+    width: 150px;
+    background: var(--bg-secondary);
+    border-right: 1px solid rgba(138, 155, 184, 0.1);
+    overflow-y: auto;
+    padding: 0.5rem 0;
+}
+
+.sidebar-header {
+    font-family: 'Bebas Neue', 'Arial Black', sans-serif;
+    font-size: 0.75rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--text-secondary);
+    padding: 0.25rem 0.75rem 0.5rem;
+}
+
+.main-panel {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
     align-items: center;
     justify-content: center;
-    height: calc(100% - 2rem);
+    padding: 1rem;
 }
 
 /* Status panel */
@@ -136,7 +160,7 @@ main {
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 1rem;
+    gap: 0.75rem;
 }
 
 /* Status dot */
@@ -171,6 +195,21 @@ main {
     50% { box-shadow: 0 0 1.5rem 0.75rem rgba(251, 146, 60, 0.2); }
 }
 
+/* Country display — active country in main panel */
+.country-display {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin: 0.5rem 0;
+}
+.country-flag-large { font-size: 2rem; }
+.country-name-large {
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: 1.75rem;
+    color: var(--text-primary);
+    text-transform: uppercase;
+}
+
 /* Status text */
 .status-text {
     font-family: 'Rajdhani', 'Segoe UI', sans-serif;
@@ -187,6 +226,13 @@ main {
     text-align: center;
 }
 
+.relay-info {
+    font-family: 'Inter', sans-serif;
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    text-align: center;
+}
+
 .status-uptime {
     font-family: 'Inter', monospace;
     font-size: 0.75rem;
@@ -194,7 +240,168 @@ main {
     text-align: center;
 }
 
+.test-link {
+    margin-top: 0.5rem;
+    font-family: 'Rajdhani', sans-serif;
+    font-size: 0.875rem;
+    color: var(--accent-glow);
+    text-decoration: none;
+}
+.test-link:hover { text-decoration: underline; }
+
+/* Country item in sidebar */
+.country-item {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.625rem 0.75rem;
+    cursor: pointer;
+    font-family: 'Rajdhani', sans-serif;
+    font-size: 0.875rem;
+    color: var(--text-primary);
+    transition: background 0.15s;
+}
+.country-item:hover { background: rgba(255, 255, 255, 0.05); }
+.country-item.active {
+    background: var(--bg-secondary);
+    border-left: 3px solid var(--accent-glow);
+}
+.country-flag { font-size: 1.25rem; }
+.country-name { white-space: nowrap; }
+.country-count {
+    margin-left: auto;
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+}
+
 /* Titlebar logo color states */
 .titlebar-logo.connected { color: var(--status-secure); }
 .titlebar-logo.connecting { color: var(--status-warning); }
 .titlebar-logo.disconnected { color: var(--status-risk); }
+
+/* Connect/Disconnect button */
+.btn-connect {
+    display: block;
+    width: 100%;
+    max-width: 200px;
+    padding: 0.625rem 1.5rem;
+    margin: 0.75rem auto;
+    border: none;
+    border-radius: 6px;
+    font-family: 'Rajdhani', sans-serif;
+    font-weight: 600;
+    font-size: 0.875rem;
+    cursor: pointer;
+    transition: background 0.15s, box-shadow 0.15s, opacity 0.15s;
+}
+.btn-connect.connect {
+    background: var(--status-secure);
+    color: var(--bg-primary);
+}
+.btn-connect.connect:hover {
+    box-shadow: 0 0 16px rgba(74, 222, 128, 0.3);
+}
+.btn-connect.disconnect {
+    background: transparent;
+    color: var(--accent-red);
+    border: 1px solid rgba(212, 43, 43, 0.3);
+}
+.btn-connect.disconnect:hover {
+    background: rgba(212, 43, 43, 0.1);
+    border-color: var(--accent-red);
+}
+.btn-connect.hidden {
+    display: none;
+}
+.btn-connect:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+/* Modal overlay */
+.modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.85);
+    backdrop-filter: blur(4px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 100;
+}
+.modal-overlay.hidden { display: none; }
+.modal-card {
+    background: var(--bg-secondary);
+    border: 1px solid rgba(138, 155, 184, 0.15);
+    border-radius: 8px;
+    padding: 1.5rem;
+    max-width: 300px;
+    width: 90%;
+}
+.modal-title {
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: 1.25rem;
+    color: var(--text-primary);
+    margin: 0 0 0.75rem;
+}
+.modal-text {
+    font-family: 'Inter', sans-serif;
+    font-size: 0.8125rem;
+    color: var(--text-secondary);
+    line-height: 1.5;
+    margin: 0 0 1rem;
+}
+.modal-text strong {
+    color: var(--text-primary);
+    font-weight: 700;
+}
+.modal-checkbox {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-family: 'Rajdhani', sans-serif;
+    font-size: 0.8125rem;
+    color: var(--text-secondary);
+    margin-bottom: 1rem;
+    cursor: pointer;
+}
+.modal-checkbox input[type="checkbox"] {
+    accent-color: var(--accent-glow);
+}
+.modal-actions {
+    display: flex;
+    gap: 0.75rem;
+    justify-content: flex-end;
+}
+.btn-cancel {
+    background: transparent;
+    color: var(--text-secondary);
+    border: 1px solid rgba(42, 141, 255, 0.2);
+    border-radius: 6px;
+    padding: 0.5rem 1rem;
+    font-family: 'Rajdhani', sans-serif;
+    font-weight: 600;
+    font-size: 0.8125rem;
+    cursor: pointer;
+    transition: border-color 0.15s, color 0.15s;
+}
+.btn-cancel:hover {
+    border-color: var(--accent-glow);
+    color: var(--text-primary);
+}
+.btn-confirm {
+    background: transparent;
+    color: var(--accent-red);
+    border: 1px solid rgba(212, 43, 43, 0.3);
+    border-radius: 6px;
+    padding: 0.5rem 1rem;
+    font-family: 'Rajdhani', sans-serif;
+    font-weight: 600;
+    font-size: 0.8125rem;
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s;
+}
+.btn-confirm:hover {
+    background: rgba(212, 43, 43, 0.1);
+    border-color: var(--accent-red);
+}

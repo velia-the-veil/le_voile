@@ -24,6 +24,7 @@ func main() {
 	upstream := flag.String("upstream", "https://1.1.1.1/dns-query", "primary DoH resolver URL")
 	fallback := flag.String("fallback", "https://9.9.9.9/dns-query", "fallback DoH resolver URL (empty to disable)")
 	signingKeyPath := flag.String("signing-key", "", "path to Ed25519 private key file (base64); enables /verify endpoint")
+	registryFile := flag.String("registry-file", "", "path to relay-registry.json (served at /.well-known/relay-registry.json)")
 	flag.Parse()
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -39,6 +40,7 @@ func main() {
 	srv := relay.NewServer(*addr, *certFile, *keyFile)
 	srv.Handler = dohHandler
 	srv.STUNHandler = relay.NewSTUNHandler()
+	srv.RegistryFile = *registryFile
 
 	if *signingKeyPath != "" {
 		key, err := loadSigningKey(*signingKeyPath)
