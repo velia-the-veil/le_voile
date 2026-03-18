@@ -46,6 +46,10 @@ config.toml
 /_bmad/
 /_bmad-output/
 
+# Browser extension build artifacts
+extension.zip
+web-ext-artifacts/
+
 # OS files
 .DS_Store
 Thumbs.db
