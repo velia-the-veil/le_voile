@@ -3,7 +3,6 @@
 package browser
 
 import (
-	"archive/zip"
 	"bytes"
 	"crypto/sha256"
 	"crypto/x509"
@@ -11,7 +10,6 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -214,10 +212,14 @@ func deployExtensionFiles() error {
 		return fmt.Errorf("browser: deploy extension: %w", err)
 	}
 
-	// Generate Firefox XPI dynamically from embedded source files.
+	// Deploy signed Firefox XPI (pre-signed via AMO, embedded at build time).
+	xpiData, err := extensionFS.ReadFile("extension_assets/build/levoile.xpi")
+	if err != nil {
+		return fmt.Errorf("browser: deploy extension: read embedded XPI: %w", err)
+	}
 	xpiPath := filepath.Join(deployDir, "levoile.xpi")
-	if err := generateXPI(xpiPath); err != nil {
-		return fmt.Errorf("browser: deploy extension: %w", err)
+	if err := os.WriteFile(xpiPath, xpiData, 0644); err != nil {
+		return fmt.Errorf("browser: deploy extension: write XPI: %w", err)
 	}
 
 	return nil
@@ -268,59 +270,3 @@ func generateUpdatesXML(chromeDir, version, codebase string) error {
 	return nil
 }
 
-// generateXPI creates a Firefox XPI (ZIP) from the embedded extension source files.
-// It renames manifest_firefox.json to manifest.json inside the XPI.
-func generateXPI(xpiPath string) error {
-	var buf bytes.Buffer
-	w := zip.NewWriter(&buf)
-
-	srcDir := "extension_assets/src"
-	err := fs.WalkDir(extensionFS, srcDir, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if d.IsDir() {
-			return nil
-		}
-
-		// Skip Chrome manifest — Firefox uses manifest_firefox.json renamed to manifest.json.
-		relPath, _ := filepath.Rel(srcDir, filepath.ToSlash(path))
-		relPath = filepath.ToSlash(relPath)
-
-		if relPath == "manifest.json" {
-			return nil // skip Chrome manifest
-		}
-
-		data, err := extensionFS.ReadFile(path)
-		if err != nil {
-			return fmt.Errorf("read %s: %w", path, err)
-		}
-
-		// Rename manifest_firefox.json → manifest.json in the XPI.
-		zipName := relPath
-		if relPath == "manifest_firefox.json" {
-			zipName = "manifest.json"
-		}
-
-		fh, err := w.Create(zipName)
-		if err != nil {
-			return fmt.Errorf("create zip entry %s: %w", zipName, err)
-		}
-		if _, err := fh.Write(data); err != nil {
-			return fmt.Errorf("write zip entry %s: %w", zipName, err)
-		}
-		return nil
-	})
-	if err != nil {
-		return fmt.Errorf("generate XPI: walk: %w", err)
-	}
-
-	if err := w.Close(); err != nil {
-		return fmt.Errorf("generate XPI: close zip: %w", err)
-	}
-
-	if err := os.WriteFile(xpiPath, buf.Bytes(), 0644); err != nil {
-		return fmt.Errorf("generate XPI: write: %w", err)
-	}
-	return nil
-}

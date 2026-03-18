@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"fyne.io/systray"
@@ -74,13 +75,14 @@ type Tray struct {
 	autoStart    bool // initial auto_start value from config
 	portableMode bool // true when running as portable binary (hides auto-start)
 
-	cancel        context.CancelFunc
-	mu            sync.Mutex
-	last          string // last known state to avoid redundant updates
-	connected     bool   // current connection state for menu logic
+	cancel             context.CancelFunc
+	mu                 sync.Mutex
+	last               string // last known state to avoid redundant updates
+	connected          bool   // current connection state for menu logic
 	restoreCancel      context.CancelFunc // cancels the previous restoreTooltipAfter goroutine
 	dnsRecoveryCancel  context.CancelFunc // cancels pending DNS orphan recovery
-	shutdownDone       bool               // prevents double shutdown
+	shutdownInProgress atomic.Bool        // set before ActionQuit; prevents handleIPCError from launching orphan recovery
+	shutdownDone       bool               // prevents double shutdown (guarded by mu)
 	notifiedVer        string             // last version passed to NotifyUpdateReady (dedup guard)
 	notifiedRollbackVer string            // last version passed to NotifyRollback (dedup guard)
 	leakAlertActive          bool // true while a leak alert tooltip is being shown (AC3)
@@ -221,6 +223,13 @@ func (t *Tray) onExit() {
 
 // shutdownServiceAndRestore stops the service, restores DNS and proxy.
 // Idempotent — safe to call multiple times.
+//
+// Sequence (AC1, AC7, AC8):
+//  1. shutdownInProgress = true (prevents handleIPCError from launching orphan recovery)
+//  2. Restore WinINET proxy (tray owns this resource)
+//  3. Kill desktop process (timeout 3s — non-blocking for service shutdown)
+//  4. ActionQuit via IPC (timeout 10s — tells the service to shut down)
+//  5. Safety-net DNS recovery
 func (t *Tray) shutdownServiceAndRestore() {
 	t.mu.Lock()
 	if t.shutdownDone {
@@ -231,23 +240,64 @@ func (t *Tray) shutdownServiceAndRestore() {
 	wasProxyActive := t.httpProxyEnabled
 	t.mu.Unlock()
 
+	// 1. Signal shutdown intent — handleIPCError will skip orphan recovery.
+	t.shutdownInProgress.Store(true)
+
 	// Cancel any pending DNS recovery timer.
 	t.cancelDNSRecovery()
 
-	// Tell the service to stop. The IPC handler calls RequestStop()
-	// which goes through SCM (p.svc.Stop()) for a clean exit.
-	quitCtx, cancel := context.WithTimeout(context.Background(), quitTimeout)
-	defer cancel()
-	t.client.SendContext(quitCtx, ipc.Request{Action: ipc.ActionQuit})
-
-	// Restore WinINET proxy.
+	// 2. Restore WinINET proxy (tray is the sole owner — AC5).
 	if wasProxyActive {
 		t.syncSysProxy(false, "")
 	}
 
-	// Safety net: restore DNS from persisted file in case the service
+	// 3. Kill desktop process if launched by this tray (AC7).
+	t.killDesktopProcess()
+
+	// 4. Tell the service to stop. The IPC handler calls RequestStop()
+	// which goes through SCM (p.svc.Stop()) for a clean exit.
+	// If the service doesn't respond within quitTimeout, the tray
+	// still exits — the service will be recovered on next start (1.4).
+	quitCtx, cancel := context.WithTimeout(context.Background(), quitTimeout)
+	defer cancel()
+	t.client.SendContext(quitCtx, ipc.Request{Action: ipc.ActionQuit})
+
+	// 5. Safety net: restore DNS from persisted file in case the service
 	// didn't shut down cleanly. No-op if the service already restored.
 	dns.RecoverOrphanDNS(context.Background())
+}
+
+// desktopKillTimeout is how long the tray waits for the desktop to exit
+// before force-killing it.
+const desktopKillTimeout = 3 * time.Second
+
+// killDesktopProcess terminates the desktop subprocess if the tray launched it.
+// If the desktop was launched externally (PID unknown), it is left to self-close
+// when its IPC polling detects the service shutdown.
+func (t *Tray) killDesktopProcess() {
+	t.mu.Lock()
+	cmd := t.desktopCmd
+	running := t.desktopRunning
+	t.mu.Unlock()
+
+	if !running || cmd == nil || cmd.Process == nil {
+		return
+	}
+
+	// Give the desktop a short grace period to exit on its own.
+	done := make(chan struct{})
+	go func() {
+		cmd.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		// Desktop exited gracefully.
+	case <-time.After(desktopKillTimeout):
+		// Force kill — desktop may be frozen or showing a blocking modal.
+		cmd.Process.Kill()
+	}
 }
 
 func (t *Tray) menuHandler(ctx context.Context) {
@@ -653,11 +703,18 @@ func (t *Tray) reconnectIPC(ctx context.Context) {
 const dnsRecoveryDelay = 10 * time.Second
 
 func (t *Tray) handleIPCError(ctx context.Context, err error) {
+	// AC8: If shutdown is in progress (intentional quit), do NOT launch
+	// orphan recovery or attempt reconnection — the service is shutting down.
+	if t.shutdownInProgress.Load() {
+		return
+	}
+
 	t.mu.Lock()
 	t.last = ""
 	t.connected = false
 	wasProxyActive := t.httpProxyEnabled
 	t.httpProxyEnabled = false
+	t.httpProxySeq = 0 // AC3: force WinINET sync on next successful get_status after reconnect
 	// Reset leak alert flag so future leaks detected after reconnect are notified.
 	t.leakAlertActive = false
 	t.mu.Unlock()
@@ -793,11 +850,11 @@ func (t *Tray) updateTrayState(resp ipc.Response) {
 	switch resp.Status {
 	case ipc.StatusConnected:
 		t.api.SetIcon(IconConnected)
-		ip := resp.IP
-		if ip == "" {
-			ip = "unknown"
+		if resp.IP == "" {
+			t.api.SetTooltip("Protégé — IP en détection...")
+		} else {
+			t.api.SetTooltip(fmt.Sprintf("Protégé — IP visible : %s", resp.IP))
 		}
-		t.api.SetTooltip(fmt.Sprintf("Protégé — IP visible : %s", ip))
 		if t.menuToggle != nil {
 			t.menuToggle.SetTitle("Désactiver Le Voile")
 		}

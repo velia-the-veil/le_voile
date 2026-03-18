@@ -52,6 +52,7 @@ type App struct {
 	relayDomain   string
 	skipQuitModal bool                          // cached from config at startup
 	runtimeQuit   func(ctx context.Context)     // injected for testability; defaults to wailsRuntime.Quit
+	runtimeHide   func(ctx context.Context)     // injected for testability; defaults to wailsRuntime.WindowHide
 	configPath    string                        // path to config file for saving preferences
 }
 
@@ -61,6 +62,7 @@ func NewApp(client IPCClient, relayDomain string, configPath string, skipQuitMod
 		ipcClient:     client,
 		relayDomain:   relayDomain,
 		runtimeQuit:   wailsRuntime.Quit,
+		runtimeHide:   wailsRuntime.WindowHide,
 		configPath:    configPath,
 		skipQuitModal: skipQuitModal,
 	}
@@ -108,6 +110,15 @@ func (a *App) Startup(ctx context.Context) {
 			}
 		}()
 	}
+}
+
+// OnBeforeClose intercepts the window close (X button) and hides the window
+// instead of destroying the process (AC2). The tray and service continue
+// running. The window can be re-opened via left-click on the tray icon.
+// Returns true to prevent the default close behavior.
+func (a *App) OnBeforeClose(ctx context.Context) bool {
+	a.runtimeHide(a.ctx)
+	return true
 }
 
 // Shutdown is the Wails OnShutdown callback. It closes the IPC client.

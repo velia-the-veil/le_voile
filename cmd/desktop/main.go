@@ -45,6 +45,11 @@ func main() {
 		},
 		OnStartup:  app.Startup,
 		OnShutdown: app.Shutdown,
+		// AC2: Closing the window (X button) hides it instead of destroying
+		// the process. The tray remains active and the window can be re-opened
+		// via left-click on the tray icon. Only the tray's "Quitter" menu
+		// triggers a real quit (via App.Quit → runtime.Quit).
+		OnBeforeClose: app.OnBeforeClose,
 		Bind: []interface{}{
 			app,
 		},

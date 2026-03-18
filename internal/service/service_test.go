@@ -6,9 +6,11 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/velia-the-veil/le_voile/internal/browser"
 	"github.com/velia-the-veil/le_voile/internal/updater"
 )
 
@@ -573,6 +575,159 @@ func TestService_TunnelTimeout_AfterInstall_TriggersRollback(t *testing.T) {
 	if reason != "context deadline exceeded" {
 		t.Errorf("RollbackReason = %q, want %q", reason, "context deadline exceeded")
 	}
+}
+
+// --- Story 12.1 tests ---
+
+// TestStop_Idempotent verifies that Stop() called concurrently only executes
+// the context cancel once (AC6 — sync.Once guard).
+func TestStop_Idempotent(t *testing.T) {
+	var buf bytes.Buffer
+	oldStderr := serviceStderr
+	serviceStderr = &buf
+	defer func() { serviceStderr = oldStderr }()
+
+	cfg := Config{RelayDomain: "test.example.com", RelayPubKey: "invalid-key"}
+	prg := NewProgram(cfg)
+
+	prg.Start(nil)
+
+	// Wait for run() to exit (invalid key fails quickly).
+	select {
+	case <-prg.done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("run did not exit within 2 seconds")
+	}
+
+	// Call Stop concurrently — should not panic or race.
+	var wg sync.WaitGroup
+	for i := 0; i < 5; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			prg.Stop(nil)
+		}()
+	}
+	wg.Wait()
+}
+
+// TestShutdownSequence_IPCServerLast verifies that the IPC server stop callback
+// is called AFTER DNS/browser policy restore callbacks in shutdown() (AC4, AC8).
+func TestShutdownSequence_IPCServerLast(t *testing.T) {
+	var buf bytes.Buffer
+	oldStderr := serviceStderr
+	serviceStderr = &buf
+	defer func() { serviceStderr = oldStderr }()
+
+	cfg := Config{RelayDomain: "test.example.com", RelayPubKey: "dGVzdA=="}
+	prg := NewProgram(cfg)
+
+	// Track call order via a shared slice.
+	var mu sync.Mutex
+	var order []string
+
+	// Inject a mock DNS manager to track RestoreResolver call order.
+	prg.dnsManager = &mockDNSManager{
+		onRestore: func() {
+			mu.Lock()
+			order = append(order, "dns_restore")
+			mu.Unlock()
+		},
+	}
+
+	// Inject a mock browser policy manager to track RestorePolicies call order.
+	prg.browserPolicyMu.Lock()
+	prg.browserPolicyMgr = &mockPolicyManager{
+		onRestore: func() {
+			mu.Lock()
+			order = append(order, "browser_restore")
+			mu.Unlock()
+		},
+	}
+	prg.browserPolicyMu.Unlock()
+
+	prg.SetIPCServer(
+		func(_ context.Context) error { return nil },
+		func() {
+			mu.Lock()
+			order = append(order, "ipc_stop")
+			mu.Unlock()
+		},
+	)
+
+	// Call shutdown directly (no need to start the full service).
+	prg.shutdown()
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	// All three should have been called.
+	if len(order) < 3 {
+		t.Fatalf("expected at least 3 shutdown events, got %d: %v", len(order), order)
+	}
+
+	// Browser restore must come before IPC stop.
+	// DNS restore must come before IPC stop.
+	// IPC stop must be last.
+	if order[len(order)-1] != "ipc_stop" {
+		t.Errorf("expected ipc_stop to be last, got order: %v", order)
+	}
+
+	// Verify browser_restore and dns_restore both appear before ipc_stop.
+	ipcIdx := -1
+	dnsIdx := -1
+	browserIdx := -1
+	for i, name := range order {
+		switch name {
+		case "ipc_stop":
+			ipcIdx = i
+		case "dns_restore":
+			dnsIdx = i
+		case "browser_restore":
+			browserIdx = i
+		}
+	}
+
+	if browserIdx < 0 {
+		t.Error("browser_restore was not called during shutdown")
+	} else if browserIdx > ipcIdx {
+		t.Errorf("browser_restore (%d) must come before ipc_stop (%d), order: %v", browserIdx, ipcIdx, order)
+	}
+
+	if dnsIdx < 0 {
+		t.Error("dns_restore was not called during shutdown")
+	} else if dnsIdx > ipcIdx {
+		t.Errorf("dns_restore (%d) must come before ipc_stop (%d), order: %v", dnsIdx, ipcIdx, order)
+	}
+}
+
+// mockDNSManager implements dns.DNSManager for tracking shutdown ordering.
+type mockDNSManager struct {
+	onRestore func()
+}
+
+func (m *mockDNSManager) SetResolver(_ context.Context, _ string) error { return nil }
+func (m *mockDNSManager) RestoreResolver(_ context.Context) error {
+	if m.onRestore != nil {
+		m.onRestore()
+	}
+	return nil
+}
+func (m *mockDNSManager) OriginalResolver() string { return "8.8.8.8" }
+
+// mockPolicyManager implements browser.PolicyManager for tracking shutdown ordering.
+type mockPolicyManager struct {
+	onRestore func()
+}
+
+func (m *mockPolicyManager) ApplyPolicies(_ context.Context) (*browser.ApplyResult, error) {
+	return nil, nil
+}
+func (m *mockPolicyManager) RestorePolicies(_ context.Context) error {
+	if m.onRestore != nil {
+		m.onRestore()
+	}
+	return nil
 }
 
 func TestProgram_StartStop_WithUpdateEnabled(t *testing.T) {
