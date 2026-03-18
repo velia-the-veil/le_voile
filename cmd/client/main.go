@@ -11,6 +11,7 @@ import (
 
 	"github.com/kardianos/service"
 
+	"github.com/velia-the-veil/le_voile/internal/browser"
 	"github.com/velia-the-veil/le_voile/internal/config"
 	"github.com/velia-the-veil/le_voile/internal/ipc"
 	"github.com/velia-the-veil/le_voile/internal/ipchandler"
@@ -133,6 +134,9 @@ func resolveConfig(cfgPath, flagDomain, flagPubKey string, flagInsecure bool) (r
 
 	// Resolve browser policies config.
 	rc.browserPoliciesEnabled = cfg.BrowserPolicies.Enabled
+	if cfg.BrowserPolicies.ChromeStoreUpdateURL != "" {
+		browser.ChromeStoreUpdateURL = cfg.BrowserPolicies.ChromeStoreUpdateURL
+	}
 
 	// Resolve preferred country.
 	rc.preferredCountry = cfg.Client.PreferredCountry

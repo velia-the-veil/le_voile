@@ -1,0 +1,16 @@
+{
+  "manifest_version": 3,
+  "name": "Le Voile",
+  "version": "1.0.0",
+  "description": "Route le trafic navigateur via Le Voile pour masquer votre IP",
+  "permissions": ["proxy", "webRequest", "downloads"],
+  "host_permissions": ["<all_urls>"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "icons": {
+    "16": "icons/icon-16.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  }
+}
