@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -142,8 +143,10 @@ func main() {
 	// 6. Handle OS signals (SIGINT, SIGTERM) for clean shutdown.
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
+	var signalStopped atomic.Bool
 	go func() {
 		<-sigCh
+		signalStopped.Store(true)
 		// Stop blocks until shutdown() completes (including DNS restoration).
 		// The tray.Run() loop will eventually exit, and defer prg.Stop handles
 		// the normal path. For signal shutdown, we stop the tray to unblock main.
@@ -152,7 +155,12 @@ func main() {
 
 	// 7. Start the service in a goroutine (non-blocking).
 	prg.Start(nil)
-	defer prg.Stop(nil)
+	defer func() {
+		// Skip if signal handler already called Stop (avoids blocking twice on p.done).
+		if !signalStopped.Load() {
+			prg.Stop(nil)
+		}
+	}()
 
 	// 8. Start tray on the main thread (BLOCKING).
 	autoStart := cfg.Client.AutoStart

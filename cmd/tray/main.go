@@ -3,6 +3,9 @@
 package main
 
 import (
+	"fmt"
+	"os"
+
 	"github.com/velia-the-veil/le_voile/internal/config"
 	"github.com/velia-the-veil/le_voile/internal/tray"
 )
@@ -10,6 +13,13 @@ import (
 var version string
 
 func main() {
+	// AC6: Ensure only one tray instance runs at a time (named mutex on Windows).
+	if err := tray.AcquireSingleton(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(0)
+	}
+	defer tray.ReleaseSingleton()
+
 	autoStart := true
 	blocklistEnabled := false
 	httpProxyEnabled := false

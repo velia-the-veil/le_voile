@@ -343,3 +343,43 @@ func TestFormatUptime(t *testing.T) {
 		})
 	}
 }
+
+// --- Story 12.1 tests ---
+
+// TestGetStatus_MissingIP verifies handler behavior when IP is empty.
+//
+// AC3 full scenario (Status="connected" + empty IP) requires a connected tunnel.Client
+// which needs network mocking beyond unit test scope. The tray-side rendering of
+// "Protégé — IP en détection..." is covered by TestTray_UpdateState_Connected_UnknownIP.
+//
+// This test validates the handler-level contract: no error is injected when IP is empty,
+// and VisibleIP="" propagates cleanly (not replaced by "unknown" or an error placeholder).
+func TestGetStatus_MissingIP(t *testing.T) {
+	prg := newTestProgram()
+
+	// Explicitly set VisibleIP to empty to confirm handler doesn't transform it.
+	prg.SetVisibleIP("")
+
+	resp := Handle(prg, ipc.Request{Action: ipc.ActionGetStatus}, Options{})
+
+	// With nil tunnel, status is "disconnected" (expected — tunnel.Client not mockable here).
+	if resp.Status != ipc.StatusDisconnected {
+		t.Errorf("expected disconnected with nil tunnel, got %q", resp.Status)
+	}
+
+	// No error must be set just because IP is empty.
+	if resp.Error != "" {
+		t.Errorf("expected no error for missing IP, got %q", resp.Error)
+	}
+
+	// IP must be empty (not "unknown" or an error placeholder).
+	if resp.IP != "" {
+		t.Errorf("expected empty IP with nil tunnel, got %q", resp.IP)
+	}
+
+	// Verify other AC3-related fields are populated even without tunnel.
+	// These fields must be present for tray reconnection (blocklist, proxy, browser policies).
+	if resp.HTTPProxySeq != 0 {
+		t.Errorf("expected HTTPProxySeq=0 with fresh program, got %d", resp.HTTPProxySeq)
+	}
+}

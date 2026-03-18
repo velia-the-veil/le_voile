@@ -191,7 +191,7 @@ func TestTray_UpdateState_Connected_UnknownIP(t *testing.T) {
 
 	tr.updateTrayState(ipc.Response{Status: ipc.StatusConnected, IP: ""})
 
-	if got := api.getTooltip(); got != "Protégé — IP visible : unknown" {
+	if got := api.getTooltip(); got != "Protégé — IP en détection..." {
 		t.Errorf("unexpected tooltip: %q", got)
 	}
 }
@@ -1052,5 +1052,113 @@ func TestDesktopExePath(t *testing.T) {
 	// Must end with le-voile-desktop.exe
 	if !strings.HasSuffix(p, "le-voile-desktop.exe") {
 		t.Errorf("expected path ending in le-voile-desktop.exe, got %q", p)
+	}
+}
+
+// --- Story 12.1 tests ---
+
+// TestTray_ShutdownInProgress_BlocksHandleIPCError verifies that handleIPCError
+// is a no-op when shutdownInProgress is set (AC8 — no orphan recovery during quit).
+func TestTray_ShutdownInProgress_BlocksHandleIPCError(t *testing.T) {
+	api := &mockSystrayAPI{}
+	client := &mockIPCClient{
+		response: ipc.Response{Status: ipc.StatusConnected, IP: "1.2.3.4"},
+	}
+	tr := newWithDeps(api, newMockMenuAPI(), client, testPollInterval, true, false, false, nil)
+
+	// Mark shutdown in progress.
+	tr.shutdownInProgress.Store(true)
+
+	// Call handleIPCError — should return immediately.
+	tr.handleIPCError(context.Background(), fmt.Errorf("ipc: connection reset"))
+
+	// Verify by checking that the tooltip was NOT set to the error.
+	if got := api.getTooltip(); strings.Contains(got, "connection reset") {
+		t.Errorf("handleIPCError should be no-op when shutdownInProgress is set, but tooltip = %q", got)
+	}
+
+	// Verify no DNS recovery timer was started (no dnsRecoveryCancel set).
+	tr.mu.Lock()
+	hasRecovery := tr.dnsRecoveryCancel != nil
+	tr.mu.Unlock()
+	if hasRecovery {
+		t.Error("expected no DNS recovery timer when shutdownInProgress is set")
+	}
+}
+
+// TestTray_ShutdownServiceAndRestore_Idempotent verifies that calling
+// shutdownServiceAndRestore twice only runs the shutdown sequence once.
+func TestTray_ShutdownServiceAndRestore_Idempotent(t *testing.T) {
+	api := &mockSystrayAPI{}
+	client := &mockIPCClient{
+		response: ipc.Response{Status: ipc.StatusDisconnected},
+	}
+	tr := newWithDeps(api, newMockMenuAPI(), client, testPollInterval, true, false, false, nil)
+
+	tr.shutdownServiceAndRestore()
+	tr.shutdownServiceAndRestore() // second call should be no-op
+
+	// Verify ActionQuit was sent only once.
+	reqs := client.getRequests()
+	quitCount := 0
+	for _, r := range reqs {
+		if r.Action == ipc.ActionQuit {
+			quitCount++
+		}
+	}
+	if quitCount != 1 {
+		t.Errorf("expected exactly 1 ActionQuit request, got %d", quitCount)
+	}
+}
+
+// TestTray_ShutdownServiceAndRestore_SetsShutdownInProgress verifies that
+// shutdownInProgress is set before ActionQuit is sent (AC8).
+func TestTray_ShutdownServiceAndRestore_SetsShutdownInProgress(t *testing.T) {
+	api := &mockSystrayAPI{}
+	client := &mockIPCClient{
+		response: ipc.Response{Status: ipc.StatusDisconnected},
+	}
+	tr := newWithDeps(api, newMockMenuAPI(), client, testPollInterval, true, false, false, nil)
+
+	tr.shutdownServiceAndRestore()
+
+	if !tr.shutdownInProgress.Load() {
+		t.Error("expected shutdownInProgress to be true after shutdownServiceAndRestore")
+	}
+}
+
+// TestTray_KillDesktopProcess_NilCmd verifies that killDesktopProcess is safe
+// when the desktop was not launched by the tray.
+func TestTray_KillDesktopProcess_NilCmd(t *testing.T) {
+	api := &mockSystrayAPI{}
+	client := &mockIPCClient{}
+	tr := newWithDeps(api, newMockMenuAPI(), client, testPollInterval, true, false, false, nil)
+
+	// Should not panic with nil desktopCmd.
+	tr.killDesktopProcess()
+}
+
+// TestTray_HandleIPCError_ResetsProxySeq verifies that httpProxySeq is reset
+// to 0 on IPC error (AC3 — force WinINET sync on reconnect).
+func TestTray_HandleIPCError_ResetsProxySeq(t *testing.T) {
+	api := &mockSystrayAPI{}
+	client := &mockIPCClient{
+		response: ipc.Response{Status: ipc.StatusConnected, IP: "1.2.3.4"},
+	}
+	tr := newWithDeps(api, newMockMenuAPI(), client, testPollInterval, true, false, false, nil)
+
+	// Set a non-zero proxy seq.
+	tr.mu.Lock()
+	tr.httpProxySeq = 42
+	tr.mu.Unlock()
+
+	tr.handleIPCError(context.Background(), fmt.Errorf("ipc: broken pipe"))
+
+	tr.mu.Lock()
+	seq := tr.httpProxySeq
+	tr.mu.Unlock()
+
+	if seq != 0 {
+		t.Errorf("expected httpProxySeq=0 after handleIPCError, got %d", seq)
 	}
 }

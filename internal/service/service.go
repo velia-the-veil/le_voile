@@ -97,10 +97,11 @@ type Program struct {
 	ipcStart func(ctx context.Context) error
 	ipcStop  func()
 
-	ctx    context.Context
-	cancel context.CancelFunc
-	done   chan struct{}
-	mu     sync.Mutex
+	ctx      context.Context
+	cancel   context.CancelFunc
+	done     chan struct{}
+	mu       sync.Mutex
+	stopOnce sync.Once // ensures Stop/RequestStop shutdown runs only once (AC6)
 
 	// updateMu protects update-related state accessed by IPC handlers.
 	updateMu             sync.Mutex
@@ -172,8 +173,11 @@ const shutdownTimeout = 10 * time.Second
 // Stop implements service.Interface. It MUST block until shutdown is complete.
 // If shutdown takes longer than shutdownTimeout, Stop returns anyway so the
 // OS service manager doesn't kill the process before DNS is restored.
+// Idempotent via sync.Once — safe to call concurrently (AC6).
 func (p *Program) Stop(s service.Service) error {
-	p.cancel()
+	p.stopOnce.Do(func() {
+		p.cancel()
+	})
 	select {
 	case <-p.done:
 	case <-time.After(shutdownTimeout):
@@ -207,19 +211,20 @@ func (p *Program) StartTime() time.Time {
 }
 
 // Cancel triggers the service shutdown by cancelling the lifecycle context.
+// Idempotent via sync.Once — safe to call concurrently (AC6).
 func (p *Program) Cancel() {
-	if p.cancel != nil {
-		p.cancel()
-	}
+	p.stopOnce.Do(func() {
+		if p.cancel != nil {
+			p.cancel()
+		}
+	})
 }
 
-// RequestStop stops the service without triggering the OnFailure restart.
-// It disables the SCM failure action before cancelling the context, so
-// Windows does not auto-restart the process. The failure action is
-// re-enabled at the next service startup in run().
+// RequestStop triggers a graceful service shutdown by cancelling the
+// lifecycle context. OnFailure is disabled AFTER shutdown() completes
+// (in run()), just before os.Exit(0), so SCM doesn't respawn the process.
+// Idempotent via sync.Once (AC6).
 func (p *Program) RequestStop() {
-	// Disable OnFailure restart so SCM doesn't respawn after exit.
-	exec.Command("sc", "failure", ServiceName, "reset=", "0", "actions=", "").Run()
 	p.Cancel()
 }
 
@@ -794,6 +799,12 @@ func (p *Program) run() {
 	p.shutdown()
 	dnsRestored = true
 
+	// Disable OnFailure restart AFTER shutdown completes (AC4, Task 2.2).
+	// This ensures all restorations (DNS, browser policies) finish before
+	// we tell SCM not to restart. The failure action is re-enabled at the
+	// next service startup (see top of run()).
+	exec.Command("sc", "failure", ServiceName, "reset=", "0", "actions=", "").Run()
+
 	// Force process exit. When RequestStop() uses Cancel() instead of
 	// SCM stop, the kardianos Execute loop hangs forever waiting for a
 	// signal that never comes. shutdown() has already completed all
@@ -802,15 +813,11 @@ func (p *Program) run() {
 }
 
 // shutdown performs the reverse-order cleanup.
+//
+// CRITICAL (AC4, AC8): IPC server is stopped LAST so the tray can receive
+// confirmation that shutdown is complete. Browser policies and DNS are
+// restored BEFORE IPC close.
 func (p *Program) shutdown() {
-	// 0. Stop IPC server
-	p.mu.Lock()
-	ipcStop := p.ipcStop
-	p.mu.Unlock()
-	if ipcStop != nil {
-		ipcStop()
-	}
-
 	// 1. Stop leak scheduler (before reconnector)
 	if p.leakScheduler != nil {
 		p.leakScheduler.Stop()
@@ -839,7 +846,7 @@ func (p *Program) shutdown() {
 	// 2b. Stop STUN interceptor (before DNS restore)
 	p.stopSTUN()
 
-	// 2c. Stop HTTP proxy (before kill switch deactivate)
+	// 2c. Stop HTTP proxy (5s drain, before kill switch deactivate)
 	p.stopHTTPProxy()
 
 	// 3. Deactivate kill switch if active
@@ -850,7 +857,7 @@ func (p *Program) shutdown() {
 		}
 	}
 
-	// 3b. Restore browser policies (before DNS restore)
+	// 4. Restore browser policies (service owns this — AC5)
 	p.browserPolicyMu.Lock()
 	bpMgr := p.browserPolicyMgr
 	p.browserPolicyMgr = nil
@@ -862,7 +869,7 @@ func (p *Program) shutdown() {
 		}
 	}
 
-	// 4. Restore DNS resolver
+	// 5. Restore DNS resolver (service owns this — AC5)
 	if p.dnsManager != nil {
 		restoreCtx := context.Background()
 		if err := p.dnsManager.RestoreResolver(restoreCtx); err != nil {
@@ -870,7 +877,7 @@ func (p *Program) shutdown() {
 		}
 	}
 
-	// 5. Verify DNS restoration via watchdog
+	// 6. Verify DNS restoration via watchdog
 	if p.dnsManager != nil && p.watchdog != nil {
 		originalDNS := p.dnsManager.OriginalResolver()
 		if originalDNS != "" {
@@ -881,20 +888,28 @@ func (p *Program) shutdown() {
 		}
 	}
 
-	// 6. Stop DNS proxy
+	// 7. Stop DNS proxy
 	p.stopProxy()
 
-	// 6a. Restart Windows Dnscache service (was stopped to free port 53).
+	// 7a. Restart Windows Dnscache service (was stopped to free port 53).
 	if err := dns.RestartDnscache(); err != nil {
 		fmt.Fprintf(serviceStderr, "service: %v\n", err)
 	}
 
-	// 7. Close state channel and disconnect tunnel
+	// 8. Close state channel and disconnect tunnel
 	if p.tunnelClient != nil {
 		p.tunnelClient.State().Close()
 		if err := p.tunnelClient.Disconnect(); err != nil {
 			fmt.Fprintf(serviceStderr, "service: disconnect: %v\n", err)
 		}
+	}
+
+	// 9. Stop IPC server LAST — tray waits for shutdown confirmation (AC8)
+	p.mu.Lock()
+	ipcStop := p.ipcStop
+	p.mu.Unlock()
+	if ipcStop != nil {
+		ipcStop()
 	}
 }
 
