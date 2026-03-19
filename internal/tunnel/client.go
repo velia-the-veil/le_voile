@@ -76,7 +76,6 @@ type Client struct {
 	relayIP     string // resolved IP of the relay, used to bypass system DNS
 	relayPubKey ed25519.PublicKey
 	httpClient  *http.Client
-	tcpClient   *http.Client // TCP/TLS client for long-lived streaming (CONNECT proxy)
 	transport   *http3.Transport
 	state       *StateManager
 
@@ -146,7 +145,6 @@ func NewClient(relayDomain string, relayPubKeyBase64 string, opts ...ClientOptio
 	tr := c.buildTransport()
 	c.httpClient = &http.Client{Transport: tr}
 	c.transport = tr
-	c.tcpClient = c.buildTCPClient()
 
 	return c, nil
 }
@@ -366,41 +364,6 @@ func (c *Client) HTTPClient() *http.Client {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.httpClient
-}
-
-// TCPHTTPClient returns an HTTPS/TCP client for long-lived streaming requests.
-// Cloudflare's HTTP/3 proxy does not reliably support bidirectional streaming
-// (POST with streaming request body + streaming response body), causing
-// CONNECT tunnels to be aborted during TLS handshake. TCP/TLS works reliably.
-func (c *Client) TCPHTTPClient() *http.Client {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return c.tcpClient
-}
-
-// buildTCPClient creates an HTTP/1.1+HTTP/2 TCP client that bypasses system DNS
-// by dialing the relay IP directly (same as the QUIC client). Used for /connect
-// where Cloudflare HTTP/3 streaming is unreliable.
-func (c *Client) buildTCPClient() *http.Client {
-	dialer := &net.Dialer{Timeout: connectTimeout}
-	return &http.Client{
-		Transport: &http.Transport{
-			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-				// Replace relay domain with resolved IP to bypass system DNS.
-				host, port, err := net.SplitHostPort(addr)
-				if err == nil && host == c.relayDomain {
-					addr = net.JoinHostPort(c.relayIP, port)
-				}
-				return dialer.DialContext(ctx, network, addr)
-			},
-			TLSClientConfig: &tls.Config{
-				ServerName: c.relayDomain,
-				MinVersion: tls.VersionTLS13,
-			},
-			DisableCompression: true,
-			MaxIdleConnsPerHost: 10,
-		},
-	}
 }
 
 // getHTTPClient returns the current HTTP client under read lock.

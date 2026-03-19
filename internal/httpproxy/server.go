@@ -18,7 +18,6 @@ type TunnelClient interface {
 	EnsureSessionToken(ctx context.Context) error
 	RelayDomain() string
 	HTTPClient() *http.Client
-	TCPHTTPClient() *http.Client // TCP/TLS client for CONNECT streaming
 }
 
 // Server is a local HTTP CONNECT proxy that listens on loopback only.

@@ -1,9 +1,13 @@
 // Command desktop runs the Le Voile Wails v2 desktop window.
 // This is a separate process from the service and tray; it communicates via IPC.
+// When launched from the desktop shortcut after a quit, it ensures the service
+// and tray are running before opening the GUI.
 package main
 
 import (
 	"os"
+	"os/exec"
+	"path/filepath"
 
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
@@ -16,6 +20,9 @@ import (
 )
 
 func main() {
+	// Ensure the service and tray are running (covers desktop shortcut after quit).
+	ensureServiceAndTray()
+
 	relayDomain := ""
 	skipQuitModal := false
 	cfgPath := config.DiscoverPath("")
@@ -56,4 +63,22 @@ func main() {
 	}); err != nil {
 		os.Exit(1)
 	}
+}
+
+// ensureServiceAndTray starts the Windows service and tray if not already running.
+func ensureServiceAndTray() {
+	self, err := os.Executable()
+	if err != nil {
+		return
+	}
+	dir := filepath.Dir(self)
+	servicePath := filepath.Join(dir, "levoile-service.exe")
+	trayPath := filepath.Join(dir, "levoile-tray.exe")
+
+	// Start service (no-op if already running — SCM returns "already running" error).
+	exec.Command(servicePath, "start").Run()
+
+	// Always try to start the tray — the singleton mutex in AcquireSingleton()
+	// prevents duplicates. If already running, the new instance exits immediately.
+	exec.Command(trayPath).Start()
 }

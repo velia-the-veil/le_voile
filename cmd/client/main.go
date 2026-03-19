@@ -150,12 +150,6 @@ func newServiceConfig() *service.Config {
 		Name:        svc.ServiceName,
 		DisplayName: "Le Voile",
 		Description: "VPN minimaliste zero-log",
-		Option: service.KeyValue{
-			// Windows SCM: restart service on failure after 5 seconds.
-			"OnFailure":              "restart",
-			"OnFailureDelayDuration": "5s",
-			"OnFailureResetPeriod":   10,
-		},
 	}
 }
 

@@ -161,7 +161,7 @@ func (t *Tray) Stop() {
 }
 
 func (t *Tray) onReady() {
-	t.api.SetIcon(IconDisconnected)
+	t.api.SetIcon(IconDefault)
 	t.api.SetTooltip("Non protégé")
 	t.api.SetTitle("Le Voile")
 

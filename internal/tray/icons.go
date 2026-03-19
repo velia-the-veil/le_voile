@@ -2,6 +2,9 @@ package tray
 
 import _ "embed"
 
+//go:embed levoile.ico
+var IconDefault []byte
+
 //go:embed connected.ico
 var IconConnected []byte
 
