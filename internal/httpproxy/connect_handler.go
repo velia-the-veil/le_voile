@@ -14,8 +14,9 @@ import (
 // connectHandler handles incoming HTTP proxy requests from browsers.
 // It supports both CONNECT (HTTPS tunneling) and plain HTTP forwarding.
 type connectHandler struct {
-	tunnelClient TunnelClient
-	wg           *sync.WaitGroup
+	tunnelClient  TunnelClient
+	volumeTracker *VolumeTracker
+	wg            *sync.WaitGroup
 }
 
 // connectBody is the JSON body sent to the relay /connect endpoint.
@@ -48,6 +49,14 @@ func (h *connectHandler) handleConnect(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		// CONNECT usually comes as host:port, but add default 443 if missing.
 		target = target + ":443"
+	}
+
+	// Volume bypass: if the domain is flagged, try a direct connection.
+	if h.volumeTracker != nil && h.volumeTracker.IsBypassed(target) {
+		if h.tryDirectBypass(w, r, target) {
+			return // bypass succeeded
+		}
+		// Direct dial failed — fall through to relay path below.
 	}
 
 	// Ensure session token is fresh.
@@ -134,6 +143,12 @@ func (h *connectHandler) handleConnect(w http.ResponseWriter, r *http.Request) {
 		defer relayResp.Body.Close()
 		defer upstreamPW.Close()
 
+		// Register connection for volume-based force-close.
+		if h.volumeTracker != nil {
+			connID := h.volumeTracker.Register(target, conn)
+			defer h.volumeTracker.Unregister(target, connID)
+		}
+
 		// Send 200 Connection Established to the browser.
 		bufrw.WriteString("HTTP/1.1 200 Connection Established\r\n\r\n")
 		bufrw.Flush()
@@ -149,9 +164,13 @@ func (h *connectHandler) handleConnect(w http.ResponseWriter, r *http.Request) {
 		// leaks during kill switch cycles.
 		done := make(chan struct{}, 2)
 
-		// Relay response → browser
+		// Relay response → browser (with volume counting).
+		var downstream io.Reader = relayResp.Body
+		if h.volumeTracker != nil {
+			downstream = h.volumeTracker.WrapReader(target, relayResp.Body)
+		}
 		go func() {
-			io.Copy(conn, relayResp.Body)
+			io.Copy(conn, downstream)
 			done <- struct{}{}
 		}()
 
@@ -168,6 +187,56 @@ func (h *connectHandler) handleConnect(w http.ResponseWriter, r *http.Request) {
 		upstreamPW.Close()
 		<-done
 	}()
+}
+
+// tryDirectBypass attempts a direct TCP connection to the target, bypassing
+// the relay. Returns true if the bypass succeeded (connection established
+// and data relayed), false if the direct dial failed (caller should fall
+// through to the relay path).
+//
+// By design, bypassed connections are NOT volume-tracked: they don't consume
+// relay quota, so counting them would be misleading. The user's real IP is
+// exposed to the destination (accepted trade-off).
+func (h *connectHandler) tryDirectBypass(w http.ResponseWriter, r *http.Request, target string) bool {
+	destConn, err := net.DialTimeout("tcp", target, BypassDialTimeout)
+	if err != nil {
+		h.volumeTracker.RecordDirectFailure(target)
+		return false
+	}
+
+	// Hijack the browser connection for raw TCP access.
+	hj, ok := w.(http.Hijacker)
+	if !ok {
+		destConn.Close()
+		return false
+	}
+	conn, bufrw, err := hj.Hijack()
+	if err != nil {
+		destConn.Close()
+		return false
+	}
+
+	h.wg.Add(1)
+	go func() {
+		defer h.wg.Done()
+		defer conn.Close()
+		defer destConn.Close()
+
+		bufrw.WriteString("HTTP/1.1 200 Connection Established\r\n\r\n")
+		bufrw.Flush()
+
+		// Use bufrw (not raw conn) for browser→dest to drain any buffered
+		// bytes (e.g. TLS ClientHello) that were read before hijack.
+		done := make(chan struct{}, 2)
+		go func() { io.Copy(destConn, bufrw); done <- struct{}{} }()
+		go func() { io.Copy(conn, destConn); done <- struct{}{} }()
+		<-done
+		destConn.Close()
+		conn.Close()
+		<-done
+	}()
+
+	return true
 }
 
 // handleHTTP forwards plain HTTP requests through the relay tunnel.

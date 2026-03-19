@@ -33,7 +33,7 @@ func (m *mockTunnelClient) HTTPClient() *http.Client { return m.httpClient }
 
 func TestStartReadyLifecycle(t *testing.T) {
 	mock := &mockTunnelClient{}
-	srv := NewServer("127.0.0.1:0", mock)
+	srv := NewServer("127.0.0.1:0", mock, nil)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	errCh := make(chan error, 1)
@@ -62,7 +62,7 @@ func TestStartReadyLifecycle(t *testing.T) {
 
 func TestListenAddrReturnsActualAddress(t *testing.T) {
 	mock := &mockTunnelClient{}
-	srv := NewServer("127.0.0.1:0", mock)
+	srv := NewServer("127.0.0.1:0", mock, nil)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -104,7 +104,7 @@ func TestPortAlreadyInUseReturnsError(t *testing.T) {
 	occupiedAddr := ln.Addr().String()
 
 	mock := &mockTunnelClient{}
-	srv := NewServer(occupiedAddr, mock)
+	srv := NewServer(occupiedAddr, mock, nil)
 
 	err = srv.Start(context.Background())
 	if err == nil {
@@ -117,7 +117,7 @@ func TestPortAlreadyInUseReturnsError(t *testing.T) {
 
 func TestWaitGroupIsUsable(t *testing.T) {
 	mock := &mockTunnelClient{}
-	srv := NewServer("127.0.0.1:0", mock)
+	srv := NewServer("127.0.0.1:0", mock, nil)
 
 	wg := srv.WaitGroup()
 	if wg == nil {
