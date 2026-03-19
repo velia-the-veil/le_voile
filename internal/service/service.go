@@ -8,7 +8,6 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -443,9 +442,6 @@ func (p *Program) run() {
 	ctx := p.ctx
 	p.startTime = time.Now()
 
-	// Re-enable OnFailure restart (may have been disabled by RequestStop).
-	exec.Command(`C:\Windows\System32\sc.exe`, "failure", ServiceName, "reset=", "10", "actions=", "restart/5000").Run()
-
 	// --- 0. Start IPC server early so the tray can always connect ---
 	// This must happen before tunnel connect: if the tunnel fails, the tray
 	// should still be able to show "Disconnected" rather than "IPC not connected".
@@ -799,16 +795,8 @@ func (p *Program) run() {
 	p.shutdown()
 	dnsRestored = true
 
-	// Disable OnFailure restart AFTER shutdown completes (AC4, Task 2.2).
-	// This ensures all restorations (DNS, browser policies) finish before
-	// we tell SCM not to restart. The failure action is re-enabled at the
-	// next service startup (see top of run()).
-	exec.Command(`C:\Windows\System32\sc.exe`, "failure", ServiceName, "reset=", "0", "actions=", "").Run()
-
-	// Force process exit. When RequestStop() uses Cancel() instead of
-	// SCM stop, the kardianos Execute loop hangs forever waiting for a
-	// signal that never comes. shutdown() has already completed all
-	// cleanup (DNS, browser policies, tunnel). Safe to exit now.
+	// Force process exit. kardianos Execute hangs when shutdown is triggered
+	// via context cancel (IPC quit) rather than SCM stop signal.
 	os.Exit(0)
 }
 

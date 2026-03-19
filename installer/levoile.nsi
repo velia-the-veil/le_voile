@@ -37,7 +37,10 @@ Section "Install"
   File "build\${TRAY_EXE}"
   File "build\${DESKTOP_EXE}"
 
-  ; Copy icons
+  ; Copy main icon (used for shortcuts and Add/Remove Programs)
+  File "levoile.ico"
+
+  ; Copy status icons
   SetOutPath "$INSTDIR\icons"
   File "build\icons\connected.ico"
   File "build\icons\connecting.ico"
@@ -65,6 +68,17 @@ Section "Install"
   Exec '"$INSTDIR\${TRAY_EXE}"'
   Exec '"$INSTDIR\${DESKTOP_EXE}"'
 
+  ; Desktop shortcut — starts the service + tray + desktop GUI
+  CreateShortCut "$DESKTOP\${APP_NAME}.lnk" "$INSTDIR\${DESKTOP_EXE}" "" \
+    "$INSTDIR\levoile.ico" 0
+
+  ; Start menu shortcut
+  CreateDirectory "$SMPROGRAMS\${APP_NAME}"
+  CreateShortCut "$SMPROGRAMS\${APP_NAME}\${APP_NAME}.lnk" "$INSTDIR\${DESKTOP_EXE}" "" \
+    "$INSTDIR\levoile.ico" 0
+  CreateShortCut "$SMPROGRAMS\${APP_NAME}\D$\'esinstaller.lnk" "$INSTDIR\uninstall.exe" "" \
+    "$INSTDIR\uninstall.exe" 0
+
   ; Add/Remove Programs entry
   WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_KEY}" \
     "DisplayName" "${APP_NAME}"
@@ -75,7 +89,7 @@ Section "Install"
   WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_KEY}" \
     "Publisher" "Velia"
   WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_KEY}" \
-    "DisplayIcon" "$INSTDIR\icons\connected.ico"
+    "DisplayIcon" "$INSTDIR\levoile.ico"
   WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_KEY}" \
     "DisplayVersion" "${APP_VERSION}"
   WriteRegDWORD HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_KEY}" \
@@ -104,9 +118,6 @@ Section "Uninstall"
   ExecWait '"$INSTDIR\${SERVICE_EXE}" uninstall'
 
   ; --- CRITICAL: Restore WinINET proxy settings ---
-  ; The tray was force-killed, so its onExit handler did NOT run.
-  ; We must clear the proxy directly in the registry to prevent
-  ; "connection refused by proxy server" after uninstall.
   WriteRegDWORD HKCU "Software\Microsoft\Windows\CurrentVersion\Internet Settings" \
     "ProxyEnable" 0
   DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Internet Settings" \
@@ -127,8 +138,15 @@ Section "Uninstall"
   Delete "$APPDATA\LeVoile\proxy-original.json"
   RMDir "$APPDATA\LeVoile"
 
+  ; Remove shortcuts
+  Delete "$DESKTOP\${APP_NAME}.lnk"
+  Delete "$SMPROGRAMS\${APP_NAME}\${APP_NAME}.lnk"
+  Delete "$SMPROGRAMS\${APP_NAME}\D$\'esinstaller.lnk"
+  RMDir "$SMPROGRAMS\${APP_NAME}"
+
   ; Delete files
   Delete "$INSTDIR\config.toml"
+  Delete "$INSTDIR\levoile.ico"
   Delete "$INSTDIR\${SERVICE_EXE}"
   Delete "$INSTDIR\${TRAY_EXE}"
   Delete "$INSTDIR\${DESKTOP_EXE}"
