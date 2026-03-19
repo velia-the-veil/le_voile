@@ -11,6 +11,10 @@ const PROXY_PORT = 50113;
 // Seuil de bypass : 50 Mo (52 428 800 octets)
 const BYPASS_THRESHOLD = 52428800;
 
+// Proxy health check — disable routing when proxy is down
+let proxyAlive = true;
+const HEALTH_CHECK_INTERVAL = 5000; // 5s
+
 // Set des URLs/hostnames à bypasser temporairement
 // Firefox : URL exacte (proxy.onRequest reçoit l'URL complète)
 // Chrome : hostname uniquement (PAC ne reçoit que host en HTTPS)
@@ -83,6 +87,11 @@ function setupBypassDetection() {
 // --- Chrome MV3 : routage via chrome.proxy.settings avec PAC script dynamique ---
 
 function generatePacScript() {
+  // If proxy is down, route everything direct
+  if (!proxyAlive) {
+    return `function FindProxyForURL(url, host) { return 'DIRECT'; }`;
+  }
+
   const bypassChecks = Array.from(bypassUrls).map((hostname) => {
     return `if (host === '${hostname}') return 'DIRECT';`;
   }).join('\n      ');
@@ -115,6 +124,10 @@ function setupChromeProxy() {
 function setupFirefoxProxy() {
   browser.proxy.onRequest.addListener(
     (details) => {
+      // If proxy is down, route everything direct
+      if (!proxyAlive) {
+        return { type: 'direct' };
+      }
       // Bypass pour les téléchargements volumineux détectés
       if (bypassUrls.has(details.url)) {
         return { type: 'direct' };
@@ -133,9 +146,9 @@ function setupFirefoxProxy() {
     { urls: ['<all_urls>'] }
   );
 
-  // Gestion erreur silencieuse — le navigateur fait le fallback en direct automatiquement
   browser.proxy.onError.addListener(() => {
-    // Silencieux — fallback DIRECT géré nativement par Firefox
+    // Proxy unreachable — switch to direct mode
+    proxyAlive = false;
   });
 }
 
@@ -148,6 +161,21 @@ if (isFirefox) {
 }
 
 setupBypassDetection();
+
+// Periodic health check: try to connect to the proxy port.
+// If the proxy comes back up, re-enable routing. If it goes down, switch to DIRECT.
+function checkProxyHealth() {
+  fetch(`http://${PROXY_HOST}:${PROXY_PORT}/`, { mode: 'no-cors' }).then(() => {
+    proxyAlive = true;
+  }).catch(() => {
+    if (proxyAlive) {
+      proxyAlive = false;
+      if (!isFirefox) applyChromeProxy();
+    }
+  });
+}
+
+setInterval(checkProxyHealth, HEALTH_CHECK_INTERVAL);
 
 // Chrome : chrome.proxy.settings est automatiquement restauré par Chrome
 // à la désinstallation/désactivation de l'extension. Rien à faire côté code.
