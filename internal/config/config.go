@@ -115,6 +115,12 @@ func Load(path string) (*Config, error) {
 		}
 		return nil, fmt.Errorf("config: %w", err)
 	}
+
+	// Validate mandatory fields when relay is configured.
+	if cfg.Relay.Domain != "" && cfg.Relay.PublicKeyEd25519 == "" && !cfg.Relay.Insecure {
+		return nil, fmt.Errorf("config: relay.public_key_ed25519 is required when relay.domain is set")
+	}
+
 	return cfg, nil
 }
 

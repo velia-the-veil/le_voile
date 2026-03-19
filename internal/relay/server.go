@@ -65,7 +65,7 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 		if s.CFIPValidator != nil {
 			vh.SetCFValidator(s.CFIPValidator)
 		}
-		mux.Handle("/verify", vh)
+		mux.Handle("/verify", LimitMiddleware(s.Limiter, vh))
 	}
 	if s.STUNHandler != nil {
 		mux.Handle("/stun-relay", LimitMiddleware(s.Limiter, s.STUNHandler))

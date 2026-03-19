@@ -29,10 +29,9 @@ mkdir -p "${INSTALL_DIR}"
 cp "${SCRIPT_DIR}/relay" "${INSTALL_DIR}/relay"
 chmod 755 "${INSTALL_DIR}/relay"
 
-# Copier les certificats TLS
-cp "${SCRIPT_DIR}/cert.pem" "${INSTALL_DIR}/cert.pem"
-cp "${SCRIPT_DIR}/key.pem" "${INSTALL_DIR}/key.pem"
-chmod 600 "${INSTALL_DIR}/cert.pem" "${INSTALL_DIR}/key.pem"
+# Copier les certificats TLS avec permissions restrictives dès la copie
+install -m 600 "${SCRIPT_DIR}/cert.pem" "${INSTALL_DIR}/cert.pem"
+install -m 600 "${SCRIPT_DIR}/key.pem" "${INSTALL_DIR}/key.pem"
 
 # Ajuster les permissions du repertoire
 chown -R "${SERVICE_USER}:${SERVICE_USER}" "${INSTALL_DIR}"

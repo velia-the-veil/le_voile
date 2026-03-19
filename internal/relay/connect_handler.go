@@ -271,12 +271,21 @@ func resolveAndValidateConnect(target string) (*net.TCPAddr, error) {
 }
 
 // isBlockedIP returns true if the IP is private, loopback, or otherwise blocked.
+// Covers SSRF vectors: loopback, private, link-local, multicast, unspecified,
+// and IPv6-mapped IPv4 addresses (e.g. ::ffff:127.0.0.1).
 func isBlockedIP(ip net.IP) bool {
+	// Normalize IPv6-mapped IPv4 (e.g. ::ffff:127.0.0.1 → 127.0.0.1)
+	// so that checks like IsLoopback work correctly.
+	if mapped := ip.To4(); mapped != nil {
+		ip = mapped
+	}
 	return ip.IsLoopback() ||
 		ip.IsPrivate() ||
 		ip.IsLinkLocalUnicast() ||
 		ip.IsLinkLocalMulticast() ||
-		ip.IsUnspecified()
+		ip.IsMulticast() ||
+		ip.IsUnspecified() ||
+		ip.Equal(net.IPv4bcast)
 }
 
 // extractBearerToken extracts the token from an Authorization: Bearer header.

@@ -6,11 +6,15 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"time"
 
 	lecrypto "github.com/velia-the-veil/le_voile/internal/crypto"
 )
+
+// maxVerifyBody is the maximum request body size for /verify (1 KB).
+const maxVerifyBody = 1024
 
 const nonceSize = 32
 
@@ -67,7 +71,7 @@ func (h *VerifyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req VerifyRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := json.NewDecoder(io.LimitReader(r.Body, maxVerifyBody)).Decode(&req); err != nil {
 		http.Error(w, "Bad Request", http.StatusBadRequest)
 		return
 	}

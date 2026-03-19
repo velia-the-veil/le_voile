@@ -444,7 +444,7 @@ func (p *Program) run() {
 	p.startTime = time.Now()
 
 	// Re-enable OnFailure restart (may have been disabled by RequestStop).
-	exec.Command("sc", "failure", ServiceName, "reset=", "10", "actions=", "restart/5000").Run()
+	exec.Command(`C:\Windows\System32\sc.exe`, "failure", ServiceName, "reset=", "10", "actions=", "restart/5000").Run()
 
 	// --- 0. Start IPC server early so the tray can always connect ---
 	// This must happen before tunnel connect: if the tunnel fails, the tray
@@ -803,7 +803,7 @@ func (p *Program) run() {
 	// This ensures all restorations (DNS, browser policies) finish before
 	// we tell SCM not to restart. The failure action is re-enabled at the
 	// next service startup (see top of run()).
-	exec.Command("sc", "failure", ServiceName, "reset=", "0", "actions=", "").Run()
+	exec.Command(`C:\Windows\System32\sc.exe`, "failure", ServiceName, "reset=", "0", "actions=", "").Run()
 
 	// Force process exit. When RequestStop() uses Cancel() instead of
 	// SCM stop, the kardianos Execute loop hangs forever waiting for a

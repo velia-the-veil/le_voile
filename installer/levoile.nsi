@@ -5,6 +5,7 @@
 !define APP_KEY "LeVoile"
 !define SERVICE_EXE "levoile-service.exe"
 !define TRAY_EXE "levoile-tray.exe"
+!define DESKTOP_EXE "levoile-desktop.exe"
 ; APP_VERSION injected by build script via: makensis /DAPP_VERSION=x.y.z
 !ifndef APP_VERSION
   !define APP_VERSION "0.0.0-dev"
@@ -25,6 +26,8 @@ Section "Install"
 
   ; Handle reinstall: stop and unregister old service BEFORE copying new files.
   ; On fresh install these fail silently (service/binary don't exist yet).
+  nsExec::Exec 'taskkill /F /IM ${DESKTOP_EXE}'
+  nsExec::Exec 'taskkill /F /IM ${TRAY_EXE}'
   nsExec::Exec '"$INSTDIR\${SERVICE_EXE}" stop'
   nsExec::Exec '"$INSTDIR\${SERVICE_EXE}" uninstall'
   Sleep 2000
@@ -32,6 +35,7 @@ Section "Install"
   ; Copy binaries (safe now — service is stopped)
   File "build\${SERVICE_EXE}"
   File "build\${TRAY_EXE}"
+  File "build\${DESKTOP_EXE}"
 
   ; Copy icons
   SetOutPath "$INSTDIR\icons"
@@ -57,8 +61,9 @@ Section "Install"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Run" \
     "${APP_KEY}" '"$INSTDIR\${TRAY_EXE}"'
 
-  ; Launch tray immediately
+  ; Launch tray and desktop GUI immediately
   Exec '"$INSTDIR\${TRAY_EXE}"'
+  Exec '"$INSTDIR\${DESKTOP_EXE}"'
 
   ; Add/Remove Programs entry
   WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_KEY}" \
@@ -87,7 +92,8 @@ Section "Install"
 SectionEnd
 
 Section "Uninstall"
-  ; Close tray if running (ignore error if not running)
+  ; Close desktop and tray if running (ignore error if not running)
+  nsExec::Exec 'taskkill /F /IM ${DESKTOP_EXE}'
   nsExec::Exec 'taskkill /F /IM ${TRAY_EXE}'
 
   ; Stop the service (shutdown() restores DNS automatically)
@@ -97,16 +103,35 @@ Section "Uninstall"
   ; Unregister the service
   ExecWait '"$INSTDIR\${SERVICE_EXE}" uninstall'
 
+  ; --- CRITICAL: Restore WinINET proxy settings ---
+  ; The tray was force-killed, so its onExit handler did NOT run.
+  ; We must clear the proxy directly in the registry to prevent
+  ; "connection refused by proxy server" after uninstall.
+  WriteRegDWORD HKCU "Software\Microsoft\Windows\CurrentVersion\Internet Settings" \
+    "ProxyEnable" 0
+  DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Internet Settings" \
+    "ProxyServer"
+  DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Internet Settings" \
+    "ProxyOverride"
+
+  ; Broadcast WM_SETTINGCHANGE so browsers pick up the change immediately
+  nsExec::Exec 'rundll32 wininet.dll,InternetSetOptionW 39'
+
   ; Remove tray auto-start registry entry
   DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "${APP_KEY}"
 
   ; Remove Add/Remove Programs entry
   DeleteRegKey HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_KEY}"
 
+  ; Delete persisted proxy state file (DPAPI-encrypted)
+  Delete "$APPDATA\LeVoile\proxy-original.json"
+  RMDir "$APPDATA\LeVoile"
+
   ; Delete files
   Delete "$INSTDIR\config.toml"
   Delete "$INSTDIR\${SERVICE_EXE}"
   Delete "$INSTDIR\${TRAY_EXE}"
+  Delete "$INSTDIR\${DESKTOP_EXE}"
   Delete "$INSTDIR\icons\*.ico"
   Delete "$INSTDIR\uninstall.exe"
   RMDir "$INSTDIR\icons"

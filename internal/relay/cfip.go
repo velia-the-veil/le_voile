@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/netip"
@@ -11,6 +12,9 @@ import (
 	"sync/atomic"
 	"time"
 )
+
+// maxCIDRResponseBytes limits Cloudflare CIDR list response to 1 MB.
+const maxCIDRResponseBytes = 1 << 20
 
 // cfIPv4URLs and cfIPv6URLs are the Cloudflare IP range endpoints.
 const (
@@ -191,7 +195,7 @@ func fetchCIDRList(client *http.Client, url string) ([]string, error) {
 		return nil, fmt.Errorf("cfip: fetch %s: status %d", url, resp.StatusCode)
 	}
 	var lines []string
-	scanner := bufio.NewScanner(resp.Body)
+	scanner := bufio.NewScanner(io.LimitReader(resp.Body, maxCIDRResponseBytes))
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if line != "" {
