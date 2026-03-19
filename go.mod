@@ -43,8 +43,8 @@ require (
 require (
 	github.com/godbus/dbus/v5 v5.1.0 // indirect
 	github.com/quic-go/qpack v0.6.0 // indirect
-	golang.org/x/crypto v0.41.0 // indirect
-	golang.org/x/net v0.43.0 // indirect
-	golang.org/x/sys v0.35.0 // direct
-	golang.org/x/text v0.28.0 // indirect
+	golang.org/x/crypto v0.49.0 // indirect
+	golang.org/x/net v0.52.0
+	golang.org/x/sys v0.42.0 // direct
+	golang.org/x/text v0.35.0 // indirect
 )

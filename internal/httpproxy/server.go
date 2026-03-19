@@ -22,20 +22,23 @@ type TunnelClient interface {
 
 // Server is a local HTTP CONNECT proxy that listens on loopback only.
 type Server struct {
-	listenAddr   string
-	tunnelClient TunnelClient
-	ready        chan struct{}
-	wg           sync.WaitGroup // tracks hijacked CONNECT connections for draining
-	httpServer   *http.Server
-	listener     net.Listener
+	listenAddr    string
+	tunnelClient  TunnelClient
+	volumeTracker *VolumeTracker
+	ready         chan struct{}
+	wg            sync.WaitGroup // tracks hijacked CONNECT connections for draining
+	httpServer    *http.Server
+	listener      net.Listener
 }
 
 // NewServer creates a local HTTP proxy server.
-func NewServer(listenAddr string, tunnelClient TunnelClient) *Server {
+// volumeTracker may be nil to disable volume-based bypass.
+func NewServer(listenAddr string, tunnelClient TunnelClient, volumeTracker *VolumeTracker) *Server {
 	return &Server{
-		listenAddr:   listenAddr,
-		tunnelClient: tunnelClient,
-		ready:        make(chan struct{}),
+		listenAddr:    listenAddr,
+		tunnelClient:  tunnelClient,
+		volumeTracker: volumeTracker,
+		ready:         make(chan struct{}),
 	}
 }
 
@@ -59,12 +62,18 @@ func (s *Server) Start(ctx context.Context) error {
 	s.listener = ln
 
 	handler := &connectHandler{
-		tunnelClient: s.tunnelClient,
-		wg:           &s.wg,
+		tunnelClient:  s.tunnelClient,
+		wg:            &s.wg,
+		volumeTracker: s.volumeTracker,
 	}
 
 	s.httpServer = &http.Server{
 		Handler: handler,
+	}
+
+	// Start volume tracker cleanup if enabled.
+	if s.volumeTracker != nil {
+		go s.volumeTracker.StartCleanup(ctx)
 	}
 
 	// Signal readiness.

@@ -4,6 +4,7 @@ package httpproxy
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -138,7 +139,7 @@ func (drt *deadRelayTransport) RoundTrip(req *http.Request) (*http.Response, err
 // startE2EProxy starts an httpproxy.Server in a goroutine and waits for readiness.
 func startE2EProxy(t *testing.T, ctx context.Context, tc TunnelClient) *Server {
 	t.Helper()
-	srv := NewServer("127.0.0.1:0", tc)
+	srv := NewServer("127.0.0.1:0", tc, nil)
 	go func() { _ = srv.Start(ctx) }()
 	select {
 	case <-srv.Ready():
@@ -351,4 +352,123 @@ func TestE2E_SessionTokenRefresh(t *testing.T) {
 	}
 
 	t.Logf("session token refresh OK: %d refreshes, tokens: %v", tc.refreshCount.Load(), receivedTokens)
+}
+
+// startE2EProxyWithTracker starts a proxy with volume tracking enabled.
+func startE2EProxyWithTracker(t *testing.T, ctx context.Context, tc TunnelClient, vt *VolumeTracker) *Server {
+	t.Helper()
+	srv := NewServer("127.0.0.1:0", tc, vt)
+	go func() { _ = srv.Start(ctx) }()
+	select {
+	case <-srv.Ready():
+	case <-time.After(3 * time.Second):
+		t.Fatal("proxy did not become ready")
+	}
+	return srv
+}
+
+// TestE2E_VolumeBypass verifies that after exceeding the volume threshold,
+// the proxy switches to direct connection (bypass) for that domain.
+func TestE2E_VolumeBypass(t *testing.T) {
+	if os.Getenv("E2E") != "1" {
+		t.Skip("set E2E=1 to run")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	// Target returns 10 KB of data.
+	payload := bytes.Repeat([]byte("X"), 10*1024)
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write(payload)
+	}))
+	defer target.Close()
+
+	// Low threshold: 1 KB — first CONNECT will trigger bypass.
+	vt := NewVolumeTracker(1024)
+
+	tc := &e2eTunnelClient{
+		relayDomain: "relay.test",
+		token:       "valid-token",
+		httpClient:  &http.Client{Transport: &relayTransport{}},
+	}
+
+	proxy := startE2EProxyWithTracker(t, ctx, tc, vt)
+	targetAddr := target.Listener.Addr().String()
+
+	// --- First CONNECT: goes through relay, bytes counted, threshold exceeded ---
+	conn1, err := net.DialTimeout("tcp", proxy.ListenAddr(), 5*time.Second)
+	if err != nil {
+		t.Fatalf("dial proxy: %v", err)
+	}
+	conn1.SetDeadline(time.Now().Add(10 * time.Second))
+	fmt.Fprintf(conn1, "CONNECT %s HTTP/1.1\r\nHost: %s\r\n\r\n", targetAddr, targetAddr)
+
+	br1 := bufio.NewReader(conn1)
+	resp1, err := http.ReadResponse(br1, nil)
+	if err != nil {
+		t.Fatalf("read CONNECT response: %v", err)
+	}
+	if resp1.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp1.Body)
+		resp1.Body.Close()
+		t.Fatalf("first CONNECT failed: %d %s", resp1.StatusCode, string(body))
+	}
+
+	// Fetch data through the tunnel.
+	fmt.Fprintf(conn1, "GET / HTTP/1.1\r\nHost: %s\r\nConnection: close\r\n\r\n", targetAddr)
+	tunnelResp1, err := http.ReadResponse(br1, nil)
+	if err != nil {
+		t.Fatalf("read tunnel response: %v", err)
+	}
+	body1, _ := io.ReadAll(tunnelResp1.Body)
+	tunnelResp1.Body.Close()
+	conn1.Close()
+
+	if len(body1) != len(payload) {
+		t.Errorf("first response body length = %d, want %d", len(body1), len(payload))
+	}
+
+	// Wait briefly for relay goroutine to finish counting bytes.
+	time.Sleep(200 * time.Millisecond)
+
+	// Domain should now be bypassed.
+	if !vt.IsBypassed(targetAddr) {
+		t.Fatal("expected domain to be bypassed after exceeding threshold")
+	}
+
+	// --- Second CONNECT: should go direct (bypass) ---
+	conn2, err := net.DialTimeout("tcp", proxy.ListenAddr(), 5*time.Second)
+	if err != nil {
+		t.Fatalf("dial proxy for bypass: %v", err)
+	}
+	conn2.SetDeadline(time.Now().Add(10 * time.Second))
+	fmt.Fprintf(conn2, "CONNECT %s HTTP/1.1\r\nHost: %s\r\n\r\n", targetAddr, targetAddr)
+
+	br2 := bufio.NewReader(conn2)
+	resp2, err := http.ReadResponse(br2, nil)
+	if err != nil {
+		t.Fatalf("read bypass CONNECT response: %v", err)
+	}
+	if resp2.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp2.Body)
+		resp2.Body.Close()
+		t.Fatalf("bypass CONNECT failed: %d %s", resp2.StatusCode, string(body))
+	}
+
+	// Fetch data through the bypass tunnel.
+	fmt.Fprintf(conn2, "GET / HTTP/1.1\r\nHost: %s\r\nConnection: close\r\n\r\n", targetAddr)
+	tunnelResp2, err := http.ReadResponse(br2, nil)
+	if err != nil {
+		t.Fatalf("read bypass tunnel response: %v", err)
+	}
+	body2, _ := io.ReadAll(tunnelResp2.Body)
+	tunnelResp2.Body.Close()
+	conn2.Close()
+
+	if len(body2) != len(payload) {
+		t.Errorf("bypass response body length = %d, want %d", len(body2), len(payload))
+	}
+
+	t.Logf("volume bypass OK: first request via relay (%d bytes), second request bypassed (%d bytes)", len(body1), len(body2))
 }

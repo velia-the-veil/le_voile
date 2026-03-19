@@ -1239,7 +1239,7 @@ func (p *Program) startHTTPProxy(proxyCtx context.Context) error {
 	}
 	listenAddr := fmt.Sprintf("127.0.0.1:%d", port)
 
-	srv := httpproxy.NewServer(listenAddr, p.tunnelClient)
+	srv := httpproxy.NewServer(listenAddr, p.tunnelClient, httpproxy.NewVolumeTracker(httpproxy.VolumeThreshold))
 	hpCtx, hpCancel := context.WithCancel(proxyCtx)
 	errCh := make(chan error, 1)
 
