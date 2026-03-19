@@ -128,6 +128,24 @@ Section "Uninstall"
   ; Broadcast WM_SETTINGCHANGE so browsers pick up the change immediately
   nsExec::Exec 'rundll32 wininet.dll,InternetSetOptionW 39'
 
+  ; --- Remove browser extension ---
+  ; Close browsers first — Firefox locks the XPI file while running.
+  nsExec::Exec 'taskkill /F /IM firefox.exe'
+  nsExec::Exec 'taskkill /F /IM chrome.exe'
+  nsExec::Exec 'taskkill /F /IM msedge.exe'
+  Sleep 1000
+
+  ; Remove extension XPI from all Firefox profiles.
+  nsExec::Exec 'cmd /c for /d %p in ("$APPDATA\Mozilla\Firefox\Profiles\*") do del /q "%p\extensions\levoile@plateformeliberte.fr.xpi" 2>nul'
+
+  ; Remove extension policy registry keys
+  DeleteRegValue HKLM "SOFTWARE\Policies\Mozilla\Firefox" "ExtensionSettings"
+  DeleteRegValue HKLM "SOFTWARE\Policies\Google\Chrome" "ExtensionSettings"
+
+  ; Remove deployed extension files
+  RMDir /r "$LOCALAPPDATA\LeVoile\extensions"
+  RMDir /r "$COMMONPROGRAMDATA\LeVoile\extensions"
+
   ; Remove tray auto-start registry entry
   DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "${APP_KEY}"
 
