@@ -14,7 +14,7 @@ import (
 	"github.com/velia-the-veil/le_voile/internal/relay"
 )
 
-const buildTag = "2026-03-14-v2-no-iplimiter"
+const buildTag = "2026-03-19-v3-bandwidth-limiter"
 
 func main() {
 	fmt.Fprintf(os.Stderr, "relay: starting build=%s\n", buildTag)
@@ -56,11 +56,15 @@ func main() {
 		cfv := relay.NewCloudflareIPValidator(true, nil)
 		srv.CFIPValidator = cfv
 
+		// Enable per-IP connection limiter and bandwidth limiter.
+		ipLimiter := relay.NewIPLimiter(relay.IPLimiterMaxPerIP)
+		bwLimiter := relay.NewBandwidthLimiter(relay.DailyQuotaBytes)
+		go ipLimiter.StartCleanup(ctx)
+		go bwLimiter.StartCleanup(ctx)
+
 		// Enable HTTP CONNECT proxy handler.
-		// IPLimiter disabled: single-user relay, no abuse risk.
-		// Pass nil so ConnectHandler skips per-IP limiting entirely.
 		srv.ConnectHandler = relay.NewConnectHandler(
-			key.Public().(ed25519.PublicKey), cfv, nil,
+			key.Public().(ed25519.PublicKey), cfv, ipLimiter, bwLimiter,
 			func(format string, args ...any) {
 				fmt.Fprintf(os.Stderr, "relay: connect: "+format+"\n", args...)
 			},

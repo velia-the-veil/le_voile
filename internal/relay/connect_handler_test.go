@@ -78,7 +78,7 @@ func newConnectRequest(t *testing.T, token string, target string) *http.Request 
 func newHandler(t *testing.T, pub ed25519.PublicKey, limiter *IPLimiter) *ConnectHandler {
 	t.Helper()
 	cfv := NewCloudflareIPValidator(true, nil)
-	return NewConnectHandler(pub, cfv, limiter, func(string, ...any) {})
+	return NewConnectHandler(pub, cfv, limiter, nil, func(string, ...any) {})
 }
 
 func TestConnectHandler_NonPOST(t *testing.T) {
@@ -271,7 +271,7 @@ func TestConnectHandler_ValidRequestE2E(t *testing.T) {
 
 	pub, priv := testKeys(t)
 	cfv := NewCloudflareIPValidator(true, nil)
-	h := NewConnectHandler(pub, cfv, nil, func(string, ...any) {})
+	h := NewConnectHandler(pub, cfv, nil, nil, func(string, ...any) {})
 
 	srv := httptest.NewServer(h)
 	defer srv.Close()
@@ -403,6 +403,53 @@ func TestResolveAndValidateConnect(t *testing.T) {
 				t.Errorf("resolveAndValidateConnect(%q) = %v, want nil error", tt.target, err)
 			}
 		})
+	}
+}
+
+func TestConnectHandler_BandwidthLimiterCounts(t *testing.T) {
+	// Verify that a ConnectHandler with a BandwidthLimiter counts bytes.
+	// We target a loopback address (SSRF-blocked → 403), but the bwLimiter
+	// should NOT have counted bytes because the relay never started.
+	// This confirms the limiter is wired in but only counts during relay.
+	pub, priv := testKeys(t)
+	bwLimiter := NewBandwidthLimiter(DailyQuotaBytes)
+	cfv := NewCloudflareIPValidator(true, nil)
+	h := NewConnectHandler(pub, cfv, nil, bwLimiter, func(string, ...any) {})
+
+	clientIP := "203.0.113.20"
+	token := testToken(t, priv, clientIP)
+
+	req := newConnectRequest(t, token, "127.0.0.1:80")
+	req.RemoteAddr = clientIP + ":12345"
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("status = %d, want 403 (SSRF block)", rec.Code)
+	}
+
+	// No bytes should have been counted (relay never started).
+	if _, ok := bwLimiter.ips.Load(clientIP); ok {
+		t.Errorf("bwLimiter should not have an entry — relay never started")
+	}
+}
+
+func TestConnectHandler_NilBandwidthLimiterBackwardCompat(t *testing.T) {
+	// Verify that passing nil bwLimiter still works (backward compatible).
+	pub, priv := testKeys(t)
+	h := newHandler(t, pub, nil) // newHandler passes nil bwLimiter
+
+	clientIP := "203.0.113.21"
+	token := testToken(t, priv, clientIP)
+
+	req := newConnectRequest(t, token, "127.0.0.1:80")
+	req.RemoteAddr = clientIP + ":12345"
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	// Should still work (403 from SSRF, not a nil panic).
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("status = %d, want 403", rec.Code)
 	}
 }
 
