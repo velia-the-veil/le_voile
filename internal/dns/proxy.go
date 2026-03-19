@@ -32,6 +32,7 @@ type QueryFunc func(ctx context.Context, payload []byte) ([]byte, error)
 type Proxy struct {
 	listenAddr string
 	queryFunc  QueryFunc
+	connMu     sync.RWMutex
 	conn       *net.UDPConn
 	ready      chan struct{}
 	blMu       sync.RWMutex
@@ -74,7 +75,9 @@ func (p *Proxy) Start(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("dns: proxy listen: %w", err)
 	}
+	p.connMu.Lock()
 	p.conn = conn
+	p.connMu.Unlock()
 
 	// Signal readiness — socket is now bound and accepting packets.
 	close(p.ready)
@@ -124,11 +127,19 @@ func (p *Proxy) handleQuery(ctx context.Context, payload []byte, clientAddr *net
 	bl := p.blocklist
 	p.blMu.RUnlock()
 
+	p.connMu.RLock()
+	conn := p.conn
+	p.connMu.RUnlock()
+
+	if conn == nil {
+		return
+	}
+
 	if bl != nil && bl.IsReady() {
 		if domain := extractDomain(payload); domain != "" {
 			if bl.IsBlocked(strings.ToLower(domain)) {
-				if resp := buildNXDOMAINResponse(payload); resp != nil && p.conn != nil {
-					p.conn.WriteToUDP(resp, clientAddr)
+				if resp := buildNXDOMAINResponse(payload); resp != nil {
+					conn.WriteToUDP(resp, clientAddr)
 				}
 				return
 			}
@@ -141,9 +152,7 @@ func (p *Proxy) handleQuery(ctx context.Context, payload []byte, clientAddr *net
 		return
 	}
 
-	if p.conn != nil {
-		p.conn.WriteToUDP(resp, clientAddr)
-	}
+	conn.WriteToUDP(resp, clientAddr)
 }
 
 // extractDomain parses the QNAME from a DNS wire-format query payload.
@@ -199,12 +208,31 @@ func buildNXDOMAINResponse(query []byte) []byte {
 		return nil
 	}
 
-	resp := make([]byte, len(query))
-	copy(resp, query)
+	// Find the end of the question section to truncate additional data.
+	// Header (12 bytes) + QNAME + QTYPE (2) + QCLASS (2).
+	pos := minDNSSize
+	for pos < len(query) {
+		length := int(query[pos])
+		if length == 0 {
+			pos++ // skip root label
+			break
+		}
+		if length&0xC0 == 0xC0 {
+			pos += 2 // skip compression pointer
+			break
+		}
+		pos += 1 + length
+	}
+	pos += 4 // QTYPE + QCLASS
+	if pos > len(query) {
+		pos = len(query)
+	}
+
+	// Only copy header + question section, no stale additional data.
+	resp := make([]byte, pos)
+	copy(resp, query[:pos])
 
 	// Byte 2: QR=1, AA=1 — preserve Opcode (bits 6-3) and RD (bit 0).
-	// 0x79 = 0111 1001 — mask for Opcode and RD.
-	// 0x84 = 1000 0100 — sets QR=1 and AA=1.
 	resp[2] = (query[2] & 0x79) | 0x84
 
 	// Byte 3: RCODE=3 (NXDOMAIN), all other flags (RA, Z, AD, CD) cleared.

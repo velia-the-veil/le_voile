@@ -5,6 +5,7 @@ package dns
 import (
 	"context"
 	"fmt"
+	"net"
 	"os"
 	"strings"
 	"sync"
@@ -155,6 +156,11 @@ func (m *linuxManager) setResolverResolvConf(ctx context.Context, addr string) e
 	// Write backup with same permissions
 	if err := os.WriteFile(resolvConfBackup, content, perm); err != nil {
 		return fmt.Errorf("dns: set resolver: backup resolv.conf: %w", err)
+	}
+
+	// Validate addr is a valid IP address to prevent injection via newlines.
+	if net.ParseIP(addr) == nil {
+		return fmt.Errorf("dns: set resolver: invalid IP address %q", addr)
 	}
 
 	// Write new resolv.conf with same permissions

@@ -271,33 +271,35 @@ func (t *Tray) shutdownServiceAndRestore() {
 // before force-killing it.
 const desktopKillTimeout = 3 * time.Second
 
-// killDesktopProcess terminates the desktop subprocess if the tray launched it.
-// If the desktop was launched externally (PID unknown), it is left to self-close
-// when its IPC polling detects the service shutdown.
+// killDesktopProcess terminates the desktop process.
+// First tries the subprocess launched by this tray. If not available
+// (desktop launched by installer or externally), falls back to taskkill
+// to ensure the desktop is always closed on tray quit.
 func (t *Tray) killDesktopProcess() {
 	t.mu.Lock()
 	cmd := t.desktopCmd
 	running := t.desktopRunning
 	t.mu.Unlock()
 
-	if !running || cmd == nil || cmd.Process == nil {
-		return
+	if running && cmd != nil && cmd.Process != nil {
+		// Give the desktop a short grace period to exit on its own.
+		done := make(chan struct{})
+		go func() {
+			cmd.Wait()
+			close(done)
+		}()
+
+		select {
+		case <-done:
+			return // Desktop exited gracefully.
+		case <-time.After(desktopKillTimeout):
+			cmd.Process.Kill()
+			return
+		}
 	}
 
-	// Give the desktop a short grace period to exit on its own.
-	done := make(chan struct{})
-	go func() {
-		cmd.Wait()
-		close(done)
-	}()
-
-	select {
-	case <-done:
-		// Desktop exited gracefully.
-	case <-time.After(desktopKillTimeout):
-		// Force kill — desktop may be frozen or showing a blocking modal.
-		cmd.Process.Kill()
-	}
+	// Fallback: kill any desktop process by name (covers installer-launched instances).
+	exec.Command("taskkill", "/F", "/IM", filepath.Base(desktopExePath())).Run()
 }
 
 func (t *Tray) menuHandler(ctx context.Context) {
@@ -617,13 +619,13 @@ func (t *Tray) handleOpenDesktop() {
 }
 
 // desktopExePath returns the path to the desktop binary, expected to be in
-// the same directory as the tray binary with the name "le-voile-desktop.exe".
+// the same directory as the tray binary with the name "levoile-desktop.exe".
 func desktopExePath() string {
 	self, err := os.Executable()
 	if err != nil {
-		return "le-voile-desktop.exe"
+		return "levoile-desktop.exe"
 	}
-	return filepath.Join(filepath.Dir(self), "le-voile-desktop.exe")
+	return filepath.Join(filepath.Dir(self), "levoile-desktop.exe")
 }
 
 func (t *Tray) handleQuit(ctx context.Context) {

@@ -22,6 +22,10 @@ export function GetStatus() {
   return window['go']['desktop']['App']['GetStatus']();
 }
 
+export function OnBeforeClose(arg1) {
+  return window['go']['desktop']['App']['OnBeforeClose'](arg1);
+}
+
 export function Quit() {
   return window['go']['desktop']['App']['Quit']();
 }

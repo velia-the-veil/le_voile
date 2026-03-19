@@ -44,6 +44,8 @@ func NewKillSwitch(dnsMgr DNSManager, stopProxy func(), startProxy func(ctx cont
 // during activation to defensively verify the resolver when the original has
 // already been saved by DNSManager.SetResolver.
 func (ks *KillSwitch) SetForceResolver(fn func(ctx context.Context, addr string) error) {
+	ks.mu.Lock()
+	defer ks.mu.Unlock()
 	ks.forceResolver = fn
 }
 

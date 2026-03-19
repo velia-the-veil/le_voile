@@ -6,11 +6,13 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"path/filepath"
 	"syscall"
 )
 
 // SocketPath is the unix socket path on Linux/macOS.
-const SocketPath = "/tmp/levoile.sock"
+// Uses /var/run for privileged service, avoids /tmp TOCTOU attacks.
+const SocketPath = "/var/run/levoile/levoile.sock"
 
 // platformListener implements Listener for unix sockets.
 type platformListener struct {
@@ -28,9 +30,16 @@ func NewPlatformListener() Listener {
 }
 
 // Listen starts listening on the unix socket. Removes stale socket first.
-// The socket file is created with 0o700 permissions to restrict access to the owner.
+// The socket directory is created with 0o700 permissions owned by root,
+// preventing TOCTOU attacks that were possible with /tmp.
 func (pl *platformListener) Listen() (net.Listener, error) {
-	// Check for symlink before removing — prevent symlink attacks in /tmp.
+	// Create the socket directory with restricted permissions.
+	socketDir := filepath.Dir(SocketPath)
+	if err := os.MkdirAll(socketDir, 0o700); err != nil {
+		return nil, fmt.Errorf("ipc: create socket dir: %w", err)
+	}
+
+	// Check for symlink before removing — prevent symlink attacks.
 	if info, err := os.Lstat(SocketPath); err == nil {
 		if info.Mode()&os.ModeSymlink != 0 {
 			return nil, fmt.Errorf("ipc: socket path %s is a symlink, refusing to proceed", SocketPath)

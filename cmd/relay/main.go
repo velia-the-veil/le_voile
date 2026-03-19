@@ -25,6 +25,7 @@ func main() {
 	fallback := flag.String("fallback", "https://9.9.9.9/dns-query", "fallback DoH resolver URL (empty to disable)")
 	signingKeyPath := flag.String("signing-key", "", "path to Ed25519 private key file (base64); enables /verify endpoint")
 	registryFile := flag.String("registry-file", "", "path to relay-registry.json (served at /.well-known/relay-registry.json)")
+	cfInsecure := flag.Bool("cf-insecure", false, "trust direct source IP instead of CF-Connecting-IP (dev mode only)")
 	flag.Parse()
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -51,9 +52,9 @@ func main() {
 		srv.SigningKey = key
 
 		// Enable Cloudflare IP validation for session tokens.
-		// In dev/direct mode (no Cloudflare proxy), use insecure=true
-		// so the relay trusts the direct source IP.
-		cfv := relay.NewCloudflareIPValidator(true, nil)
+		// In production behind Cloudflare, use default (insecure=false).
+		// Pass -cf-insecure for dev/direct mode (no Cloudflare proxy).
+		cfv := relay.NewCloudflareIPValidator(*cfInsecure, nil)
 		srv.CFIPValidator = cfv
 
 		// Enable per-IP connection limiter and bandwidth limiter.

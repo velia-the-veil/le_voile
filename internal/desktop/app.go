@@ -4,13 +4,21 @@ package desktop
 import (
 	"context"
 	"fmt"
+	"os/exec"
 	"time"
 
 	"github.com/velia-the-veil/le_voile/internal/config"
 	"github.com/velia-the-veil/le_voile/internal/ipc"
 	"github.com/velia-the-veil/le_voile/internal/registry"
 	wailsRuntime "github.com/wailsapp/wails/v2/pkg/runtime"
+	winreg "golang.org/x/sys/windows/registry"
 )
+
+const internetSettingsKey = `Software\Microsoft\Windows\CurrentVersion\Internet Settings`
+
+func openInternetSettingsKey() (winreg.Key, error) {
+	return winreg.OpenKey(winreg.CURRENT_USER, internetSettingsKey, winreg.SET_VALUE)
+}
 
 // IPCClient abstracts the IPC client for testability.
 type IPCClient interface {
@@ -112,13 +120,12 @@ func (a *App) Startup(ctx context.Context) {
 	}
 }
 
-// OnBeforeClose intercepts the window close (X button) and hides the window
-// instead of destroying the process (AC2). The tray and service continue
-// running. The window can be re-opened via left-click on the tray icon.
-// Returns true to prevent the default close behavior.
+// OnBeforeClose intercepts the window close (X button) and shuts down
+// the entire Le Voile stack: stop service (restores DNS), kill tray,
+// restore proxy. Returns false to allow the window to close.
 func (a *App) OnBeforeClose(ctx context.Context) bool {
-	a.runtimeHide(a.ctx)
-	return true
+	a.shutdownAll()
+	return false
 }
 
 // Shutdown is the Wails OnShutdown callback. It closes the IPC client.
@@ -226,14 +233,40 @@ func (a *App) Disconnect() StatusResponse {
 	return a.mapResponse(resp)
 }
 
-// Quit sends ActionQuit to the service and closes the Wails window.
-// The service shuts down after a short delay; the tray detects the loss
-// via its 2s polling and exits on its own.
+// Quit shuts down the entire Le Voile stack and closes the window.
 func (a *App) Quit() {
-	ctx, cancel := context.WithTimeout(a.ctx, 5*time.Second)
-	defer cancel()
-	a.ipcClient.SendContext(ctx, ipc.Request{Action: ipc.ActionQuit})
+	a.shutdownAll()
 	a.runtimeQuit(a.ctx)
+}
+
+// shutdownAll stops the service, kills the tray, and clears the system proxy.
+// Order matters: disable auto-restart first, then stop service, then cleanup.
+func (a *App) shutdownAll() {
+	// 1. Disable SCM auto-restart BEFORE stopping the service.
+	exec.Command(`C:\Windows\System32\sc.exe`, "failure", "LeVoile", "reset=", "0", "actions=", "").Run()
+
+	// 2. Tell the service to stop — this restores DNS, browser policies.
+	quitCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	a.ipcClient.SendContext(quitCtx, ipc.Request{Action: ipc.ActionQuit})
+
+	// 3. Kill the tray (force — systray has no window for graceful WM_CLOSE).
+	exec.Command("taskkill", "/F", "/IM", "levoile-tray.exe").Run()
+
+	// 4. Clear WinINET proxy — tray was force-killed so it didn't clean up.
+	clearSystemProxy()
+}
+
+// clearSystemProxy disables the WinINET proxy via registry and notifies browsers.
+func clearSystemProxy() {
+	k, err := openInternetSettingsKey()
+	if err != nil {
+		return
+	}
+	defer k.Close()
+	k.SetDWordValue("ProxyEnable", 0)
+	k.DeleteValue("ProxyServer")
+	k.DeleteValue("ProxyOverride")
 }
 
 // mapResponse converts an IPC Response to a frontend StatusResponse.
