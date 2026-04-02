@@ -1,0 +1,20 @@
+{
+  "manifest_version": 2,
+  "name": "Le Voile",
+  "version": "1.0.0",
+  "description": "Route le trafic navigateur via Le Voile pour masquer votre IP",
+  "permissions": ["proxy", "webRequest", "webRequestBlocking", "downloads", "<all_urls>"],
+  "background": {
+    "scripts": ["background.js"]
+  },
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "levoile@plateformeliberte.fr"
+    }
+  },
+  "icons": {
+    "16": "icons/icon-16.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  }
+}
