@@ -13,6 +13,14 @@ builds:
     ldflags:
       - -s -w -X main.version={{.Version}}
 
+  - id: ui
+    main: ./cmd/ui
+    binary: levoile-ui
+    goos: [windows]
+    goarch: [amd64]
+    ldflags:
+      - -s -w -X main.version={{.Version}} -H windowsgui
+
   - id: tray
     main: ./cmd/tray
     binary: levoile-tray
@@ -66,7 +74,7 @@ builds:
 
 archives:
   - id: windows
-    builds: [service, tray]
+    builds: [service, ui]
     name_template: "LeVoile_{{.Version}}_windows_amd64"
     format: zip
     files:
