@@ -1,6 +1,7 @@
 // app.js — Polling status via local HTTP server and UI updates.
 
 const POLL_INTERVAL = 2000;
+const REGISTRY_POLL_INTERVAL = 30000;
 
 const dom = {
     dot: null,
@@ -8,6 +9,7 @@ const dom = {
     ip: null,
     uptime: null,
     logo: null,
+    countryList: null,
     countryFlag: null,
     countryName: null,
     relayInfo: null,
@@ -16,6 +18,8 @@ const dom = {
 };
 
 let pollIntervalId = null;
+let registryIntervalId = null;
+let selectedCountryName = ''; // tracks user-selected country for mismatch detection
 
 function init() {
     dom.dot = document.getElementById('status-dot');
@@ -23,6 +27,7 @@ function init() {
     dom.ip = document.getElementById('status-ip');
     dom.uptime = document.getElementById('status-uptime');
     dom.logo = document.getElementById('header-logo');
+    dom.countryList = document.getElementById('country-list');
     dom.countryFlag = document.getElementById('country-flag');
     dom.countryName = document.getElementById('country-name');
     dom.relayInfo = document.getElementById('relay-info');
@@ -30,6 +35,7 @@ function init() {
     dom.btnConnect = document.getElementById('btn-connect');
 
     startPolling();
+    startRegistryPolling();
 }
 
 function startPolling() {
@@ -95,18 +101,34 @@ function updateUI(status) {
         dom.uptime.textContent = '';
     }
 
-    // Connect/Disconnect button
+    // Connect/Disconnect button (AC5)
     if (dom.btnConnect) {
-        if (status.status === 'connected') {
-            dom.btnConnect.className = 'btn-connect disconnect';
-            dom.btnConnect.textContent = 'Déconnecter';
-            dom.btnConnect.disabled = false;
-        } else if (status.status === 'disconnected' || status.status === 'error') {
+        const countryMismatch = status.status === 'connected'
+            && selectedCountryName !== ''
+            && status.country !== ''
+            && selectedCountryName !== status.country;
+
+        const countryLabel = selectedCountryName || status.country || '';
+        if (countryMismatch) {
+            // Selected country differs from connected country → show "Connecter"
             dom.btnConnect.className = 'btn-connect connect';
             dom.btnConnect.textContent = 'Connecter';
             dom.btnConnect.disabled = false;
+            dom.btnConnect.setAttribute('aria-label', 'Se connecter à ' + countryLabel);
+        } else if (status.status === 'connected') {
+            dom.btnConnect.className = 'btn-connect disconnect';
+            dom.btnConnect.textContent = 'Déconnecter';
+            dom.btnConnect.disabled = false;
+            dom.btnConnect.setAttribute('aria-label', 'Se déconnecter de ' + countryLabel);
+        } else if (status.status === 'disconnected') {
+            dom.btnConnect.className = 'btn-connect connect';
+            dom.btnConnect.textContent = 'Connecter';
+            dom.btnConnect.disabled = false;
+            dom.btnConnect.setAttribute('aria-label', countryLabel ? 'Se connecter à ' + countryLabel : 'Se connecter');
         } else {
+            // connecting, error, or unknown → hide button
             dom.btnConnect.className = 'btn-connect hidden';
+            dom.btnConnect.removeAttribute('aria-label');
         }
     }
 
@@ -126,14 +148,85 @@ function updateUI(status) {
     }
 }
 
+function startRegistryPolling() {
+    if (registryIntervalId !== null) {
+        clearInterval(registryIntervalId);
+    }
+    loadRegistry();
+    registryIntervalId = setInterval(loadRegistry, REGISTRY_POLL_INTERVAL);
+}
+
+async function loadRegistry() {
+    try {
+        const resp = await fetch('/api/registry');
+        const reg = await resp.json();
+        if (reg && reg.countries) {
+            renderCountryList(reg.countries);
+        }
+    } catch (e) {
+        // Sidebar unchanged on error
+    }
+}
+
+function renderCountryList(countries) {
+    const list = dom.countryList;
+    while (list.firstChild) list.removeChild(list.firstChild);
+    // Sync selectedCountryName from active country in registry.
+    // This handles initial load and failover (service switched country).
+    for (let i = 0; i < countries.length; i++) {
+        if (countries[i].active) {
+            selectedCountryName = countries[i].name;
+            break;
+        }
+    }
+    countries.forEach(function(c) {
+        const item = document.createElement('div');
+        item.className = 'country-item' + (c.active ? ' active' : '');
+
+        const flagSpan = document.createElement('span');
+        flagSpan.className = 'country-flag';
+        flagSpan.textContent = c.flag;
+
+        const nameSpan = document.createElement('span');
+        nameSpan.className = 'country-name';
+        nameSpan.textContent = c.name;
+
+        const countSpan = document.createElement('span');
+        countSpan.className = 'country-count';
+        countSpan.textContent = c.relay_count;
+
+        item.appendChild(flagSpan);
+        item.appendChild(nameSpan);
+        item.appendChild(countSpan);
+        item.addEventListener('click', function() { selectCountry(c.code, c.name); });
+        list.appendChild(item);
+    });
+}
+
+async function selectCountry(code, name) {
+    selectedCountryName = name || '';
+    try {
+        await fetch('/api/country', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ code: code })
+        });
+        // Refresh registry after reconnection delay
+        setTimeout(loadRegistry, 2000);
+    } catch (e) {
+        // Polling will update status
+    }
+}
+
 async function toggleConnect() {
-    var btn = dom.btnConnect;
+    const btn = dom.btnConnect;
     btn.disabled = true;
     try {
-        if (btn.classList.contains('disconnect')) {
-            await fetch('/api/disconnect', { method: 'POST' });
-        } else {
-            await fetch('/api/connect', { method: 'POST' });
+        const action = btn.classList.contains('disconnect') ? 'disconnect' : 'connect';
+        const resp = await fetch('/api/' + action, { method: 'POST' });
+        const data = await resp.json();
+        if (data.error) {
+            dom.text.textContent = data.error;
         }
     } catch (e) {
         // Silent error — polling will update
