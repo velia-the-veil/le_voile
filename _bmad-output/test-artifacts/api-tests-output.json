@@ -1,0 +1,38 @@
+{
+  "success": true,
+  "subagent": "api-tests",
+  "tests": [
+    {
+      "file": "internal/relay/verify_handler_test.go",
+      "new_tests": [
+        "TestVerifyHandler_InvalidJSON",
+        "TestVerifyHandler_MissingNonce",
+        "TestVerifyHandler_BodyTooLarge",
+        "TestVerifyHandler_WrongContentType"
+      ],
+      "priority_coverage": {"P0": 4, "P1": 0}
+    },
+    {
+      "file": "internal/relay/doh_handler_test.go",
+      "new_tests": [
+        "TestDoHHandler_BodyAtMaxSize",
+        "TestDoHHandler_BodyExceedsMaxSize",
+        "TestDoHHandler_ContextCancellation",
+        "TestDoHHandler_UpstreamResponseReadError",
+        "TestDoHHandler_UpstreamResponseReadError_Unit"
+      ],
+      "priority_coverage": {"P0": 5, "P1": 0}
+    },
+    {
+      "file": "internal/relay/server_test.go",
+      "new_tests": [
+        "TestServer_InvalidTLSCertKeyPaths"
+      ],
+      "priority_coverage": {"P0": 1, "P1": 0}
+    }
+  ],
+  "fixture_needs": [],
+  "knowledge_fragments_used": ["test-levels-framework", "test-priorities-matrix", "test-quality"],
+  "test_count": 10,
+  "summary": "Generated 10 P0 API-layer tests across 3 files. verify_handler: 4 tests covering malformed JSON, missing nonce, oversized body, and wrong Content-Type. doh_handler: 5 tests covering exact-boundary body size, over-limit body, context cancellation, and upstream response read errors (integration + unit with custom RoundTripper). server: 1 table-driven test covering invalid TLS cert/key path error handling."
+}

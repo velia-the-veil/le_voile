@@ -42,9 +42,8 @@ coverage.html
 # Runtime config (may contain credentials)
 config.toml
 
-# BMAD framework and outputs
+# BMAD framework
 /_bmad/
-/_bmad-output/
 
 # Browser extension build artifacts
 extension.zip
