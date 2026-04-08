@@ -63,8 +63,8 @@ html, body {
     -webkit-user-select: none;
 }
 
-/* Titlebar */
-.titlebar {
+/* App header (native window titlebar handles window controls) */
+.app-header {
     display: flex;
     align-items: center;
     height: 2rem;
@@ -72,18 +72,18 @@ html, body {
     padding: 0 0.5rem;
 }
 
-.titlebar-logo {
+.header-logo {
     display: flex;
     align-items: center;
     color: var(--text-secondary);
     transition: color 0.3s ease;
 }
-.titlebar-logo svg {
+.header-logo svg {
     width: 1rem;
     height: 1.25rem;
 }
 
-.titlebar-text {
+.header-text {
     flex: 1;
     font-family: 'Bebas Neue', 'Arial Black', sans-serif;
     font-size: 0.875rem;
@@ -91,36 +91,6 @@ html, body {
     text-transform: uppercase;
     margin-left: 0.5rem;
     color: var(--text-secondary);
-}
-
-.titlebar-controls {
-    display: flex;
-    gap: 0.25rem;
-}
-
-.titlebar-controls button {
-    background: none;
-    border: none;
-    color: var(--text-secondary);
-    font-size: 0.75rem;
-    width: 1.75rem;
-    height: 1.75rem;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    cursor: pointer;
-    border-radius: 0.25rem;
-    transition: background 0.15s ease, color 0.15s ease;
-}
-
-.titlebar-controls button:hover {
-    background: rgba(255, 255, 255, 0.1);
-    color: var(--text-primary);
-}
-
-.btn-close:hover {
-    background: var(--accent-red) !important;
-    color: white !important;
 }
 
 /* Layout split — Direction F */
@@ -274,10 +244,10 @@ html, body {
     color: var(--text-secondary);
 }
 
-/* Titlebar logo color states */
-.titlebar-logo.connected { color: var(--status-secure); }
-.titlebar-logo.connecting { color: var(--status-warning); }
-.titlebar-logo.disconnected { color: var(--status-risk); }
+/* Header logo color states */
+.header-logo.connected { color: var(--status-secure); }
+.header-logo.connecting { color: var(--status-warning); }
+.header-logo.disconnected { color: var(--status-risk); }
 
 /* Connect/Disconnect button */
 .btn-connect {

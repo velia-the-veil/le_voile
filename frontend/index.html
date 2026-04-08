@@ -7,19 +7,15 @@
     <link rel="stylesheet" href="src/style.css">
 </head>
 <body>
-    <div class="titlebar" style="--wails-draggable:drag">
-        <div class="titlebar-logo" id="titlebar-logo">
+    <header class="app-header">
+        <div class="header-logo" id="header-logo">
             <svg width="20" height="24" viewBox="0 0 20 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                 <path d="M10 0L0 4v8c0 6.627 4.477 12 10 12s10-5.373 10-12V4L10 0z" fill="currentColor"/>
                 <text x="10" y="17" text-anchor="middle" fill="#0b1526" font-size="12" font-weight="bold" font-family="sans-serif">V</text>
             </svg>
         </div>
-        <span class="titlebar-text">Le Voile</span>
-        <div class="titlebar-controls" style="--wails-draggable:no-drag">
-            <button class="btn-minimize" onclick="minimizeWindow()">&#x2500;</button>
-            <button class="btn-close" onclick="closeWindow()">&#x2715;</button>
-        </div>
-    </div>
+        <span class="header-text">Le Voile</span>
+    </header>
     <main class="layout-split">
         <aside class="sidebar" id="sidebar">
             <div class="sidebar-header">Pays</div>
@@ -39,28 +35,10 @@
                 <div class="relay-info" id="relay-info"></div>
                 <div class="status-uptime" id="status-uptime"></div>
                 <button class="btn-connect" id="btn-connect" onclick="toggleConnect()">Connecter</button>
-                <a class="test-link" id="test-link" href="#" onclick="openTestLink(event)">Tester ma protection</a>
+                <a class="test-link" id="test-link" href="https://plateformeliberte.fr/test-protection.html" target="_blank">Tester ma protection</a>
             </div>
         </section>
     </main>
-    <div class="modal-overlay hidden" id="modal-overlay">
-        <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="modal-title">
-            <h2 class="modal-title" id="modal-title">Quitter Le Voile ?</h2>
-            <p class="modal-text">
-                Utilisez <strong>&#x2500;</strong> pour réduire la fenêtre en icône tray.
-                <strong>&#x2715;</strong> déconnecte le VPN et quitte Le Voile.
-                Votre connexion ne sera plus protégée.
-            </p>
-            <label class="modal-checkbox">
-                <input type="checkbox" id="modal-skip-checkbox">
-                <span>Ne plus montrer</span>
-            </label>
-            <div class="modal-actions">
-                <button class="btn-cancel" id="btn-modal-cancel" onclick="closeQuitModal()">Annuler</button>
-                <button class="btn-confirm" id="btn-modal-confirm" onclick="confirmQuit()">Confirmer</button>
-            </div>
-        </div>
-    </div>
     <script src="src/app.js"></script>
 </body>
 </html>
