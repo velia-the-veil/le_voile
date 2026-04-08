@@ -1,0 +1,1136 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Le Voile — Prototype Interactif</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Inter:wght@400;500&family=Rajdhani:wght@500;600;700&display=swap');
+
+  :root {
+    --bg-primary: #0b1526;
+    --bg-secondary: #0e1e38;
+    --bg-tertiary: #162a4a;
+    --accent-blue: #1a6fc4;
+    --accent-glow: #2a8dff;
+    --accent-red: #d42b2b;
+    --accent-red-bright: #ff3c3c;
+    --status-secure: #4ade80;
+    --status-warning: #fb923c;
+    --status-risk: #ff3c3c;
+    --text-primary: #f0f4ff;
+    --text-secondary: #8a9bb8;
+    --font-heading: 'Bebas Neue', sans-serif;
+    --font-ui: 'Rajdhani', sans-serif;
+    --font-body: 'Inter', sans-serif;
+    --space-xs: 4px;
+    --space-sm: 8px;
+    --space-md: 16px;
+    --space-lg: 24px;
+    --space-xl: 32px;
+    --star-yellow: #facc15;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: #060d18;
+    color: var(--text-primary);
+    font-family: var(--font-body);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+    gap: 24px;
+    padding: 40px;
+  }
+
+  .page-title {
+    font-family: var(--font-heading);
+    font-size: 36px;
+    letter-spacing: 2px;
+    color: var(--text-primary);
+  }
+
+  .page-subtitle {
+    font-family: var(--font-ui);
+    font-size: 16px;
+    color: var(--text-secondary);
+    margin-top: -16px;
+  }
+
+  .controls {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+
+  .ctrl-btn {
+    font-family: var(--font-ui);
+    font-weight: 600;
+    font-size: 13px;
+    padding: 6px 14px;
+    border-radius: 6px;
+    border: 1px solid rgba(42, 141, 255, 0.3);
+    background: transparent;
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: all 150ms ease;
+  }
+
+  .ctrl-btn:hover { border-color: var(--accent-glow); color: var(--text-primary); }
+  .ctrl-btn.active { background: var(--accent-glow); color: var(--bg-primary); border-color: var(--accent-glow); }
+
+  /* ===== WINDOW ===== */
+  .window {
+    width: 420px;
+    height: 540px;
+    background: var(--bg-primary);
+    border-radius: 12px;
+    overflow: hidden;
+    border: 1px solid rgba(42, 141, 255, 0.15);
+    box-shadow: 0 0 60px rgba(42, 141, 255, 0.1);
+    display: flex;
+    flex-direction: column;
+    position: relative;
+  }
+
+  /* ===== TITLEBAR ===== */
+  .titlebar {
+    height: 36px;
+    background: var(--bg-secondary);
+    display: flex;
+    align-items: center;
+    padding: 0 12px;
+    flex-shrink: 0;
+    border-bottom: 1px solid rgba(42, 141, 255, 0.08);
+    user-select: none;
+  }
+
+  .titlebar-left {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: 1;
+  }
+
+  .titlebar-v {
+    font-family: var(--font-heading);
+    font-size: 18px;
+    transition: all 300ms ease;
+  }
+
+  .titlebar-v.connected { color: var(--status-secure); text-shadow: 0 0 8px rgba(74, 222, 128, 0.4); }
+  .titlebar-v.reconnecting { color: var(--status-warning); text-shadow: 0 0 8px rgba(251, 146, 60, 0.4); animation: pulse-text 1.5s infinite; }
+  .titlebar-v.disconnected { color: var(--status-risk); text-shadow: 0 0 8px rgba(255, 60, 60, 0.4); }
+
+  @keyframes pulse-text {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+  }
+
+  .titlebar-name {
+    font-family: var(--font-ui);
+    font-size: 13px;
+    color: var(--text-secondary);
+  }
+
+  .titlebar-controls {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+  }
+
+  .titlebar-btn {
+    width: 32px;
+    height: 28px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: background 150ms ease;
+    font-size: 16px;
+    font-weight: 700;
+    color: var(--text-secondary);
+    border: none;
+    background: none;
+  }
+
+  .titlebar-btn:hover { background: var(--bg-tertiary); }
+
+  .bell-btn { position: relative; font-size: 14px; }
+  .bell-badge {
+    position: absolute;
+    top: 2px;
+    right: 2px;
+    width: 14px;
+    height: 14px;
+    background: var(--status-warning);
+    border-radius: 50%;
+    font-family: var(--font-body);
+    font-size: 9px;
+    font-weight: 700;
+    color: var(--bg-primary);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    display: none;
+  }
+
+  .bell-badge.visible { display: flex; }
+
+  .close-btn:hover { background: var(--accent-red) !important; color: var(--text-primary) !important; }
+
+  /* ===== BODY ===== */
+  .window-body {
+    flex: 1;
+    display: flex;
+    overflow: hidden;
+  }
+
+  /* ===== SIDEBAR ===== */
+  .sidebar {
+    width: 150px;
+    background: var(--bg-secondary);
+    padding: var(--space-sm) var(--space-xs);
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    border-right: 1px solid rgba(42, 141, 255, 0.1);
+    flex-shrink: 0;
+  }
+
+  .sidebar-tab {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 10px;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: background 150ms ease;
+    font-family: var(--font-ui);
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    border: none;
+    background: none;
+    width: 100%;
+    text-align: left;
+  }
+
+  .sidebar-tab:hover { background: var(--bg-tertiary); }
+  .sidebar-tab.active { background: var(--bg-tertiary); color: var(--text-primary); }
+
+  .sidebar-tab .tab-icon { font-size: 16px; width: 20px; text-align: center; flex-shrink: 0; }
+
+  .sidebar-divider {
+    height: 1px;
+    background: rgba(42, 141, 255, 0.1);
+    margin: 4px 8px;
+  }
+
+  .sidebar-country {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 9px 10px;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: background 150ms ease;
+    font-family: var(--font-ui);
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-primary);
+    border: none;
+    background: none;
+    width: 100%;
+    text-align: left;
+    border-left: 2px solid transparent;
+  }
+
+  .sidebar-country:hover { background: var(--bg-tertiary); }
+  .sidebar-country.active { background: var(--bg-tertiary); border-left-color: var(--accent-glow); padding-left: 8px; }
+
+  .sidebar-country .flag { font-size: 16px; flex-shrink: 0; }
+
+  .sidebar-country .name {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .star {
+    font-size: 14px;
+    color: transparent;
+    -webkit-text-stroke: 1px var(--star-yellow);
+    cursor: pointer;
+    transition: all 150ms ease;
+    flex-shrink: 0;
+    background: none;
+    border: none;
+    padding: 0;
+    line-height: 1;
+  }
+
+  .star:hover { color: var(--star-yellow); -webkit-text-stroke: none; }
+  .star.favorited { color: var(--star-yellow); -webkit-text-stroke: none; }
+
+  /* ===== PANELS ===== */
+  .panel {
+    flex: 1;
+    display: none;
+    flex-direction: column;
+  }
+
+  .panel.visible { display: flex; }
+
+  /* Status Panel */
+  .status-panel {
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-lg);
+    text-align: center;
+    padding: var(--space-xl) var(--space-lg);
+  }
+
+  .status-group {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .status-dot {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    transition: all 300ms ease;
+  }
+
+  .status-dot.connected { background: var(--status-secure); box-shadow: 0 0 8px var(--status-secure); }
+  .status-dot.reconnecting { background: var(--status-warning); box-shadow: 0 0 8px var(--status-warning); animation: pulse-dot 1.5s infinite; }
+  .status-dot.disconnected { background: var(--status-risk); box-shadow: 0 0 8px var(--status-risk); }
+
+  @keyframes pulse-dot {
+    0%, 100% { opacity: 1; box-shadow: 0 0 8px var(--status-warning); }
+    50% { opacity: 0.4; box-shadow: 0 0 20px var(--status-warning); }
+  }
+
+  .status-text {
+    font-family: var(--font-ui);
+    font-weight: 700;
+    font-size: 18px;
+    transition: color 300ms ease;
+  }
+
+  .status-text.connected { color: var(--status-secure); }
+  .status-text.reconnecting { color: var(--status-warning); }
+  .status-text.disconnected { color: var(--status-risk); }
+
+  .big-flag {
+    font-size: 56px;
+    line-height: 1;
+    transition: opacity 300ms ease;
+  }
+
+  .country-name-display {
+    font-family: var(--font-heading);
+    font-size: 28px;
+    letter-spacing: 2px;
+    transition: opacity 300ms ease;
+  }
+
+  .info-group {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-xs);
+  }
+
+  .ip-display {
+    font-family: var(--font-body);
+    font-weight: 500;
+    font-size: 16px;
+  }
+
+  .relay-info {
+    font-size: 13px;
+    color: var(--text-secondary);
+  }
+
+  .actions-group {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm);
+    align-items: center;
+    width: 100%;
+  }
+
+  /* Buttons */
+  .btn {
+    font-family: var(--font-ui);
+    font-weight: 600;
+    font-size: 14px;
+    border: none;
+    border-radius: 6px;
+    padding: 10px 24px;
+    cursor: pointer;
+    transition: all 200ms ease;
+    width: 80%;
+  }
+
+  .btn-connect {
+    background: var(--status-secure);
+    color: var(--bg-primary);
+  }
+
+  .btn-connect:hover {
+    box-shadow: 0 0 16px rgba(74, 222, 128, 0.3);
+    filter: brightness(1.1);
+  }
+
+  .btn-disconnect {
+    background: transparent;
+    color: var(--accent-red);
+    border: 1px solid rgba(212, 43, 43, 0.3);
+  }
+
+  .btn-disconnect:hover {
+    background: rgba(212, 43, 43, 0.1);
+    border-color: var(--accent-red);
+  }
+
+  .link {
+    font-family: var(--font-ui);
+    font-weight: 600;
+    font-size: 14px;
+    color: var(--accent-glow);
+    text-decoration: none;
+    cursor: pointer;
+    background: none;
+    border: none;
+  }
+
+  .link:hover { text-decoration: underline; }
+
+  /* Settings Panel */
+  .settings-panel {
+    padding: var(--space-lg);
+    gap: var(--space-lg);
+  }
+
+  .settings-panel h3 {
+    font-family: var(--font-heading);
+    font-size: 24px;
+    letter-spacing: 1px;
+  }
+
+  .setting-group {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm);
+  }
+
+  .setting-label {
+    font-family: var(--font-ui);
+    font-weight: 700;
+    font-size: 15px;
+  }
+
+  .setting-desc {
+    font-family: var(--font-body);
+    font-size: 13px;
+    color: var(--text-secondary);
+    line-height: 1.5;
+  }
+
+  .setting-warning {
+    font-family: var(--font-body);
+    font-size: 12px;
+    color: var(--status-warning);
+    font-style: italic;
+  }
+
+  .toggle-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-top: 4px;
+  }
+
+  .toggle-label {
+    font-family: var(--font-ui);
+    font-size: 13px;
+    color: var(--text-secondary);
+  }
+
+  .toggle {
+    width: 40px;
+    height: 22px;
+    background: var(--bg-tertiary);
+    border-radius: 11px;
+    position: relative;
+    cursor: pointer;
+    transition: background 200ms ease;
+    border: 1px solid rgba(42, 141, 255, 0.15);
+  }
+
+  .toggle.on {
+    background: rgba(74, 222, 128, 0.3);
+    border-color: var(--status-secure);
+  }
+
+  .toggle-knob {
+    width: 16px;
+    height: 16px;
+    background: var(--text-secondary);
+    border-radius: 50%;
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    transition: all 200ms ease;
+  }
+
+  .toggle.on .toggle-knob {
+    left: 20px;
+    background: var(--status-secure);
+  }
+
+  .settings-footer {
+    margin-top: auto;
+  }
+
+  /* Notifications Panel */
+  .notif-panel {
+    padding: var(--space-lg);
+    gap: var(--space-md);
+  }
+
+  .notif-panel h3 {
+    font-family: var(--font-heading);
+    font-size: 24px;
+    letter-spacing: 1px;
+  }
+
+  .notif-item {
+    background: var(--bg-secondary);
+    border-radius: 8px;
+    padding: var(--space-md);
+    border: 1px solid rgba(42, 141, 255, 0.1);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-xs);
+  }
+
+  .notif-title {
+    font-family: var(--font-ui);
+    font-weight: 700;
+    font-size: 14px;
+  }
+
+  .notif-body {
+    font-family: var(--font-body);
+    font-size: 13px;
+    color: var(--text-secondary);
+    line-height: 1.5;
+  }
+
+  .notif-time {
+    font-family: var(--font-body);
+    font-size: 11px;
+    color: var(--text-secondary);
+    opacity: 0.6;
+  }
+
+  .notif-empty {
+    font-family: var(--font-body);
+    font-size: 14px;
+    color: var(--text-secondary);
+    text-align: center;
+    margin-top: var(--space-xl);
+  }
+
+  /* ===== MODAL ===== */
+  .modal-overlay {
+    position: absolute;
+    inset: 0;
+    background: rgba(5, 10, 20, 0.85);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    z-index: 10;
+    backdrop-filter: blur(4px);
+  }
+
+  .modal-overlay.visible { display: flex; }
+
+  .modal {
+    background: var(--bg-secondary);
+    border: 1px solid rgba(42, 141, 255, 0.2);
+    border-radius: 12px;
+    padding: var(--space-lg);
+    max-width: 300px;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-md);
+    box-shadow: 0 0 40px rgba(42, 141, 255, 0.1);
+  }
+
+  .modal-title {
+    font-family: var(--font-ui);
+    font-weight: 700;
+    font-size: 16px;
+    text-align: center;
+  }
+
+  .modal-text {
+    font-family: var(--font-body);
+    font-size: 13px;
+    color: var(--text-secondary);
+    line-height: 1.6;
+    text-align: center;
+  }
+
+  .modal-text strong { color: var(--text-primary); font-weight: 500; }
+
+  .modal-checkbox {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-family: var(--font-body);
+    font-size: 13px;
+    color: var(--text-secondary);
+    cursor: pointer;
+  }
+
+  .modal-checkbox input { accent-color: var(--accent-glow); }
+
+  .modal-actions {
+    display: flex;
+    gap: var(--space-sm);
+  }
+
+  .modal-actions .btn {
+    flex: 1;
+    text-align: center;
+    padding: 8px 16px;
+    font-size: 13px;
+    width: auto;
+  }
+
+  .btn-cancel {
+    background: transparent;
+    color: var(--text-secondary);
+    border: 1px solid rgba(42, 141, 255, 0.2);
+  }
+
+  .btn-cancel:hover { border-color: var(--accent-glow); color: var(--text-primary); }
+
+  .btn-confirm-quit {
+    background: var(--accent-red);
+    color: var(--text-primary);
+  }
+
+  .btn-confirm-quit:hover { background: var(--accent-red-bright); }
+
+  /* ===== INFO BAR ===== */
+  .info-bar {
+    font-family: var(--font-ui);
+    font-size: 13px;
+    color: var(--text-secondary);
+    text-align: center;
+    max-width: 420px;
+  }
+
+  .info-bar kbd {
+    background: var(--bg-tertiary);
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-size: 12px;
+    border: 1px solid rgba(42, 141, 255, 0.2);
+  }
+</style>
+</head>
+<body>
+
+<div class="page-title">LE VOILE — PROTOTYPE INTERACTIF</div>
+<p class="page-subtitle">Cliquez sur les éléments pour interagir. Utilisez les boutons ci-dessous pour simuler les états.</p>
+
+<div class="controls">
+  <button class="ctrl-btn" onclick="simulateState('connected')">Connecté</button>
+  <button class="ctrl-btn" onclick="simulateState('reconnecting')">Reconnexion</button>
+  <button class="ctrl-btn" onclick="simulateState('disconnected')">Déconnecté</button>
+  <button class="ctrl-btn" onclick="toggleNotification()">Toggle Notification</button>
+</div>
+
+<div class="window" id="window">
+  <!-- TITLEBAR -->
+  <div class="titlebar">
+    <div class="titlebar-left">
+      <span class="titlebar-v connected" id="titlebar-v">V</span>
+      <span class="titlebar-name">Le Voile</span>
+    </div>
+    <div class="titlebar-controls">
+      <button class="titlebar-btn bell-btn" id="bell-btn" onclick="showNotifications()" title="Notifications">
+        🔔
+        <span class="bell-badge" id="bell-badge">1</span>
+      </button>
+      <button class="titlebar-btn" onclick="minimize()" title="Réduire dans le tray">─</button>
+      <button class="titlebar-btn close-btn" onclick="showQuitModal()" title="Quitter Le Voile">✕</button>
+    </div>
+  </div>
+
+  <!-- BODY -->
+  <div class="window-body">
+    <!-- SIDEBAR -->
+    <div class="sidebar">
+      <button class="sidebar-tab" id="tab-settings" onclick="showPanel('settings')">
+        <span class="tab-icon">⚙</span>
+        <span>Paramètres</span>
+      </button>
+      <div class="sidebar-divider"></div>
+      <div id="country-list"></div>
+    </div>
+
+    <!-- STATUS PANEL -->
+    <div class="panel status-panel visible" id="panel-status">
+      <div class="status-group">
+        <div class="status-dot connected" id="status-dot"></div>
+        <span class="status-text connected" id="status-text">Connecté</span>
+      </div>
+      <div class="big-flag" id="big-flag">🇮🇸</div>
+      <div class="country-name-display" id="country-name-display">ISLANDE</div>
+      <div class="info-group">
+        <span class="ip-display" id="ip-display">82.221.107.42</span>
+        <span class="relay-info" id="relay-info">is-01 • 23ms</span>
+      </div>
+      <div class="actions-group" id="actions-group">
+        <button class="btn btn-disconnect" id="btn-disconnect" onclick="disconnect()">Déconnecter</button>
+        <button class="btn btn-connect" id="btn-connect" onclick="connectToSelected()" style="display:none">Connecter</button>
+        <button class="link" onclick="testProtection()">Tester ma protection ↗</button>
+      </div>
+    </div>
+
+    <!-- SETTINGS PANEL -->
+    <div class="panel settings-panel" id="panel-settings">
+      <h3>PARAMÈTRES</h3>
+      <div class="setting-group">
+        <div class="setting-label">Protection WebRTC</div>
+        <div class="setting-desc">Empêche les sites web de découvrir votre adresse IP réelle via WebRTC.</div>
+        <div class="setting-desc">Désactivez si vous rencontrez des problèmes avec Teams, Discord, ou les appels vidéo dans le navigateur.</div>
+        <div class="setting-warning">Nécessite un redémarrage du navigateur.</div>
+        <div class="toggle-row">
+          <span class="toggle-label">WebRTC</span>
+          <div class="toggle on" id="toggle-webrtc" onclick="toggleWebRTC()">
+            <div class="toggle-knob"></div>
+          </div>
+        </div>
+      </div>
+      <div class="settings-footer">
+        <button class="link" onclick="testProtection()">Tester ma protection ↗</button>
+      </div>
+    </div>
+
+    <!-- NOTIFICATIONS PANEL -->
+    <div class="panel notif-panel" id="panel-notifications">
+      <h3>NOTIFICATIONS</h3>
+      <div id="notif-content">
+        <div class="notif-empty">Aucune notification</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- QUIT MODAL -->
+  <div class="modal-overlay" id="quit-modal">
+    <div class="modal">
+      <div class="modal-title">Quitter Le Voile ?</div>
+      <div class="modal-text">
+        Utilisez <strong>─</strong> pour réduire la fenêtre en icône tray.<br><br>
+        <strong>✕</strong> déconnecte le VPN et quitte Le Voile.
+        Votre connexion ne sera plus protégée.
+      </div>
+      <label class="modal-checkbox">
+        <input type="checkbox" id="dont-show-again">
+        Ne plus montrer
+      </label>
+      <div class="modal-actions">
+        <button class="btn btn-cancel" onclick="hideQuitModal()">Annuler</button>
+        <button class="btn btn-confirm-quit" onclick="confirmQuit()">Confirmer</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="info-bar">
+  Prototype interactif — cliquez les pays, étoiles, paramètres, cloche, ─ et ✕ pour interagir
+</div>
+
+<script>
+  // ===== STATE =====
+  const countries = [
+    { id: 'de', name: 'Allemagne', flag: '🇩🇪', relays: 2, ip: '185.220.101.33', relay: 'de-01', latency: '18ms' },
+    { id: 'us', name: 'États-Unis', flag: '🇺🇸', relays: 2, ip: '198.98.56.78', relay: 'us-01', latency: '89ms' },
+    { id: 'fi', name: 'Finlande', flag: '🇫🇮', relays: 1, ip: '91.219.236.12', relay: 'fi-01', latency: '42ms' },
+    { id: 'is', name: 'Islande', flag: '🇮🇸', relays: 2, ip: '82.221.107.42', relay: 'is-01', latency: '23ms' },
+  ];
+
+  let state = {
+    connectionStatus: 'connected', // connected, reconnecting, disconnected
+    connectedCountry: 'is',
+    selectedCountry: 'is',
+    favoriteCountry: 'is',
+    currentPanel: 'status',
+    webrtcEnabled: true,
+    hasNotification: false,
+    dontShowQuitModal: false,
+  };
+
+  // ===== RENDER =====
+  function render() {
+    renderSidebar();
+    renderStatusPanel();
+    renderTitlebarV();
+    renderBell();
+  }
+
+  function renderSidebar() {
+    const list = document.getElementById('country-list');
+    // Sort: favorite first, then alphabetical
+    const sorted = [...countries].sort((a, b) => {
+      if (a.id === state.favoriteCountry) return -1;
+      if (b.id === state.favoriteCountry) return 1;
+      return a.name.localeCompare(b.name, 'fr');
+    });
+
+    list.innerHTML = sorted.map(c => `
+      <button class="sidebar-country ${c.id === state.selectedCountry ? 'active' : ''}"
+              onclick="selectCountry('${c.id}')">
+        <span class="flag">${c.flag}</span>
+        <span class="name">${c.name}</span>
+        <button class="star ${c.id === state.favoriteCountry ? 'favorited' : ''}"
+                onclick="event.stopPropagation(); toggleFavorite('${c.id}')"
+                title="${c.id === state.favoriteCountry ? 'Favori' : 'Marquer favori'}">★</button>
+      </button>
+    `).join('');
+
+    // Settings tab active state
+    document.getElementById('tab-settings').className =
+      'sidebar-tab' + (state.currentPanel === 'settings' ? ' active' : '');
+  }
+
+  function renderStatusPanel() {
+    const country = countries.find(c => c.id === state.selectedCountry);
+    const isConnectedToSelected = state.selectedCountry === state.connectedCountry && state.connectionStatus === 'connected';
+    const isReconnecting = state.connectionStatus === 'reconnecting';
+    const isDisconnected = state.connectionStatus === 'disconnected';
+    const isDifferentCountry = state.selectedCountry !== state.connectedCountry && state.connectionStatus === 'connected';
+
+    // Status dot & text
+    const dot = document.getElementById('status-dot');
+    const text = document.getElementById('status-text');
+    dot.className = 'status-dot ' + state.connectionStatus;
+    text.className = 'status-text ' + state.connectionStatus;
+
+    if (isConnectedToSelected) {
+      text.textContent = 'Connecté';
+    } else if (isReconnecting) {
+      text.textContent = 'Reconnexion...';
+    } else if (isDisconnected) {
+      text.textContent = 'Déconnecté';
+    } else if (isDifferentCountry) {
+      text.textContent = country.name;
+      dot.className = 'status-dot';
+      dot.style.background = 'transparent';
+      dot.style.boxShadow = 'none';
+    }
+
+    // Flag & country name
+    const flag = document.getElementById('big-flag');
+    const name = document.getElementById('country-name-display');
+    flag.textContent = country.flag;
+    name.textContent = country.name.toUpperCase();
+    flag.style.opacity = isReconnecting ? '0.6' : '1';
+    name.style.opacity = isReconnecting ? '0.6' : '1';
+
+    // IP & relay
+    const ip = document.getElementById('ip-display');
+    const relay = document.getElementById('relay-info');
+    if (isConnectedToSelected) {
+      ip.textContent = country.ip;
+      ip.style.color = '';
+      relay.textContent = country.relay + ' • ' + country.latency;
+    } else if (isReconnecting) {
+      ip.textContent = '—';
+      ip.style.color = var('--text-secondary');
+      relay.textContent = 'Basculement vers un autre relais...';
+    } else if (isDisconnected) {
+      ip.textContent = '—';
+      ip.style.color = '';
+      relay.textContent = '';
+    } else if (isDifferentCountry) {
+      ip.textContent = '';
+      relay.textContent = country.relays + ' relais disponible' + (country.relays > 1 ? 's' : '');
+    }
+
+    // Buttons
+    const btnDisconnect = document.getElementById('btn-disconnect');
+    const btnConnect = document.getElementById('btn-connect');
+    if (isConnectedToSelected) {
+      btnDisconnect.style.display = '';
+      btnConnect.style.display = 'none';
+    } else if (isReconnecting) {
+      btnDisconnect.style.display = 'none';
+      btnConnect.style.display = 'none';
+    } else {
+      btnDisconnect.style.display = 'none';
+      btnConnect.style.display = '';
+    }
+
+    // Reset inline dot style if not "different country"
+    if (!isDifferentCountry) {
+      dot.style.background = '';
+      dot.style.boxShadow = '';
+    }
+  }
+
+  function renderTitlebarV() {
+    const v = document.getElementById('titlebar-v');
+    v.className = 'titlebar-v ' + state.connectionStatus;
+  }
+
+  function renderBell() {
+    const badge = document.getElementById('bell-badge');
+    badge.className = 'bell-badge' + (state.hasNotification ? ' visible' : '');
+  }
+
+  // ===== ACTIONS =====
+  function selectCountry(id) {
+    state.selectedCountry = id;
+    state.currentPanel = 'status';
+    showPanel('status');
+    render();
+  }
+
+  function toggleFavorite(id) {
+    state.favoriteCountry = state.favoriteCountry === id ? null : id;
+    render();
+  }
+
+  function showPanel(name) {
+    state.currentPanel = name;
+    document.getElementById('panel-status').className = 'panel status-panel' + (name === 'status' ? ' visible' : '');
+    document.getElementById('panel-settings').className = 'panel settings-panel' + (name === 'settings' ? ' visible' : '');
+    document.getElementById('panel-notifications').className = 'panel notif-panel' + (name === 'notifications' ? ' visible' : '');
+
+    // Deselect countries in sidebar when in settings/notifications
+    if (name !== 'status') {
+      document.querySelectorAll('.sidebar-country').forEach(el => el.classList.remove('active'));
+    }
+
+    document.getElementById('tab-settings').className =
+      'sidebar-tab' + (name === 'settings' ? ' active' : '');
+  }
+
+  function showNotifications() {
+    if (state.currentPanel === 'notifications') {
+      showPanel('status');
+      state.selectedCountry = state.connectedCountry;
+      render();
+      return;
+    }
+    state.hasNotification = false;
+    showPanel('notifications');
+    renderBell();
+  }
+
+  function disconnect() {
+    state.connectionStatus = 'disconnected';
+    render();
+  }
+
+  function connectToSelected() {
+    const prevPanel = state.currentPanel;
+    state.connectionStatus = 'reconnecting';
+    render();
+
+    setTimeout(() => {
+      state.connectionStatus = 'connected';
+      state.connectedCountry = state.selectedCountry;
+      render();
+    }, 2000);
+  }
+
+  function toggleWebRTC() {
+    state.webrtcEnabled = !state.webrtcEnabled;
+    const toggle = document.getElementById('toggle-webrtc');
+    toggle.className = 'toggle' + (state.webrtcEnabled ? ' on' : '');
+  }
+
+  function showQuitModal() {
+    if (state.dontShowQuitModal) {
+      confirmQuit();
+      return;
+    }
+    document.getElementById('quit-modal').classList.add('visible');
+  }
+
+  function hideQuitModal() {
+    document.getElementById('quit-modal').classList.remove('visible');
+  }
+
+  function confirmQuit() {
+    if (document.getElementById('dont-show-again').checked) {
+      state.dontShowQuitModal = true;
+    }
+    hideQuitModal();
+    state.connectionStatus = 'disconnected';
+    render();
+  }
+
+  function minimize() {
+    // Flash the window to simulate minimize
+    const win = document.getElementById('window');
+    win.style.opacity = '0.3';
+    win.style.transform = 'scale(0.95)';
+    setTimeout(() => {
+      win.style.opacity = '1';
+      win.style.transform = '';
+    }, 500);
+  }
+
+  function testProtection() {
+    window.open('https://plateformeliberte.fr/test-protection.html', '_blank');
+  }
+
+  // ===== SIMULATION CONTROLS =====
+  function simulateState(status) {
+    document.querySelectorAll('.ctrl-btn').forEach(b => b.classList.remove('active'));
+    event.target.classList.add('active');
+
+    if (status === 'connected') {
+      state.connectionStatus = 'connected';
+      state.selectedCountry = state.connectedCountry;
+      if (state.currentPanel !== 'settings') showPanel('status');
+    } else if (status === 'reconnecting') {
+      state.connectionStatus = 'reconnecting';
+      showPanel('status');
+      state.selectedCountry = state.connectedCountry;
+    } else if (status === 'disconnected') {
+      state.connectionStatus = 'disconnected';
+      showPanel('status');
+      state.selectedCountry = state.connectedCountry;
+    }
+    render();
+  }
+
+  function toggleNotification() {
+    state.hasNotification = !state.hasNotification;
+    if (state.hasNotification) {
+      document.getElementById('notif-content').innerHTML = `
+        <div class="notif-item">
+          <div class="notif-title">Mise à jour disponible</div>
+          <div class="notif-body">Version 1.2.0 prête — sera appliquée au prochain démarrage.</div>
+          <div class="notif-time">Il y a 5 minutes</div>
+        </div>
+      `;
+    } else {
+      document.getElementById('notif-content').innerHTML = `
+        <div class="notif-empty">Aucune notification</div>
+      `;
+    }
+    renderBell();
+  }
+
+  // Fix: CSS var() in JS
+  function varCSS(name) {
+    return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  }
+
+  // Patch the ip color assignment
+  const origRender = renderStatusPanel;
+  renderStatusPanel = function() {
+    const country = countries.find(c => c.id === state.selectedCountry);
+    const isConnectedToSelected = state.selectedCountry === state.connectedCountry && state.connectionStatus === 'connected';
+    const isReconnecting = state.connectionStatus === 'reconnecting';
+    const isDisconnected = state.connectionStatus === 'disconnected';
+    const isDifferentCountry = state.selectedCountry !== state.connectedCountry && state.connectionStatus === 'connected';
+
+    const dot = document.getElementById('status-dot');
+    const text = document.getElementById('status-text');
+
+    // Reset dot styles
+    dot.style.background = '';
+    dot.style.boxShadow = '';
+
+    dot.className = 'status-dot ' + state.connectionStatus;
+    text.className = 'status-text ' + state.connectionStatus;
+
+    if (isConnectedToSelected) {
+      text.textContent = 'Connecté';
+    } else if (isReconnecting) {
+      text.textContent = 'Reconnexion...';
+    } else if (isDisconnected) {
+      text.textContent = 'Déconnecté';
+    } else if (isDifferentCountry) {
+      text.textContent = country.name;
+      text.className = 'status-text';
+      text.style.color = varCSS('--text-primary');
+      dot.className = 'status-dot';
+      dot.style.background = 'transparent';
+      dot.style.boxShadow = 'none';
+    }
+
+    if (!isDifferentCountry) {
+      text.style.color = '';
+    }
+
+    const flag = document.getElementById('big-flag');
+    const name = document.getElementById('country-name-display');
+    flag.textContent = country.flag;
+    name.textContent = country.name.toUpperCase();
+    flag.style.opacity = isReconnecting ? '0.6' : '1';
+    name.style.opacity = isReconnecting ? '0.6' : '1';
+
+    const ip = document.getElementById('ip-display');
+    const relay = document.getElementById('relay-info');
+    if (isConnectedToSelected) {
+      ip.textContent = country.ip;
+      ip.style.color = '';
+      relay.textContent = country.relay + ' • ' + country.latency;
+    } else if (isReconnecting) {
+      ip.textContent = '—';
+      ip.style.color = varCSS('--text-secondary');
+      relay.textContent = 'Basculement vers un autre relais...';
+    } else if (isDisconnected) {
+      ip.textContent = '—';
+      ip.style.color = '';
+      relay.textContent = '';
+    } else if (isDifferentCountry) {
+      ip.textContent = '';
+      ip.style.color = '';
+      relay.textContent = country.relays + ' relais disponible' + (country.relays > 1 ? 's' : '');
+    }
+
+    const btnDisconnect = document.getElementById('btn-disconnect');
+    const btnConnect = document.getElementById('btn-connect');
+    if (isConnectedToSelected) {
+      btnDisconnect.style.display = '';
+      btnConnect.style.display = 'none';
+    } else if (isReconnecting) {
+      btnDisconnect.style.display = 'none';
+      btnConnect.style.display = 'none';
+    } else {
+      btnDisconnect.style.display = 'none';
+      btnConnect.style.display = '';
+    }
+  };
+
+  // ===== INIT =====
+  render();
+</script>
+
+</body>
+</html>

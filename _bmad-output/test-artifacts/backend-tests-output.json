@@ -1,0 +1,156 @@
+{
+  "success": true,
+  "subagent": "backend-tests",
+  "subagentType": "backend",
+  "testsGenerated": [
+    {
+      "file": "internal/dns/check_windows_test.go",
+      "new_tests": [
+        "TestCheckCurrentResolver_NoActiveInterfaces",
+        "TestCheckCurrentResolver_ContextCancelled",
+        "TestForceResolver_ContextCancelled",
+        "TestParseDNSFromNetsh_EmptyOutput",
+        "TestParseDNSFromNetsh_DHCPOutput",
+        "TestParseDNSFromNetsh_StaticDNS",
+        "TestParseDNSFromNetsh_MultipleDNS",
+        "TestParseDNSFromNetsh_GarbageOutput",
+        "TestActiveInterfaces_ReturnsNonLoopback"
+      ],
+      "priority_coverage": {"P0": 9, "P1": 0}
+    },
+    {
+      "file": "internal/dns/check_linux_test.go",
+      "new_tests": [
+        "TestCheckCurrentResolver_Linux_ContextCancelled",
+        "TestForceResolver_Linux_ContextCancelled",
+        "TestDiscoverInterfaces_FallbackToEth0",
+        "TestIsIPAddr_Valid",
+        "TestIsIPAddr_Invalid",
+        "TestParseAllResolvectlInterfaces"
+      ],
+      "priority_coverage": {"P0": 6, "P1": 0}
+    },
+    {
+      "file": "internal/dns/check_darwin_test.go",
+      "new_tests": [
+        "TestCheckCurrentResolver_Darwin_ContextCancelled",
+        "TestForceResolver_Darwin_ContextCancelled",
+        "TestParseNetworkServices",
+        "TestParseDNSServers"
+      ],
+      "priority_coverage": {"P0": 4, "P1": 0}
+    },
+    {
+      "file": "internal/dns/kill_switch_test.go",
+      "new_tests": [
+        "TestKillSwitch_ReactivateAfterFailedDeactivate",
+        "TestKillSwitch_Activate_SetResolverFails_NoRollback",
+        "TestKillSwitch_SetForceResolver_EffectOnActivate",
+        "TestKillSwitch_Activate_Deactivate_FullCycle"
+      ],
+      "priority_coverage": {"P0": 4, "P1": 0}
+    },
+    {
+      "file": "internal/tunnel/client_test.go",
+      "new_tests": [
+        "TestClient_ConcurrentConnect",
+        "TestClient_Connect_ContextCancelledBeforeVerify",
+        "TestClient_VerifyRelay_InvalidSignatureBase64",
+        "TestClient_VerifyRelay_WrongSignature",
+        "TestClient_VerifyRelay_ServerReturnsNon200",
+        "TestClient_VerifyRelay_InvalidJSONResponse",
+        "TestClient_ConnectTimeout_VeryShort"
+      ],
+      "priority_coverage": {"P0": 7, "P1": 0}
+    },
+    {
+      "file": "internal/ipc/pipe_windows_test.go",
+      "new_tests": [
+        "TestPipeName_Format",
+        "TestNewPlatformListener_Windows_ReturnsNonNil",
+        "TestPlatformListener_Cleanup_NoOp",
+        "TestPlatformListener_Listen_AndDialPlatform"
+      ],
+      "priority_coverage": {"P0": 0, "P1": 4}
+    },
+    {
+      "file": "internal/ipc/pipe_unix_test.go",
+      "new_tests": [
+        "TestSocketPath_Format",
+        "TestNewPlatformListener_Unix_ReturnsNonNil",
+        "TestPlatformListener_Listen_CreatesSocket",
+        "TestPlatformListener_DialPlatform",
+        "TestPlatformListener_Cleanup_RemovesSocket",
+        "TestPlatformListener_Listen_RemovesStaleSock"
+      ],
+      "priority_coverage": {"P0": 0, "P1": 6}
+    },
+    {
+      "file": "internal/tunnel/reconnect_test.go",
+      "new_tests": [
+        "TestReconnector_KillSwitchActivateFailure",
+        "TestReconnector_RaceBetweenStopAndReconnection",
+        "TestNextBackoff_MaxCap",
+        "TestNextBackoff_SubSecondInput",
+        "TestReconnector_MultipleDisconnects_OnlyOneReconnection",
+        "TestReconnector_DeactivateFailure_RetryOnce"
+      ],
+      "priority_coverage": {"P0": 0, "P1": 6}
+    },
+    {
+      "file": "internal/ipc/server_test.go",
+      "new_tests": [
+        "TestServer_ScannerBufferLimit",
+        "TestServer_HandlerPanic_DoesNotCrashServer",
+        "TestServer_ConnectionCloseDuringProcessing",
+        "TestServer_NoHandler_ReturnsError"
+      ],
+      "priority_coverage": {"P0": 0, "P1": 4}
+    },
+    {
+      "file": "internal/ipc/client_test.go",
+      "new_tests": [
+        "TestClient_ConcurrentSend",
+        "TestClient_SendAfterClose",
+        "TestClient_SendContext_NotConnected",
+        "TestClient_DoubleClose"
+      ],
+      "priority_coverage": {"P0": 0, "P1": 4}
+    },
+    {
+      "file": "internal/ipchandler/handler_test.go",
+      "new_tests": [
+        "TestHandleConnect_NilReconnector",
+        "TestHandleDisconnect_NilReconnector",
+        "TestFormatUptime_ZeroDuration",
+        "TestFormatUptime_VeryLargeDuration",
+        "TestFormatUptime_ExactHour",
+        "TestFormatUptime_ExactMinute",
+        "TestFormatUptime_SubSecond",
+        "TestFormatUptime_24Hours",
+        "TestHandle_GetStatus_NilTunnel_ReturnsDisconnected"
+      ],
+      "priority_coverage": {"P0": 0, "P1": 9}
+    },
+    {
+      "file": "internal/service/service_test.go",
+      "new_tests": [
+        "TestProgram_StopProxy_NilCancel",
+        "TestProgram_StopProxy_WithCancelAndChannels",
+        "TestProgram_StopProxy_DoubleCall",
+        "TestProgram_Cancel_NilSafe",
+        "TestProgram_DNSManager_NilBeforeStart",
+        "TestProgram_TunnelClient_NilBeforeStart"
+      ],
+      "priority_coverage": {"P0": 0, "P1": 6}
+    }
+  ],
+  "coverageSummary": {
+    "totalTests": 69,
+    "testLevels": ["unit", "integration"],
+    "fixtureNeeds": []
+  },
+  "status": "complete",
+  "knowledge_fragments_used": ["test-levels-framework", "test-priorities-matrix", "test-quality", "data-factories"],
+  "summary": "Generated 69 new test functions across 12 artifact files covering all P0 and P1 targets. P0 coverage: 30 tests for DNS check (windows/linux/darwin), kill switch edge cases, and tunnel client security scenarios (concurrent connect, base64 decode errors, context cancellation, signature verification). P1 coverage: 39 tests for IPC pipe transport (windows/unix), reconnector failure/race conditions, IPC server robustness (buffer limits, handler panics, connection close), IPC client edge cases (concurrent send, send after close), ipchandler nil-safety and FormatUptime edge cases, and service proxy lifecycle. All tests use idiomatic Go patterns: table-driven tests, mocks/fakes for interfaces, proper build constraints for platform-specific code."
+}

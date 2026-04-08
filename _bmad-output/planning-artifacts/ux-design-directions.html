@@ -1,0 +1,905 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Le Voile — Direction F Finale</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Inter:wght@400;500&family=Rajdhani:wght@500;600;700&display=swap');
+
+  :root {
+    --bg-primary: #0b1526;
+    --bg-secondary: #0e1e38;
+    --bg-tertiary: #162a4a;
+    --accent-blue: #1a6fc4;
+    --accent-glow: #2a8dff;
+    --accent-red: #d42b2b;
+    --accent-red-bright: #ff3c3c;
+    --status-secure: #4ade80;
+    --status-warning: #fb923c;
+    --status-risk: #ff3c3c;
+    --text-primary: #f0f4ff;
+    --text-secondary: #8a9bb8;
+    --font-heading: 'Bebas Neue', sans-serif;
+    --font-ui: 'Rajdhani', sans-serif;
+    --font-body: 'Inter', sans-serif;
+    --space-xs: 4px;
+    --space-sm: 8px;
+    --space-md: 16px;
+    --space-lg: 24px;
+    --space-xl: 32px;
+    --star-yellow: #facc15;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: #060d18;
+    color: var(--text-primary);
+    font-family: var(--font-body);
+    padding: 40px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 64px;
+  }
+
+  h1 {
+    font-family: var(--font-heading);
+    font-size: 48px;
+    text-align: center;
+    letter-spacing: 2px;
+  }
+
+  .subtitle {
+    text-align: center;
+    color: var(--text-secondary);
+    font-family: var(--font-ui);
+    font-size: 18px;
+    margin-top: -48px;
+  }
+
+  .showcase {
+    display: flex;
+    gap: 64px;
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+
+  .variant {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .variant-label {
+    font-family: var(--font-ui);
+    font-size: 18px;
+    font-weight: 700;
+    color: var(--accent-glow);
+  }
+
+  .variant-desc {
+    font-family: var(--font-body);
+    font-size: 13px;
+    color: var(--text-secondary);
+    text-align: center;
+    max-width: 400px;
+  }
+
+  /* ===== WINDOW FRAME ===== */
+  .window {
+    width: 420px;
+    height: 540px;
+    background: var(--bg-primary);
+    border-radius: 12px;
+    overflow: hidden;
+    border: 1px solid rgba(42, 141, 255, 0.15);
+    box-shadow: 0 0 40px rgba(42, 141, 255, 0.08);
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* ===== CUSTOM TITLEBAR ===== */
+  .titlebar {
+    height: 36px;
+    background: var(--bg-secondary);
+    display: flex;
+    align-items: center;
+    padding: 0 12px;
+    font-family: var(--font-ui);
+    font-size: 13px;
+    color: var(--text-secondary);
+    flex-shrink: 0;
+    justify-content: space-between;
+    border-bottom: 1px solid rgba(42, 141, 255, 0.08);
+  }
+
+  .titlebar-left {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .titlebar-v {
+    font-family: var(--font-heading);
+    font-size: 18px;
+    color: var(--status-secure);
+    text-shadow: 0 0 8px rgba(74, 222, 128, 0.3);
+  }
+
+  .titlebar-controls {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+  }
+
+  .titlebar-btn {
+    width: 32px;
+    height: 28px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: background 150ms ease;
+    font-size: 16px;
+    font-weight: 700;
+    color: var(--text-secondary);
+  }
+
+  .titlebar-btn:hover {
+    background: var(--bg-tertiary);
+  }
+
+  .titlebar-btn.close-btn {
+    color: var(--text-secondary);
+  }
+
+  .titlebar-btn.close-btn:hover {
+    background: var(--accent-red);
+    color: var(--text-primary);
+  }
+
+  /* ===== WINDOW BODY (split) ===== */
+  .window-body {
+    flex: 1;
+    display: flex;
+    flex-direction: row;
+    overflow: hidden;
+  }
+
+  /* ===== SIDEBAR ===== */
+  .sidebar {
+    width: 150px;
+    background: var(--bg-secondary);
+    padding: var(--space-sm) var(--space-xs);
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    border-right: 1px solid rgba(42, 141, 255, 0.1);
+    overflow-y: auto;
+  }
+
+  /* Settings tab */
+  .sidebar-tab {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 10px;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: background 150ms ease;
+    font-family: var(--font-ui);
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-secondary);
+  }
+
+  .sidebar-tab:hover { background: var(--bg-tertiary); }
+  .sidebar-tab.active { background: var(--bg-tertiary); color: var(--text-primary); }
+
+  .sidebar-tab .tab-icon {
+    font-size: 16px;
+    width: 20px;
+    text-align: center;
+    flex-shrink: 0;
+  }
+
+  .sidebar-divider {
+    height: 1px;
+    background: rgba(42, 141, 255, 0.1);
+    margin: 4px 8px;
+  }
+
+  /* Country items in sidebar */
+  .sidebar-country {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 9px 10px;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: background 150ms ease;
+    font-family: var(--font-ui);
+    font-size: 13px;
+    font-weight: 600;
+    position: relative;
+  }
+
+  .sidebar-country:hover { background: var(--bg-tertiary); }
+  .sidebar-country.active { background: var(--bg-tertiary); border-left: 2px solid var(--accent-glow); padding-left: 8px; }
+
+  .sidebar-country .flag-sm { font-size: 16px; flex-shrink: 0; }
+
+  .sidebar-country .country-label {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 13px;
+  }
+
+  /* Star favorite */
+  .star {
+    font-size: 14px;
+    color: transparent;
+    -webkit-text-stroke: 1px var(--star-yellow);
+    cursor: pointer;
+    transition: all 150ms ease;
+    flex-shrink: 0;
+  }
+
+  .star:hover {
+    color: var(--star-yellow);
+    -webkit-text-stroke: none;
+  }
+
+  .star.favorited {
+    color: var(--star-yellow);
+    -webkit-text-stroke: none;
+  }
+
+  /* ===== MAIN PANEL ===== */
+  .main-panel {
+    flex: 1;
+    padding: var(--space-xl) var(--space-lg);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-lg);
+    text-align: center;
+  }
+
+  .main-panel .status-group {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .status-dot {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+
+  .status-dot.connected { background: var(--status-secure); box-shadow: 0 0 8px var(--status-secure); }
+  .status-dot.reconnecting { background: var(--status-warning); box-shadow: 0 0 8px var(--status-warning); animation: pulse 1.5s infinite; }
+  .status-dot.disconnected { background: var(--status-risk); box-shadow: 0 0 8px var(--status-risk); }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+  }
+
+  .status-text {
+    font-family: var(--font-ui);
+    font-weight: 700;
+    font-size: 18px;
+    color: var(--status-secure);
+  }
+
+  .main-panel .big-flag {
+    font-size: 56px;
+    line-height: 1;
+  }
+
+  .main-panel .country-name {
+    font-family: var(--font-heading);
+    font-size: 28px;
+    letter-spacing: 2px;
+  }
+
+  .main-panel .info {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-xs);
+  }
+
+  .ip-display {
+    font-family: var(--font-body);
+    font-weight: 500;
+    font-size: 16px;
+    color: var(--text-primary);
+  }
+
+  .relay-info {
+    font-size: 13px;
+    color: var(--text-secondary);
+  }
+
+  .main-panel .actions {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm);
+    align-items: center;
+    width: 100%;
+  }
+
+  .btn {
+    font-family: var(--font-ui);
+    font-weight: 600;
+    font-size: 14px;
+    border: none;
+    border-radius: 6px;
+    padding: 10px 24px;
+    cursor: pointer;
+    transition: all 200ms ease;
+  }
+
+  .btn-disconnect {
+    background: transparent;
+    color: var(--accent-red);
+    border: 1px solid rgba(212, 43, 43, 0.3);
+    width: 80%;
+  }
+
+  .btn-disconnect:hover {
+    background: rgba(212, 43, 43, 0.1);
+    border-color: var(--accent-red);
+  }
+
+  .link {
+    font-family: var(--font-ui);
+    font-weight: 600;
+    font-size: 14px;
+    color: var(--accent-glow);
+    text-decoration: none;
+    cursor: pointer;
+  }
+
+  .link:hover { text-decoration: underline; }
+
+  /* ===== SETTINGS PANEL ===== */
+  .settings-panel {
+    flex: 1;
+    padding: var(--space-lg);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-lg);
+  }
+
+  .settings-panel h3 {
+    font-family: var(--font-heading);
+    font-size: 24px;
+    letter-spacing: 1px;
+  }
+
+  .setting-group {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm);
+  }
+
+  .setting-label {
+    font-family: var(--font-ui);
+    font-weight: 700;
+    font-size: 15px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .setting-badge {
+    font-size: 12px;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 10px;
+  }
+
+  .badge-active {
+    background: rgba(74, 222, 128, 0.15);
+    color: var(--status-secure);
+    border: 1px solid rgba(74, 222, 128, 0.3);
+  }
+
+  .setting-desc {
+    font-family: var(--font-body);
+    font-size: 13px;
+    color: var(--text-secondary);
+    line-height: 1.5;
+  }
+
+  .setting-warning {
+    font-family: var(--font-body);
+    font-size: 12px;
+    color: var(--status-warning);
+    font-style: italic;
+  }
+
+  /* Toggle switch */
+  .toggle-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-top: 4px;
+  }
+
+  .toggle {
+    width: 40px;
+    height: 22px;
+    background: var(--bg-tertiary);
+    border-radius: 11px;
+    position: relative;
+    cursor: pointer;
+    transition: background 200ms ease;
+    border: 1px solid rgba(42, 141, 255, 0.15);
+  }
+
+  .toggle.on {
+    background: rgba(74, 222, 128, 0.3);
+    border-color: var(--status-secure);
+  }
+
+  .toggle-knob {
+    width: 16px;
+    height: 16px;
+    background: var(--text-secondary);
+    border-radius: 50%;
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    transition: all 200ms ease;
+  }
+
+  .toggle.on .toggle-knob {
+    left: 20px;
+    background: var(--status-secure);
+  }
+
+  /* ===== MODAL OVERLAY ===== */
+  .modal-overlay {
+    position: absolute;
+    inset: 0;
+    background: rgba(5, 10, 20, 0.85);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 10;
+    backdrop-filter: blur(4px);
+  }
+
+  .modal {
+    background: var(--bg-secondary);
+    border: 1px solid rgba(42, 141, 255, 0.2);
+    border-radius: 12px;
+    padding: var(--space-lg);
+    max-width: 300px;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-md);
+    box-shadow: 0 0 40px rgba(42, 141, 255, 0.1);
+  }
+
+  .modal-title {
+    font-family: var(--font-ui);
+    font-weight: 700;
+    font-size: 16px;
+    text-align: center;
+  }
+
+  .modal-text {
+    font-family: var(--font-body);
+    font-size: 13px;
+    color: var(--text-secondary);
+    line-height: 1.6;
+    text-align: center;
+  }
+
+  .modal-text strong {
+    color: var(--text-primary);
+    font-weight: 500;
+  }
+
+  .modal-checkbox {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-family: var(--font-body);
+    font-size: 13px;
+    color: var(--text-secondary);
+    cursor: pointer;
+  }
+
+  .modal-checkbox input {
+    accent-color: var(--accent-glow);
+  }
+
+  .modal-actions {
+    display: flex;
+    gap: var(--space-sm);
+  }
+
+  .modal-actions .btn {
+    flex: 1;
+    text-align: center;
+    padding: 8px 16px;
+    font-size: 13px;
+  }
+
+  .btn-cancel {
+    background: transparent;
+    color: var(--text-secondary);
+    border: 1px solid rgba(42, 141, 255, 0.2);
+  }
+
+  .btn-cancel:hover {
+    border-color: var(--accent-glow);
+    color: var(--text-primary);
+  }
+
+  .btn-confirm-quit {
+    background: var(--accent-red);
+    color: var(--text-primary);
+    border: none;
+  }
+
+  .btn-confirm-quit:hover {
+    background: var(--accent-red-bright);
+  }
+
+  /* ===== RECONNECTING STATE ===== */
+  .status-text.reconnecting-text {
+    color: var(--status-warning);
+  }
+
+  @keyframes pulse-glow {
+    0%, 100% { box-shadow: 0 0 8px var(--status-warning); }
+    50% { box-shadow: 0 0 20px var(--status-warning); }
+  }
+
+  .status-dot.reconnecting {
+    animation: pulse 1.5s infinite, pulse-glow 1.5s infinite;
+  }
+
+  /* ===== Notes section ===== */
+  .notes {
+    max-width: 900px;
+    background: var(--bg-secondary);
+    border-radius: 12px;
+    border: 1px solid rgba(42, 141, 255, 0.1);
+    padding: 32px;
+    width: 100%;
+  }
+
+  .notes h2 {
+    font-family: var(--font-heading);
+    font-size: 28px;
+    margin-bottom: 16px;
+  }
+
+  .notes ul {
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .notes li {
+    font-family: var(--font-body);
+    font-size: 14px;
+    color: var(--text-secondary);
+    line-height: 1.6;
+    padding-left: 16px;
+    position: relative;
+  }
+
+  .notes li::before {
+    content: '•';
+    color: var(--accent-glow);
+    position: absolute;
+    left: 0;
+  }
+
+  .notes li strong { color: var(--text-primary); }
+</style>
+</head>
+<body>
+
+<h1>LE VOILE — DIRECTION F FINALE</h1>
+<p class="subtitle">Split sidebar avec paramètres, favoris, et contrôles fenêtre</p>
+
+<div class="showcase">
+
+  <!-- === STATE 1: Connected (Islande favorite) === -->
+  <div class="variant">
+    <div class="variant-label">État : Connecté</div>
+    <div class="variant-desc">Islande en favori (premier), pays alphabétiques, étoiles favoris</div>
+    <div class="window">
+      <div class="titlebar">
+        <div class="titlebar-left">
+          <span class="titlebar-v">V</span>
+          <span>Le Voile</span>
+        </div>
+        <div class="titlebar-controls">
+          <div class="titlebar-btn minimize-btn" title="Réduire dans le tray">─</div>
+          <div class="titlebar-btn close-btn" title="Quitter Le Voile">✕</div>
+        </div>
+      </div>
+      <div class="window-body">
+        <div class="sidebar">
+          <div class="sidebar-tab" style="color:var(--text-secondary)">
+            <span class="tab-icon">⚙</span>
+            <span>Paramètres</span>
+          </div>
+          <div class="sidebar-divider"></div>
+          <!-- Favorite first -->
+          <div class="sidebar-country active">
+            <span class="flag-sm">🇮🇸</span>
+            <span class="country-label">Islande</span>
+            <span class="star favorited" title="Favori">★</span>
+          </div>
+          <!-- Alphabetical -->
+          <div class="sidebar-country">
+            <span class="flag-sm">🇩🇪</span>
+            <span class="country-label">Allemagne</span>
+            <span class="star" title="Marquer favori">★</span>
+          </div>
+          <div class="sidebar-country">
+            <span class="flag-sm">🇺🇸</span>
+            <span class="country-label">États-Unis</span>
+            <span class="star" title="Marquer favori">★</span>
+          </div>
+          <div class="sidebar-country">
+            <span class="flag-sm">🇫🇮</span>
+            <span class="country-label">Finlande</span>
+            <span class="star" title="Marquer favori">★</span>
+          </div>
+        </div>
+        <div class="main-panel">
+          <div class="status-group">
+            <span class="status-dot connected"></span>
+            <span class="status-text">Connecté</span>
+          </div>
+          <div class="big-flag">🇮🇸</div>
+          <div class="country-name">ISLANDE</div>
+          <div class="info">
+            <span class="ip-display">82.221.107.42</span>
+            <span class="relay-info">is-01 • 23ms</span>
+          </div>
+          <div class="actions">
+            <button class="btn btn-disconnect">Déconnecter</button>
+            <a class="link">Tester ma protection ↗</a>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- === STATE 2: Settings panel === -->
+  <div class="variant">
+    <div class="variant-label">État : Paramètres</div>
+    <div class="variant-desc">Onglet paramètres sélectionné — toggle WebRTC avec explication</div>
+    <div class="window">
+      <div class="titlebar">
+        <div class="titlebar-left">
+          <span class="titlebar-v">V</span>
+          <span>Le Voile</span>
+        </div>
+        <div class="titlebar-controls">
+          <div class="titlebar-btn minimize-btn" title="Réduire dans le tray">─</div>
+          <div class="titlebar-btn close-btn" title="Quitter Le Voile">✕</div>
+        </div>
+      </div>
+      <div class="window-body">
+        <div class="sidebar">
+          <div class="sidebar-tab active">
+            <span class="tab-icon">⚙</span>
+            <span>Paramètres</span>
+          </div>
+          <div class="sidebar-divider"></div>
+          <div class="sidebar-country">
+            <span class="flag-sm">🇮🇸</span>
+            <span class="country-label">Islande</span>
+            <span class="star favorited">★</span>
+          </div>
+          <div class="sidebar-country">
+            <span class="flag-sm">🇩🇪</span>
+            <span class="country-label">Allemagne</span>
+            <span class="star">★</span>
+          </div>
+          <div class="sidebar-country">
+            <span class="flag-sm">🇺🇸</span>
+            <span class="country-label">États-Unis</span>
+            <span class="star">★</span>
+          </div>
+          <div class="sidebar-country">
+            <span class="flag-sm">🇫🇮</span>
+            <span class="country-label">Finlande</span>
+            <span class="star">★</span>
+          </div>
+        </div>
+        <div class="settings-panel">
+          <h3>PARAMÈTRES</h3>
+
+          <div class="setting-group">
+            <div class="setting-label">
+              Protection WebRTC
+            </div>
+            <div class="setting-desc">
+              Empêche les sites web de découvrir votre adresse IP réelle via WebRTC.
+            </div>
+            <div class="setting-desc">
+              Désactivez si vous rencontrez des problèmes avec Teams, Discord, ou les appels vidéo dans le navigateur.
+            </div>
+            <div class="setting-warning">
+              Nécessite un redémarrage du navigateur.
+            </div>
+            <div class="toggle-row">
+              <span style="font-family:var(--font-ui);font-size:13px;color:var(--text-secondary)">WebRTC</span>
+              <div class="toggle on">
+                <div class="toggle-knob"></div>
+              </div>
+            </div>
+          </div>
+
+          <div style="flex:1"></div>
+          <a class="link" style="align-self:flex-start">Tester ma protection ↗</a>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- === STATE 3: Reconnecting === -->
+  <div class="variant">
+    <div class="variant-label">État : Reconnexion</div>
+    <div class="variant-desc">Perte de connexion — V orange, pulsation, message non-technique</div>
+    <div class="window">
+      <div class="titlebar">
+        <div class="titlebar-left">
+          <span class="titlebar-v" style="color:var(--status-warning);text-shadow:0 0 8px rgba(251,146,60,0.4)">V</span>
+          <span>Le Voile</span>
+        </div>
+        <div class="titlebar-controls">
+          <div class="titlebar-btn minimize-btn">─</div>
+          <div class="titlebar-btn close-btn">✕</div>
+        </div>
+      </div>
+      <div class="window-body">
+        <div class="sidebar">
+          <div class="sidebar-tab">
+            <span class="tab-icon">⚙</span>
+            <span>Paramètres</span>
+          </div>
+          <div class="sidebar-divider"></div>
+          <div class="sidebar-country active" style="border-left-color:var(--status-warning)">
+            <span class="flag-sm">🇮🇸</span>
+            <span class="country-label">Islande</span>
+            <span class="star favorited">★</span>
+          </div>
+          <div class="sidebar-country">
+            <span class="flag-sm">🇩🇪</span>
+            <span class="country-label">Allemagne</span>
+            <span class="star">★</span>
+          </div>
+          <div class="sidebar-country">
+            <span class="flag-sm">🇺🇸</span>
+            <span class="country-label">États-Unis</span>
+            <span class="star">★</span>
+          </div>
+          <div class="sidebar-country">
+            <span class="flag-sm">🇫🇮</span>
+            <span class="country-label">Finlande</span>
+            <span class="star">★</span>
+          </div>
+        </div>
+        <div class="main-panel">
+          <div class="status-group">
+            <span class="status-dot reconnecting"></span>
+            <span class="status-text reconnecting-text">Reconnexion...</span>
+          </div>
+          <div class="big-flag" style="opacity:0.6">🇮🇸</div>
+          <div class="country-name" style="opacity:0.6">ISLANDE</div>
+          <div class="info">
+            <span class="ip-display" style="color:var(--text-secondary)">—</span>
+            <span class="relay-info">Basculement vers un autre relais...</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- === STATE 4: Quit confirmation modal === -->
+  <div class="variant">
+    <div class="variant-label">État : Confirmation quitter</div>
+    <div class="variant-desc">Modal d'avertissement quand l'utilisateur clique ✕ — avec "ne plus montrer"</div>
+    <div class="window" style="position:relative">
+      <div class="titlebar">
+        <div class="titlebar-left">
+          <span class="titlebar-v">V</span>
+          <span>Le Voile</span>
+        </div>
+        <div class="titlebar-controls">
+          <div class="titlebar-btn minimize-btn">─</div>
+          <div class="titlebar-btn close-btn" style="background:var(--accent-red)">✕</div>
+        </div>
+      </div>
+      <div class="window-body" style="position:relative">
+        <div class="sidebar" style="opacity:0.3;pointer-events:none">
+          <div class="sidebar-tab">
+            <span class="tab-icon">⚙</span>
+            <span>Paramètres</span>
+          </div>
+          <div class="sidebar-divider"></div>
+          <div class="sidebar-country active">
+            <span class="flag-sm">🇮🇸</span>
+            <span class="country-label">Islande</span>
+            <span class="star favorited">★</span>
+          </div>
+          <div class="sidebar-country">
+            <span class="flag-sm">🇩🇪</span>
+            <span class="country-label">Allemagne</span>
+            <span class="star">★</span>
+          </div>
+        </div>
+        <div class="main-panel" style="opacity:0.3;pointer-events:none">
+          <div class="status-group">
+            <span class="status-dot connected"></span>
+            <span class="status-text">Connecté</span>
+          </div>
+          <div class="big-flag">🇮🇸</div>
+          <div class="country-name">ISLANDE</div>
+        </div>
+        <!-- Modal overlay -->
+        <div class="modal-overlay">
+          <div class="modal">
+            <div class="modal-title">Quitter Le Voile ?</div>
+            <div class="modal-text">
+              Utilisez <strong>─</strong> pour réduire la fenêtre en icône tray.<br><br>
+              <strong>✕</strong> déconnecte le VPN et quitte Le Voile.
+              Votre connexion ne sera plus protégée.
+            </div>
+            <label class="modal-checkbox">
+              <input type="checkbox">
+              Ne plus montrer
+            </label>
+            <div class="modal-actions">
+              <button class="btn btn-cancel">Annuler</button>
+              <button class="btn btn-confirm-quit">Confirmer</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<!-- Design notes -->
+<div class="notes">
+  <h2>NOTES DE DESIGN</h2>
+  <ul>
+    <li><strong>Sidebar :</strong> Onglet Paramètres en premier, puis séparateur, puis pays favori en tête, puis pays alphabétiques (Allemagne, États-Unis, Finlande)</li>
+    <li><strong>Étoile favori :</strong> Contour jaune par défaut → jaune plein au hover → jaune plein + pays en tête de liste au clic. Un seul favori à la fois.</li>
+    <li><strong>Titlebar :</strong> V identitaire (couleur = statut), nom app, bouton ─ (minimise dans tray), bouton ✕ (quitter avec avertissement)</li>
+    <li><strong>Modal ✕ :</strong> Explique la différence ─ vs ✕. Option "Ne plus montrer" persistée. Annuler / Confirmer.</li>
+    <li><strong>Paramètres WebRTC :</strong> Toggle on/off avec badge "Actif", explication claire du contexte (Teams, Discord), avertissement redémarrage navigateur</li>
+    <li><strong>Reconnexion :</strong> V orange dans titlebar, dot pulsant, drapeau atténué, IP "—", message "Basculement vers un autre relais..."</li>
+  </ul>
+</div>
+
+</body>
+</html>
