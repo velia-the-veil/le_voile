@@ -51,6 +51,8 @@ func NewHTTPServer(ipcClient *SafeIPCClient, frontendFS fs.FS) *HTTPServer {
 	s.mux.HandleFunc("/api/status", s.handleStatus)
 	s.mux.HandleFunc("/api/connect", s.handleConnect)
 	s.mux.HandleFunc("/api/disconnect", s.handleDisconnect)
+	s.mux.HandleFunc("/api/registry", s.handleRegistry)
+	s.mux.HandleFunc("/api/country", s.handleCountry)
 
 	return s
 }
@@ -123,7 +125,7 @@ func (s *HTTPServer) handleConnect(w http.ResponseWriter, r *http.Request) {
 	}
 	resp := s.sendIPC(r.Context(), ipc.ActionConnect, "")
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"status": resp.Status})
+	json.NewEncoder(w).Encode(actionResponse(resp))
 }
 
 func (s *HTTPServer) handleDisconnect(w http.ResponseWriter, r *http.Request) {
@@ -133,7 +135,50 @@ func (s *HTTPServer) handleDisconnect(w http.ResponseWriter, r *http.Request) {
 	}
 	resp := s.sendIPC(r.Context(), ipc.ActionDisconnect, "")
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"status": resp.Status})
+	json.NewEncoder(w).Encode(actionResponse(resp))
+}
+
+// actionResponse builds a JSON-friendly map from an IPC response for connect/disconnect actions.
+func actionResponse(resp ipc.Response) map[string]string {
+	m := map[string]string{"status": resp.Status}
+	if resp.Error != "" {
+		m["error"] = resp.Error
+	}
+	return m
+}
+
+func (s *HTTPServer) handleRegistry(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	resp := s.sendIPC(r.Context(), ipc.ActionGetRegistry, "")
+	countries := resp.RegistryCountries
+	if countries == nil {
+		countries = []ipc.RegistryCountry{}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"countries": countries,
+	})
+}
+
+func (s *HTTPServer) handleCountry(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var body struct {
+		Code string `json:"code"`
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 1024)
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Code == "" {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	resp := s.sendIPC(r.Context(), ipc.ActionSelectCountry, body.Code)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(actionResponse(resp))
 }
 
 // sendIPC sends an IPC request and returns the response. On error, returns a disconnected response.

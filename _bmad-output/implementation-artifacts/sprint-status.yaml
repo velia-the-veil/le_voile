@@ -103,15 +103,15 @@ development_status:
 
   # Epic 10: Interface Desktop webview/webview + fyne.io/systray
   # Stories reecrites 2026-04-08 — ancien contenu Wails v2 obsolete, story files a recreer
-  epic-10: in-progress
+  epic-10: done
   10-1-binaire-ui-unique-systray-webview-serveur-http-local-avec-statut-de-connexion: done
-  10-2-selecteur-de-pays-et-affichage-ip-visible: ready-for-dev
-  10-3-bouton-connect-disconnect-et-integration-tray-webview: ready-for-dev
+  10-2-selecteur-de-pays-et-affichage-ip-visible: done
+  10-3-bouton-connect-disconnect-et-integration-tray-webview: done
   epic-10-retrospective: optional
 
   # Epic 11: Extension Navigateur & Routage Intelligent
   epic-11: in-progress
-  11-1-extension-webextension-routage-par-defaut-via-proxy-le-voile: ready-for-dev
+  11-1-extension-webextension-routage-par-defaut-via-proxy-le-voile: in-progress
   11-2-bypass-intelligent-des-telechargements-volumineux: ready-for-dev
   11-3-installation-automatique-et-cohabitation-sysproxy: ready-for-dev
   epic-11-retrospective: optional

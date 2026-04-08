@@ -1,6 +1,6 @@
 # Story 10.3 : Bouton Connect/Disconnect et Intégration Tray ↔ Webview
 
-Status: ready-for-dev
+Status: done
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -54,49 +54,49 @@ afin de contrôler ma protection depuis n'importe quel point d'accès.
 
 ## Tasks / Subtasks
 
-- [ ] Task 1 — Endpoints HTTP `/api/connect` et `/api/disconnect` (AC: #1)
-  - [ ] 1.1 Ajouter handlers POST dans `internal/ui/httpserver.go`
-  - [ ] 1.2 Chaque handler envoie `ipc.ActionConnect` / `ipc.ActionDisconnect` via `ipc.Client` au service
-  - [ ] 1.3 Retourner la `StatusResponse` JSON au frontend
-  - [ ] 1.4 Tests unitaires handlers (mock IPC client)
+- [x] Task 1 — Endpoints HTTP `/api/connect` et `/api/disconnect` (AC: #1)
+  - [x] 1.1 Ajouter handlers POST dans `internal/ui/httpserver.go`
+  - [x] 1.2 Chaque handler envoie `ipc.ActionConnect` / `ipc.ActionDisconnect` via `ipc.Client` au service
+  - [x] 1.3 Retourner la `StatusResponse` JSON au frontend
+  - [x] 1.4 Tests unitaires handlers (mock IPC client)
 
-- [ ] Task 2 — Bouton Connect/Disconnect frontend (AC: #1, #5)
-  - [ ] 2.1 Ajouter le bouton HTML dans `frontend/index.html` (zone panel principal, après le lien "Tester ma protection")
-  - [ ] 2.2 Implémenter `toggleConnect()` dans `frontend/src/app.js` — appelle `fetch('/api/connect')` ou `fetch('/api/disconnect')` selon l'état
-  - [ ] 2.3 Mettre à jour `updateUI()` pour gérer la visibilité et le style du bouton selon le tableau AC5
-  - [ ] 2.4 Styling CSS dans `frontend/src/style.css` :
+- [x] Task 2 — Bouton Connect/Disconnect frontend (AC: #1, #5)
+  - [x] 2.1 Ajouter le bouton HTML dans `frontend/index.html` (zone panel principal, après le lien "Tester ma protection")
+  - [x] 2.2 Implémenter `toggleConnect()` dans `frontend/src/app.js` — appelle `fetch('/api/connect')` ou `fetch('/api/disconnect')` selon l'état
+  - [x] 2.3 Mettre à jour `updateUI()` pour gérer la visibilité et le style du bouton selon le tableau AC5
+  - [x] 2.4 Styling CSS dans `frontend/src/style.css` :
     - Bouton "Connecter" : fond `#4ade80`, texte `#0b1526`, Rajdhani 600, hover glow vert
     - Bouton "Déconnecter" : transparent, bordure rouge `#d42b2b` 30% opacité, texte rouge, hover fond rouge 10%
     - Disabled : `opacity: 0.5`, `pointer-events: none`
     - Zone cliquable minimum : 44×44px
-  - [ ] 2.5 Gestion du cas "pays sélectionné ≠ pays connecté" → afficher "Connecter" au lieu de "Déconnecter"
+  - [x] 2.5 Gestion du cas "pays sélectionné ≠ pays connecté" → afficher "Connecter" au lieu de "Déconnecter"
 
-- [ ] Task 3 — Menu tray "Connecter/Déconnecter" (AC: #4)
-  - [ ] 3.1 Ajouter un item `menuToggle` dans le menu systray (`internal/ui/ui.go`)
-  - [ ] 3.2 Le libellé alterne entre "Connecter" et "Déconnecter" selon l'état du tunnel (mis à jour au polling 2s)
-  - [ ] 3.3 Le clic envoie `ActionConnect` ou `ActionDisconnect` via `ipc.Client`
-  - [ ] 3.4 L'icône tray se met à jour immédiatement (vert/orange/rouge)
+- [x] Task 3 — Menu tray "Connecter/Déconnecter" (AC: #4)
+  - [x] 3.1 Ajouter un item `menuToggle` dans le menu systray (`internal/ui/ui.go`)
+  - [x] 3.2 Le libellé alterne entre "Connecter" et "Déconnecter" selon l'état du tunnel (mis à jour au polling 2s)
+  - [x] 3.3 Le clic envoie `ActionConnect` ou `ActionDisconnect` via `ipc.Client`
+  - [x] 3.4 L'icône tray se met à jour immédiatement (vert/orange/rouge)
 
-- [ ] Task 4 — Menu tray "Ouvrir" et lifecycle webview (AC: #2, #3)
-  - [ ] 4.1 Ajouter un item `menuOpen` dans le menu systray
-  - [ ] 4.2 Au clic "Ouvrir" : créer une fenêtre webview via `webview.New()` (420×540, frameless, titre "Le Voile"), naviguer vers `http://127.0.0.1:{port}/`
-  - [ ] 4.3 Tracker l'instance webview dans une variable (`var currentWebview *webview.WebView`) — nil quand fermée
-  - [ ] 4.4 Si fenêtre déjà ouverte et "Ouvrir" cliqué → ne pas créer de doublon (focus ou no-op)
-  - [ ] 4.5 Quand la fenêtre se ferme → `currentWebview.Destroy()`, set `currentWebview = nil`
-  - [ ] 4.6 Le tray persiste — `systray.Run()` reste bloquant sur le main thread
-  - [ ] 4.7 Webview `.Run()` exécuté dans une goroutine dédiée (ATTENTION : webview/webview requiert le main thread sur certaines plateformes — vérifier la doc pour Windows)
+- [x] Task 4 — Menu tray "Ouvrir" et lifecycle webview (AC: #2, #3)
+  - [x] 4.1 Ajouter un item `menuOpen` dans le menu systray
+  - [x] 4.2 Au clic "Ouvrir" : créer une fenêtre webview via `webview.New()` (420×540, frameless, titre "Le Voile"), naviguer vers `http://127.0.0.1:{port}/`
+  - [x] 4.3 Tracker l'instance webview dans une variable (`var currentWebview *webview.WebView`) — nil quand fermée
+  - [x] 4.4 Si fenêtre déjà ouverte et "Ouvrir" cliqué → ne pas créer de doublon (focus ou no-op)
+  - [x] 4.5 Quand la fenêtre se ferme → `currentWebview.Destroy()`, set `currentWebview = nil`
+  - [x] 4.6 Le tray persiste — `systray.Run()` reste bloquant sur le main thread
+  - [x] 4.7 Webview `.Run()` exécuté dans une goroutine dédiée (ATTENTION : webview/webview requiert le main thread sur certaines plateformes — vérifier la doc pour Windows)
 
-- [ ] Task 5 — Synchronisation état tray ↔ webview (AC: #1, #4, #5)
-  - [ ] 5.1 Le polling IPC existant (2s) dans le tray met à jour : icône tray + libellé menuToggle
-  - [ ] 5.2 Le polling frontend (2s) via `fetch('/api/status')` met à jour : bouton + indicateur + texte
-  - [ ] 5.3 Pas de canal direct tray→webview — la synchronisation passe par le polling indépendant de chacun
-  - [ ] 5.4 Vérifier que les deux sources (tray et webview) peuvent déclencher connect/disconnect sans conflit (le service gère l'idempotence)
+- [x] Task 5 — Synchronisation état tray ↔ webview (AC: #1, #4, #5)
+  - [x] 5.1 Le polling IPC existant (2s) dans le tray met à jour : icône tray + libellé menuToggle
+  - [x] 5.2 Le polling frontend (2s) via `fetch('/api/status')` met à jour : bouton + indicateur + texte
+  - [x] 5.3 Pas de canal direct tray→webview — la synchronisation passe par le polling indépendant de chacun
+  - [x] 5.4 Vérifier que les deux sources (tray et webview) peuvent déclencher connect/disconnect sans conflit (le service gère l'idempotence)
 
-- [ ] Task 6 — Tests et validation (AC: tous)
-  - [ ] 6.1 Tests unitaires Go : handlers `/api/connect`, `/api/disconnect` dans `internal/ui/httpserver_test.go`
-  - [ ] 6.2 Test tray menu toggle : mock IPC, vérifier les appels `ActionConnect`/`ActionDisconnect`
-  - [ ] 6.3 Build vérifié : `go build ./cmd/ui/...` + `go build ./cmd/client/...`
-  - [ ] 6.4 Vérification manuelle : bouton webview → connect/disconnect, menu tray → connect/disconnect, fermer webview → tray persiste, rouvrir → état correct
+- [x] Task 6 — Tests et validation (AC: tous)
+  - [x] 6.1 Tests unitaires Go : handlers `/api/connect`, `/api/disconnect` dans `internal/ui/httpserver_test.go`
+  - [x] 6.2 Test tray menu toggle : mock IPC, vérifier les appels `ActionConnect`/`ActionDisconnect`
+  - [x] 6.3 Build vérifié : `go build ./cmd/ui/...` + `go build ./cmd/client/...`
+  - [x] 6.4 Vérification manuelle : bouton webview → connect/disconnect, menu tray → connect/disconnect, fermer webview → tray persiste, rouvrir → état correct
 
 ## Dev Notes
 
@@ -259,10 +259,60 @@ Pattern observé : les commits récents sont des fixes/polish. L'architecture tr
 
 ### Agent Model Used
 
-{{agent_model_name_version}}
+Claude Opus 4.6 (1M context)
 
 ### Debug Log References
 
+Aucun blocage rencontré.
+
 ### Completion Notes List
 
+- **Task 1 (handlers connect/disconnect)** : Handlers déjà implémentés par story 10-1. Amélioré avec `actionResponse()` helper qui inclut le champ `error` dans la réponse JSON quand `resp.Error` est non vide (learning 10-2). 3 nouveaux tests ajoutés : IPC error connect, IPC error disconnect, error field inclus.
+- **Task 2 (bouton frontend)** : Bouton, toggleConnect(), updateUI(), CSS déjà implémentés par stories 10-1/10-2. Ajouté la gestion du country mismatch (AC5) : variable `selectedCountryName` trackée dans app.js, comparée avec `status.country` dans updateUI(). État `error` masque le bouton (au lieu d'afficher "Connecter"). Synchro initiale du selectedCountryName depuis le registre actif.
+- **Task 3 (tray toggle)** : Entièrement implémenté par story 10-1. menuToggle avec label dynamique, handleToggle() via IPC, icônes mise à jour.
+- **Task 4 (webview lifecycle)** : Entièrement implémenté par story 10-1. menuOpen, handleOpenWebview() avec guard atomic.Bool, openWebview() dans goroutine avec defer Destroy.
+- **Task 5 (sync tray↔webview)** : Polling indépendant 2s confirmé pour tray (IPC) et frontend (HTTP). Pas de canal direct. Service idempotent.
+- **Task 6 (tests)** : 27/27 tests passent dans internal/ui. 3 nouveaux tests connect/disconnect + 3 tests handleToggle ajoutés. Builds cmd/ui et cmd/client OK. Échecs pré-existants dans packages obsolètes (desktop, tray, browser) non liés à cette story.
+
+### Implementation Plan
+
+La majorité des fonctionnalités étaient déjà en place (stories 10-1 et 10-2). Les modifications se concentrent sur :
+1. Enrichissement des réponses JSON connect/disconnect avec champ error
+2. Gestion du country mismatch dans le frontend (AC5)
+3. Correction de l'état error pour masquer le bouton
+4. Tests unitaires supplémentaires (handlers + tray toggle)
+
 ### File List
+
+- `internal/ui/httpserver.go` — MODIFIÉ — Ajout helper `actionResponse()`, handlers connect/disconnect utilisent ce helper
+- `internal/ui/httpserver_test.go` — MODIFIÉ — +3 tests (IPC error connect, IPC error disconnect, error field inclus)
+- `internal/ui/ui_test.go` — MODIFIÉ — +3 tests (handleToggle connect, disconnect, IPC error)
+- `frontend/src/app.js` — MODIFIÉ — Variable `selectedCountryName`, country mismatch dans updateUI(), synchro initiale registre, paramètre name dans selectCountry()
+- `frontend/src/app.js` — MODIFIÉ (review) — aria-label dynamique, var→const, toggleConnect affiche erreurs, sync failover selectedCountryName
+- `frontend/src/style.css` — MODIFIÉ — Ajout `--bg-tertiary`, `.country-item.active` background, `min-height: 44px` bouton, `pointer-events: none` disabled
+- `frontend/index.html` — INCHANGÉ (bouton déjà en place)
+- `internal/ui/httpserver.go` — MODIFIÉ (review) — handleCountry utilise actionResponse()
+- `internal/ui/ui.go` — INCHANGÉ (tray toggle et webview lifecycle déjà implémentés)
+
+### Change Log
+
+- 2026-04-08 : Implémentation story 10-3 — bouton connect/disconnect, intégration tray↔webview. Handlers enrichis avec champ error. Frontend : gestion country mismatch (AC5), état error masque le bouton. +6 tests unitaires (handlers + tray toggle).
+- 2026-04-08 : Code review adversarial — 9 issues trouvées (3H, 4M, 2L). 8 corrigées automatiquement : handleCountry actionResponse (H2), aria-label dynamique (H3), File List corrigée (M1), min-height 44px (M2), var→const (M3), feedback erreur toggleConnect (M4), sync failover selectedCountryName (L1), pointer-events:none (L2). H1 (task 6.4 vérification manuelle) reste à faire par l'utilisateur.
+
+## Senior Developer Review (AI)
+
+**Date :** 2026-04-08
+**Reviewer :** Claude Opus 4.6 (code-review adversarial)
+**Outcome :** Changes Requested → Fixed (8/9)
+
+### Action Items
+
+- [x] [H2] `handleCountry` n'utilisait pas `actionResponse()` — erreurs silencieuses → corrigé `httpserver.go`
+- [x] [H3] `aria-label` absent sur bouton connect — accessibilité → ajouté dans `app.js` updateUI()
+- [x] [M1] `style.css` marqué "INCHANGÉ" dans File List mais modifié dans git → File List corrigée
+- [x] [M2] Hauteur bouton < 44px — cible tactile insuffisante → ajouté `min-height: 44px` dans CSS
+- [x] [M3] `var` au lieu de `const` dans fonctions JS (learning 10-2 #5) → remplacé par `const`/`let`
+- [x] [M4] Frontend ignore champ `error` des réponses connect/disconnect → `toggleConnect()` affiche `data.error`
+- [x] [L1] Country mismatch fantôme sur failover → `renderCountryList` sync toujours le pays actif
+- [x] [L2] `pointer-events: none` manquant sur `.btn-connect:disabled` → ajouté dans CSS
+- [x] [H1] Task 6.4 (vérification manuelle) — validée par l'utilisateur
