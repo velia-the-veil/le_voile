@@ -4,7 +4,6 @@
 !define APP_NAME "Le Voile"
 !define APP_KEY "LeVoile"
 !define SERVICE_EXE "levoile-service.exe"
-!define TRAY_EXE "levoile-tray.exe"
 !define DESKTOP_EXE "levoile-desktop.exe"
 ; APP_VERSION injected by build script via: makensis /DAPP_VERSION=x.y.z
 !ifndef APP_VERSION
@@ -27,14 +26,12 @@ Section "Install"
   ; Handle reinstall: stop and unregister old service BEFORE copying new files.
   ; On fresh install these fail silently (service/binary don't exist yet).
   nsExec::Exec 'taskkill /F /IM ${DESKTOP_EXE}'
-  nsExec::Exec 'taskkill /F /IM ${TRAY_EXE}'
   nsExec::Exec '"$INSTDIR\${SERVICE_EXE}" stop'
   nsExec::Exec '"$INSTDIR\${SERVICE_EXE}" uninstall'
   Sleep 2000
 
   ; Copy binaries (safe now — service is stopped)
   File "build\${SERVICE_EXE}"
-  File "build\${TRAY_EXE}"
   File "build\${DESKTOP_EXE}"
 
   ; Copy main icon (used for shortcuts and Add/Remove Programs)
@@ -62,10 +59,9 @@ Section "Install"
 
   ; Tray auto-start at login (user context, HKCU not HKLM)
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Run" \
-    "${APP_KEY}" '"$INSTDIR\${TRAY_EXE}"'
+    "${APP_KEY}" '"$INSTDIR\${DESKTOP_EXE}"'
 
-  ; Launch tray and desktop GUI immediately
-  Exec '"$INSTDIR\${TRAY_EXE}"'
+  ; Launch desktop GUI immediately (includes systray)
   Exec '"$INSTDIR\${DESKTOP_EXE}"'
 
   ; Desktop shortcut — starts the service + tray + desktop GUI
@@ -102,13 +98,12 @@ Section "Install"
 
   ; Note about browser WebRTC protection (portable browsers not covered)
   MessageBox MB_OK|MB_ICONINFORMATION \
-    "Les navigateurs portables ne sont pas couverts par la protection WebRTC. Seuls les navigateurs install$\'es normalement sont prot$\'eg$\'es."
+    "Les navigateurs portables ne sont pas couverts par la protection WebRTC. Seuls les navigateurs installes normalement sont proteges."
 SectionEnd
 
 Section "Uninstall"
   ; Close desktop and tray if running (ignore error if not running)
   nsExec::Exec 'taskkill /F /IM ${DESKTOP_EXE}'
-  nsExec::Exec 'taskkill /F /IM ${TRAY_EXE}'
 
   ; Stop the service (shutdown() restores DNS automatically)
   ExecWait '"$INSTDIR\${SERVICE_EXE}" stop'
@@ -133,18 +128,39 @@ Section "Uninstall"
   nsExec::Exec 'taskkill /F /IM firefox.exe'
   nsExec::Exec 'taskkill /F /IM chrome.exe'
   nsExec::Exec 'taskkill /F /IM msedge.exe'
+  nsExec::Exec 'taskkill /F /IM brave.exe'
+  nsExec::Exec 'taskkill /F /IM vivaldi.exe'
+  nsExec::Exec 'taskkill /F /IM opera.exe'
   Sleep 1000
 
   ; Remove extension XPI from all Firefox profiles.
   nsExec::Exec 'cmd /c for /d %p in ("$APPDATA\Mozilla\Firefox\Profiles\*") do del /q "%p\extensions\levoile@plateformeliberte.fr.xpi" 2>nul'
 
-  ; Remove extension policy registry keys
-  DeleteRegValue HKLM "SOFTWARE\Policies\Mozilla\Firefox" "ExtensionSettings"
-  DeleteRegValue HKLM "SOFTWARE\Policies\Google\Chrome" "ExtensionSettings"
+  ; NOTE: ExtensionSettings registry values are NOT deleted here.
+  ; The service's RestorePolicies() already restored the original values
+  ; (merge-aware). Blindly deleting ExtensionSettings would destroy
+  ; enterprise extension policies that were correctly restored.
+  ; If the service didn't restore (crash), RecoverOrphanPolicies runs
+  ; on next service start and handles it via the persisted state file.
 
-  ; Remove deployed extension files
-  RMDir /r "$LOCALAPPDATA\LeVoile\extensions"
-  RMDir /r "$COMMONPROGRAMDATA\LeVoile\extensions"
+  ; Safety net: remove WebRtcIPHandling (atomic value, safe to delete)
+  ; Clean both old name (WebRtcIPHandlingPolicy) and new name (WebRtcIPHandling).
+  DeleteRegValue HKLM "SOFTWARE\Policies\Google\Chrome" "WebRtcIPHandling"
+  DeleteRegValue HKLM "SOFTWARE\Policies\Microsoft\Edge" "WebRtcIPHandling"
+  DeleteRegValue HKLM "SOFTWARE\Policies\BraveSoftware\Brave" "WebRtcIPHandling"
+  DeleteRegValue HKLM "SOFTWARE\Policies\Vivaldi" "WebRtcIPHandling"
+  DeleteRegValue HKLM "SOFTWARE\Policies\Opera Software\Opera" "WebRtcIPHandling"
+  DeleteRegValue HKLM "SOFTWARE\Policies\Chromium" "WebRtcIPHandling"
+  DeleteRegValue HKLM "SOFTWARE\Policies\Google\Chrome" "WebRtcIPHandlingPolicy"
+  DeleteRegValue HKLM "SOFTWARE\Policies\Microsoft\Edge" "WebRtcIPHandlingPolicy"
+  DeleteRegValue HKLM "SOFTWARE\Policies\BraveSoftware\Brave" "WebRtcIPHandlingPolicy"
+  DeleteRegValue HKLM "SOFTWARE\Policies\Vivaldi" "WebRtcIPHandlingPolicy"
+  DeleteRegValue HKLM "SOFTWARE\Policies\Opera Software\Opera" "WebRtcIPHandlingPolicy"
+  DeleteRegValue HKLM "SOFTWARE\Policies\Chromium" "WebRtcIPHandlingPolicy"
+
+  ; Remove all Le Voile data from ProgramData (extension files + policy state)
+  ReadEnvStr $0 ProgramData
+  RMDir /r "$0\LeVoile"
 
   ; Remove tray auto-start registry entry
   DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "${APP_KEY}"
@@ -166,7 +182,6 @@ Section "Uninstall"
   Delete "$INSTDIR\config.toml"
   Delete "$INSTDIR\levoile.ico"
   Delete "$INSTDIR\${SERVICE_EXE}"
-  Delete "$INSTDIR\${TRAY_EXE}"
   Delete "$INSTDIR\${DESKTOP_EXE}"
   Delete "$INSTDIR\icons\*.ico"
   Delete "$INSTDIR\uninstall.exe"

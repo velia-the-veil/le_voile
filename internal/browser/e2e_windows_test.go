@@ -4,9 +4,9 @@ package browser
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"os/exec"
-	"strings"
 	"testing"
 	"time"
 
@@ -18,10 +18,9 @@ func isElevated() bool {
 	return err == nil
 }
 
-// TestE2E_ChromiumPoliciesApplied applies browser policies and verifies that
-// the Chromium ExtensionInstallForcelist registry key contains the Le Voile
-// extension ID.
-func TestE2E_ChromiumPoliciesApplied(t *testing.T) {
+// TestE2E_ChromiumExtensionSettingsApplied applies browser policies and verifies that
+// the Chromium ExtensionSettings registry value contains the Le Voile extension entry.
+func TestE2E_ChromiumExtensionSettingsApplied(t *testing.T) {
 	if os.Getenv("E2E") != "1" {
 		t.Skip("set E2E=1 to run")
 	}
@@ -58,7 +57,7 @@ func TestE2E_ChromiumPoliciesApplied(t *testing.T) {
 		t.Skip("no Chromium-based browser detected on this system")
 	}
 
-	// Verify the ExtensionInstallForcelist registry key contains the extension ID.
+	// Verify the ExtensionSettings registry value contains the extension ID.
 	vendors := map[string]string{
 		BrowserChrome:   `SOFTWARE\Policies\Google\Chrome`,
 		BrowserEdge:     `SOFTWARE\Policies\Microsoft\Edge`,
@@ -74,33 +73,34 @@ func TestE2E_ChromiumPoliciesApplied(t *testing.T) {
 		if !ok {
 			continue
 		}
-		forcelistKey := path + `\ExtensionInstallForcelist`
-		key, err := registry.OpenKey(registry.LOCAL_MACHINE, forcelistKey, registry.READ)
+		key, err := registry.OpenKey(registry.LOCAL_MACHINE, path, registry.READ)
 		if err != nil {
 			continue
 		}
-		// Read all values in the forcelist key and check for extension ID.
-		names, err := key.ReadValueNames(-1)
+		val, _, err := key.GetStringValue("ExtensionSettings")
 		key.Close()
 		if err != nil {
 			continue
 		}
-		for _, vn := range names {
-			k2, _ := registry.OpenKey(registry.LOCAL_MACHINE, forcelistKey, registry.READ)
-			val, _, err := k2.GetStringValue(vn)
-			k2.Close()
-			if err != nil {
-				continue
-			}
-			if strings.Contains(val, ExtensionID) {
-				foundExtension = true
-				t.Logf("%s ExtensionInstallForcelist contains extension ID %q (value: %q)", name, ExtensionID, val)
-			}
+		var settings map[string]map[string]interface{}
+		if err := json.Unmarshal([]byte(val), &settings); err != nil {
+			t.Errorf("%s ExtensionSettings is not valid JSON: %v", name, err)
+			continue
 		}
+		entry, ok := settings[ExtensionID]
+		if !ok {
+			continue
+		}
+		if entry["installation_mode"] != "force_installed" {
+			t.Errorf("%s ExtensionSettings[%s].installation_mode = %v, want force_installed", name, ExtensionID, entry["installation_mode"])
+			continue
+		}
+		foundExtension = true
+		t.Logf("%s ExtensionSettings contains extension ID %q with force_installed", name, ExtensionID)
 	}
 
 	if !foundExtension {
-		t.Error("ExtensionInstallForcelist does not contain Le Voile extension ID in any Chromium browser registry key")
+		t.Error("ExtensionSettings does not contain Le Voile extension ID in any Chromium browser registry key")
 	}
 
 	t.Logf("Chromium policies applied successfully to: %v", result.Applied)

@@ -63,6 +63,10 @@ function addBypassEntry(url) {
   }
 }
 
+// NOTE: Chrome MV3 — 'blocking' in webRequest requires policy-installed extension.
+// When loaded unpacked (dev mode), 'blocking' is silently ignored:
+// return { cancel: true } becomes a no-op, bypass detection won't function.
+// This is expected — bypass is fully functional only in production (policy install).
 function setupBypassDetection() {
   const api = isFirefox ? browser : chrome;
   api.webRequest.onHeadersReceived.addListener(
@@ -74,7 +78,11 @@ function setupBypassDetection() {
         if (!isFirefox) {
           applyChromeProxy();
         }
-        api.downloads.download({ url: details.url, saveAs: false });
+        api.downloads.download({ url: details.url, saveAs: false }, () => {
+          if (isFirefox ? browser.runtime.lastError : chrome.runtime.lastError) {
+            // Download retry failed — original request already cancelled, nothing to recover
+          }
+        });
         return { cancel: true };
       }
       return {};
@@ -93,7 +101,8 @@ function generatePacScript() {
   }
 
   const bypassChecks = Array.from(bypassUrls).map((hostname) => {
-    return `if (host === '${hostname}') return 'DIRECT';`;
+    const safe = hostname.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+    return `if (host === '${safe}') return 'DIRECT';`;
   }).join('\n      ');
 
   return `function FindProxyForURL(url, host) {
@@ -164,9 +173,13 @@ setupBypassDetection();
 
 // Periodic health check: try to connect to the proxy port.
 // If the proxy comes back up, re-enable routing. If it goes down, switch to DIRECT.
+// Manual test: stop service → verify navigation continues (DIRECT). Restart → verify routing resumes within 5s.
 function checkProxyHealth() {
   fetch(`http://${PROXY_HOST}:${PROXY_PORT}/`, { mode: 'no-cors' }).then(() => {
-    proxyAlive = true;
+    if (!proxyAlive) {
+      proxyAlive = true;
+      if (!isFirefox) applyChromeProxy();
+    }
   }).catch(() => {
     if (proxyAlive) {
       proxyAlive = false;

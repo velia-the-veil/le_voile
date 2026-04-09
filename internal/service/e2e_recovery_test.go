@@ -251,9 +251,9 @@ func TestE2E_CrashRecovery_OrphanPolicies(t *testing.T) {
 // consistent proxy settings. Tests the full detection → read → validate cycle.
 //
 // Note: The actual SysProxy.RecoverOrphan() uses DPAPI encryption (per-user)
-// and lives in internal/tray which has a CGO dependency (fyne.io/systray).
+// and lives in internal/ui which has a CGO dependency (fyne.io/systray).
 // This test validates the recovery file format and registry interaction
-// without importing the tray package.
+// without importing the ui package.
 func TestE2E_WinINETRecovery(t *testing.T) {
 	if os.Getenv("E2E") != "1" {
 		t.Skip("set E2E=1 to run")

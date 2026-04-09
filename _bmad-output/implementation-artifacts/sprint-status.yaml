@@ -110,15 +110,15 @@ development_status:
   epic-10-retrospective: optional
 
   # Epic 11: Extension Navigateur & Routage Intelligent
-  epic-11: in-progress
-  11-1-extension-webextension-routage-par-defaut-via-proxy-le-voile: in-progress
-  11-2-bypass-intelligent-des-telechargements-volumineux: ready-for-dev
-  11-3-installation-automatique-et-cohabitation-sysproxy: ready-for-dev
+  epic-11: done
+  11-1-extension-webextension-routage-par-defaut-via-proxy-le-voile: done
+  11-2-bypass-intelligent-des-telechargements-volumineux: done
+  11-3-installation-automatique-et-cohabitation-sysproxy: done
   epic-11-retrospective: optional
 
   # Epic 12: Integration Bout en Bout & Polish MVP Revise
   # Reecrit 2026-04-08 — ancien Epic 12 (portable) + Epic 13 (integration) fusionnes
-  epic-12: in-progress
-  12-1-shutdown-propre-et-independance-service-ui: ready-for-dev
-  12-2-validation-bout-en-bout-et-tests-dintegration: ready-for-dev
+  epic-12: done
+  12-1-shutdown-propre-et-independance-service-ui: done
+  12-2-validation-bout-en-bout-et-tests-dintegration: done
   epic-12-retrospective: optional

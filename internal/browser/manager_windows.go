@@ -115,6 +115,15 @@ func (m *windowsPolicyManager) ApplyPolicies(ctx context.Context) (*ApplyResult,
 			continue
 		}
 
+		// Verify extension policy was written correctly.
+		if !extFailed && !m.verifyExtensionPolicy(b) {
+			extFailed = true
+			result.Failed = append(result.Failed, BrowserError{
+				Name:   b.Name,
+				Reason: "extension: post-apply verification failed (GPO or permissions)",
+			})
+		}
+
 		if !extFailed {
 			result.Applied = append(result.Applied, b.Name)
 		}
@@ -382,6 +391,52 @@ func (m *windowsPolicyManager) verifyPolicy(b BrowserInfo) bool {
 		return true
 	}
 	return false
+}
+
+// verifyExtensionPolicy re-reads the ExtensionSettings value to confirm it was
+// written with the correct installation_mode. For Chromium, reuses the already-open
+// PolicyPath key when provided; otherwise opens its own.
+func (m *windowsPolicyManager) verifyExtensionPolicy(b BrowserInfo) bool {
+	switch b.Family {
+	case Chromium:
+		// Reuse same key path as verifyPolicy — open once for both checks.
+		k, err := registry.OpenKey(registry.LOCAL_MACHINE, b.PolicyPath, registry.QUERY_VALUE)
+		if err != nil {
+			return false
+		}
+		defer k.Close()
+		return verifyExtensionEntry(k, chromiumExtPolicyKey, ExtensionID)
+	case Firefox:
+		k, err := registry.OpenKey(registry.LOCAL_MACHINE, firefoxExtPolicyPath, registry.QUERY_VALUE)
+		if err != nil {
+			return false
+		}
+		defer k.Close()
+		return verifyExtensionEntry(k, firefoxExtPolicyKey, FirefoxGeckoID)
+	}
+	return false
+}
+
+// verifyExtensionEntry checks that the given registry value contains a JSON object
+// with the expected extension ID and installation_mode == "force_installed".
+func verifyExtensionEntry(k registry.Key, valueName, extID string) bool {
+	val, _, err := k.GetStringValue(valueName)
+	if err != nil {
+		return false
+	}
+	var settings map[string]json.RawMessage
+	if json.Unmarshal([]byte(val), &settings) != nil {
+		return false
+	}
+	raw, ok := settings[extID]
+	if !ok {
+		return false
+	}
+	var entry map[string]interface{}
+	if json.Unmarshal(raw, &entry) != nil {
+		return false
+	}
+	return entry["installation_mode"] == "force_installed"
 }
 
 // RestorePolicies restores original browser policies and cleans up.

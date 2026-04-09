@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 
+	"github.com/velia-the-veil/le_voile/internal/config"
 	"github.com/velia-the-veil/le_voile/internal/ipc"
 )
 
@@ -16,6 +17,7 @@ import (
 type APIStatusResponse struct {
 	Status           string `json:"status"`
 	IP               string `json:"ip"`
+	RealIP           string `json:"real_ip"`
 	Country          string `json:"country"`
 	CountryFlag      string `json:"country_flag"`
 	RelayID          string `json:"relay_id"`
@@ -24,6 +26,7 @@ type APIStatusResponse struct {
 	Message          string `json:"message"`
 	HTTPProxyActive  bool   `json:"http_proxy_active"`
 	BlocklistEnabled bool   `json:"blocklist_enabled"`
+	AutoStart        bool   `json:"auto_start"`
 }
 
 // HTTPServer serves frontend assets and exposes a REST JSON API that proxies to the service via IPC.
@@ -53,6 +56,10 @@ func NewHTTPServer(ipcClient *SafeIPCClient, frontendFS fs.FS) *HTTPServer {
 	s.mux.HandleFunc("/api/disconnect", s.handleDisconnect)
 	s.mux.HandleFunc("/api/registry", s.handleRegistry)
 	s.mux.HandleFunc("/api/country", s.handleCountry)
+	s.mux.HandleFunc("/api/settings", s.handleGetSettings)
+	s.mux.HandleFunc("/api/settings/autostart", s.handleSetAutoStart)
+	s.mux.HandleFunc("/api/settings/blocklist", s.handleSetBlocklist)
+	s.mux.HandleFunc("/api/settings/httpproxy", s.handleSetHTTPProxy)
 
 	return s
 }
@@ -80,6 +87,15 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	return fmt.Errorf("ui: httpserver: serve: %w", err)
 }
 
+// Shutdown gracefully shuts down the server, waiting for active requests to finish.
+func (s *HTTPServer) Shutdown(ctx context.Context) error {
+	<-s.ready // wait for Start to set s.server (or fail)
+	if s.server != nil {
+		return s.server.Shutdown(ctx)
+	}
+	return nil
+}
+
 // Addr returns the listener address. Blocks until the server is ready.
 func (s *HTTPServer) Addr() string {
 	<-s.ready
@@ -104,6 +120,7 @@ func (s *HTTPServer) handleStatus(w http.ResponseWriter, r *http.Request) {
 	api := APIStatusResponse{
 		Status:           resp.Status,
 		IP:               resp.IP,
+		RealIP:           resp.RealIP,
 		Country:          resp.Country,
 		CountryFlag:      resp.CountryFlag,
 		RelayID:          resp.RelayID,
@@ -188,6 +205,64 @@ func (s *HTTPServer) sendIPC(ctx context.Context, action, value string) ipc.Resp
 		return ipc.Response{Status: ipc.StatusDisconnected}
 	}
 	return resp
+}
+
+func (s *HTTPServer) handleGetSettings(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	resp := s.sendIPC(r.Context(), ipc.ActionGetStatus, "")
+
+	// Read auto_start from config file (not in IPC status).
+	autoStart := true // default
+	if cfgPath, err := config.DefaultPath(); err == nil {
+		if cfg, err := config.Load(cfgPath); err == nil {
+			autoStart = cfg.Client.AutoStart
+		}
+	}
+
+	settings := map[string]bool{
+		"auto_start": autoStart,
+		"blocklist":  resp.BlocklistEnabled,
+		"http_proxy": resp.HTTPProxyActive,
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(settings)
+}
+
+func (s *HTTPServer) handleSetAutoStart(w http.ResponseWriter, r *http.Request) {
+	s.handleBoolSetting(w, r, ipc.ActionSetAutoStart)
+}
+
+func (s *HTTPServer) handleSetBlocklist(w http.ResponseWriter, r *http.Request) {
+	s.handleBoolSetting(w, r, ipc.ActionSetBlocklist)
+}
+
+func (s *HTTPServer) handleSetHTTPProxy(w http.ResponseWriter, r *http.Request) {
+	s.handleBoolSetting(w, r, ipc.ActionSetHTTPProxy)
+}
+
+func (s *HTTPServer) handleBoolSetting(w http.ResponseWriter, r *http.Request, action string) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var body struct {
+		Enabled bool `json:"enabled"`
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 1024)
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	value := "false"
+	if body.Enabled {
+		value = "true"
+	}
+	resp := s.sendIPC(r.Context(), action, value)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(actionResponse(resp))
 }
 
 // statusMessage returns a French non-technical message for the given status.

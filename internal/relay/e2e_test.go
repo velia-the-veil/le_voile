@@ -1,3 +1,5 @@
+//go:build e2e
+
 package relay
 
 import (
@@ -20,8 +22,8 @@ import (
 // server, sends a DNS query via HTTP/3 client, and verifies the response.
 // This test requires network access to forward to 1.1.1.1.
 func TestE2E_DoHRoundTrip(t *testing.T) {
-	if os.Getenv("E2E") == "" {
-		t.Skip("skipping e2e test; set E2E=1 to run")
+	if os.Getenv("E2E") != "1" {
+		t.Skip("set E2E=1 to run")
 	}
 
 	// Generate self-signed cert

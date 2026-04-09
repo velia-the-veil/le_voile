@@ -170,7 +170,11 @@ func (m *windowsManager) RestoreResolver(ctx context.Context) error {
 
 	m.originalDNS = nil
 	m.originalDNSv6 = nil
-	removePersistedState()
+	// Only remove persisted state if all interfaces restored successfully.
+	// On failure, keep the file so RecoverOrphanDNS() can retry at next startup.
+	if lastErr == nil {
+		removePersistedState()
+	}
 	return lastErr
 }
 

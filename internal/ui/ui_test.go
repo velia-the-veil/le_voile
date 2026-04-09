@@ -204,6 +204,35 @@ func TestHandleToggle_IPCError(t *testing.T) {
 	}
 }
 
+// TestGetStatus_MissingIP verifies that get_status returns "connected"
+// even when IP is empty (async detection not yet complete).
+func TestGetStatus_MissingIP(t *testing.T) {
+	api := &mockSystrayAPI{}
+	u := &UI{
+		api:    api,
+		client: NewSafeIPCClient(&mockIPCClient{}),
+	}
+
+	resp := ipc.Response{
+		Status:  ipc.StatusConnected,
+		Country: "Islande",
+		IP:      "", // empty — detection in progress
+	}
+	u.updateTrayState(resp)
+
+	tooltip := api.getTooltip()
+	if tooltip != "Protégé — Islande — IP en détection..." {
+		t.Errorf("tooltip = %q, want 'Protégé — Islande — IP en détection...'", tooltip)
+	}
+
+	u.mu.Lock()
+	connected := u.connected
+	u.mu.Unlock()
+	if !connected {
+		t.Error("expected connected=true even with empty IP")
+	}
+}
+
 // mockIPCClientReconnect implements IPCClient with configurable Connect behavior.
 type mockIPCClientReconnect struct {
 	mockIPCClient

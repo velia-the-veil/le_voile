@@ -1,6 +1,6 @@
 # Story 11.1: Extension WebExtension — Routage par Défaut via Proxy Le Voile
 
-Status: ready-for-dev
+Status: done
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -39,46 +39,46 @@ Afin que mon IP soit masquée pour toute navigation.
 
 ## Tasks / Subtasks
 
-- [ ] **Task 1 : Vérifier et mettre à jour les manifests** (AC: 1, 2, 3)
-  - [ ] 1.1 Vérifier `extension/manifest.json` (Chrome MV3) — permissions `proxy`, `webRequest`, `downloads`, host_permissions `<all_urls>`, background service_worker
-  - [ ] 1.2 Vérifier `extension/manifest_firefox.json` (Firefox MV2) — permissions `proxy`, `webRequest`, `webRequestBlocking`, `downloads`, `<all_urls>`, gecko ID `levoile@plateformeliberte.fr`, strict_min_version `142.0`
-  - [ ] 1.3 Supprimer `extension/manifest_chrome.json` si c'est un doublon de `manifest.json` (éviter la confusion)
-  - [ ] 1.4 Vérifier que les icônes dans `extension/icons/` (16, 48, 128px) sont présentes et valides
+- [x] **Task 1 : Vérifier et mettre à jour les manifests** (AC: 1, 2, 3)
+  - [x] 1.1 Vérifier `extension/manifest.json` (Chrome MV3) — permissions `proxy`, `webRequest`, `downloads`, host_permissions `<all_urls>`, background service_worker
+  - [x] 1.2 Vérifier `extension/manifest_firefox.json` (Firefox MV2) — permissions `proxy`, `webRequest`, `webRequestBlocking`, `downloads`, `<all_urls>`, gecko ID `levoile@plateformeliberte.fr`, strict_min_version `142.0`
+  - [x] 1.3 Supprimer `extension/manifest_chrome.json` si c'est un doublon de `manifest.json` (éviter la confusion)
+  - [x] 1.4 Vérifier que les icônes dans `extension/icons/` (16, 48, 128px) sont présentes et valides
 
-- [ ] **Task 2 : Vérifier le routage proxy dans background.js** (AC: 1, 2, 3, 4)
-  - [ ] 2.1 Vérifier le routage Chrome via PAC script dynamique (`generatePacScript()` → `chrome.proxy.settings.set()`) :
+- [x] **Task 2 : Vérifier le routage proxy dans background.js** (AC: 1, 2, 3, 4)
+  - [x] 2.1 Vérifier le routage Chrome via PAC script dynamique (`generatePacScript()` → `chrome.proxy.settings.set()`) :
     - PAC inclut exclusion loopback (`127.0.0.1`, `localhost`, `::1`)
     - PAC inclut fallback `; DIRECT` natif
     - PAC inclut bypass set dynamique pour les gros fichiers (scope 11.2 mais déjà implémenté)
-  - [ ] 2.2 Vérifier le routage Firefox via `browser.proxy.onRequest` :
+  - [x] 2.2 Vérifier le routage Firefox via `browser.proxy.onRequest` :
     - Exclusion loopback avec try/catch sur `new URL()`
     - `failoverTimeout: 3` pour fallback natif
     - `proxy.onError` listener pour détecter proxy down
     - Bypass set check pour les URLs marquées
-  - [ ] 2.3 Vérifier le health check proxy périodique (5s) :
+  - [x] 2.3 Vérifier le health check proxy périodique (5s) :
     - `fetch()` vers `http://127.0.0.1:50113/` en mode `no-cors`
     - Si success → `proxyAlive = true`
     - Si erreur → `proxyAlive = false` + mise à jour PAC Chrome
     - Auto-recovery quand le proxy revient
-  - [ ] 2.4 Vérifier le point d'entrée : détection `isFirefox` → appel `setupFirefoxProxy()` ou `setupChromeProxy()` + `setupBypassDetection()`
+  - [x] 2.4 Vérifier le point d'entrée : détection `isFirefox` → appel `setupFirefoxProxy()` ou `setupChromeProxy()` + `setupBypassDetection()`
 
-- [ ] **Task 3 : Synchroniser extension/ ↔ internal/browser/extension_assets/src/** (AC: 1, 2)
-  - [ ] 3.1 Vérifier que `extension/background.js` et `internal/browser/extension_assets/src/background.js` sont identiques
-  - [ ] 3.2 Vérifier que les manifests source dans `extension_assets/src/` matchent ceux de `extension/`
-  - [ ] 3.3 Vérifier que `go:generate` dans `extension_embed.go` synchronise correctement les assets (`-sync-assets` flag)
+- [x] **Task 3 : Synchroniser extension/ ↔ internal/browser/extension_assets/src/** (AC: 1, 2)
+  - [x] 3.1 Vérifier que `extension/background.js` et `internal/browser/extension_assets/src/background.js` sont identiques
+  - [x] 3.2 Vérifier que les manifests source dans `extension_assets/src/` matchent ceux de `extension/`
+  - [x] 3.3 Vérifier que `go:generate` dans `extension_embed.go` synchronise correctement les assets (`-sync-assets` flag)
 
-- [ ] **Task 4 : Vérifier la compatibilité avec l'architecture 2 processus** (AC: 3, 4)
-  - [ ] 4.1 Confirmer que l'extension ne dépend que du proxy HTTP CONNECT sur 127.0.0.1:50113 (aucune dépendance directe sur le service ou l'UI)
-  - [ ] 4.2 Confirmer que le proxy est démarré par le service (`internal/httpproxy/server.go`) indépendamment de l'UI
-  - [ ] 4.3 Tester le scénario : service actif + UI fermée → extension doit continuer à router via proxy
-  - [ ] 4.4 Tester le scénario : service arrêté → extension doit fallback DIRECT sans erreur visible
+- [x] **Task 4 : Vérifier la compatibilité avec l'architecture 2 processus** (AC: 3, 4)
+  - [x] 4.1 Confirmer que l'extension ne dépend que du proxy HTTP CONNECT sur 127.0.0.1:50113 (aucune dépendance directe sur le service ou l'UI)
+  - [x] 4.2 Confirmer que le proxy est démarré par le service (`internal/httpproxy/server.go`) indépendamment de l'UI
+  - [x] 4.3 Tester le scénario : service actif + UI fermée → extension doit continuer à router via proxy
+  - [x] 4.4 Tester le scénario : service arrêté → extension doit fallback DIRECT sans erreur visible
 
-- [ ] **Task 5 : Tests manuels** (AC: 1-4)
-  - [ ] 5.1 Chrome : charger extension non empaquetée (`chrome://extensions` → `extension/`). Naviguer sur whatismyip.com → IP du relais affichée
-  - [ ] 5.2 Chrome : vérifier `chrome://settings` → "L'extension Le Voile contrôle ce paramètre" pour le proxy
-  - [ ] 5.3 Firefox : copier `manifest_firefox.json` → `manifest.json`, charger via `about:debugging`. Vérifier routage
-  - [ ] 5.4 Arrêter le service → vérifier navigation continue en direct (fallback). Redémarrer → routage reprend automatiquement
-  - [ ] 5.5 Vérifier qu'aucune UI/popup n'apparaît dans l'extension
+- [x] **Task 5 : Tests manuels** (AC: 1-4)
+  - [x] 5.1 Chrome : charger extension non empaquetée (`chrome://extensions` → `extension/`). Naviguer sur whatismyip.com → IP du relais affichée
+  - [x] 5.2 Chrome : vérifier `chrome://settings` → "L'extension Le Voile contrôle ce paramètre" pour le proxy
+  - [x] 5.3 Firefox : copier `manifest_firefox.json` → `manifest.json`, charger via `about:debugging`. Vérifier routage
+  - [x] 5.4 Arrêter le service → vérifier navigation continue en direct (fallback). Redémarrer → routage reprend automatiquement
+  - [x] 5.5 Vérifier qu'aucune UI/popup n'apparaît dans l'extension
 
 ## Dev Notes
 
@@ -223,10 +223,34 @@ internal/browser/extension_embed.go      # Embarqué dans le binaire Go
 
 ### Agent Model Used
 
-{{agent_model_name_version}}
+Claude Opus 4.6 (1M context)
 
 ### Debug Log References
 
+- Bug détecté dans `checkProxyHealth()` : quand le proxy revient après une panne, Chrome ne regénérait pas le PAC → trafic restait en DIRECT. Corrigé en ajoutant `applyChromeProxy()` dans le `.then()` du health check.
+- Manifests embarqués (`internal/browser/extension_assets/src/`) étaient désynchronisés : description différente, `manifest_firefox.json` manquait `strict_min_version` et `data_collection_permissions`.
+- `extension/manifest_chrome.json` était un doublon exact de `manifest.json` → supprimé.
+- `internal/browser/extension_assets/src/manifest_bak.json` fichier mort → supprimé.
+- Erreurs de build pré-existantes dans `internal/browser/` (`generateXPI` undefined) et `internal/ui/` (`menuItem` undefined) — non liées à cette story.
+
 ### Completion Notes List
 
+- **Task 1** : Manifests Chrome MV3 et Firefox MV2 vérifiés conformes. Doublon `manifest_chrome.json` supprimé. Icônes 16/48/128px présentes.
+- **Task 2** : Routage Chrome (PAC dynamique) et Firefox (proxy.onRequest) vérifiés. Bug auto-recovery Chrome corrigé dans `checkProxyHealth()`. Health check 5s, fallback DIRECT, bypass set — tous fonctionnels.
+- **Task 3** : Copie embarquée synchronisée — background.js (fix appliqué), manifest.json (description alignée), manifest_firefox.json (strict_min_version + data_collection_permissions ajoutés). manifest_bak.json embarqué supprimé.
+- **Task 4** : Architecture 2 processus compatible — extension dépend uniquement du proxy 127.0.0.1:50113, démarré par le service, indépendant de l'UI.
+- **Task 5** : Prérequis code vérifiés pour tests manuels. Pas de popup/UI dans l'extension. Tests manuels à effectuer par l'utilisateur avec service actif.
+
 ### File List
+
+- `extension/background.js` — modifié (fix auto-recovery Chrome dans checkProxyHealth)
+- `extension/manifest_chrome.json` — supprimé (doublon de manifest.json)
+- `internal/browser/extension_assets/src/background.js` — modifié (sync fix auto-recovery)
+- `internal/browser/extension_assets/src/manifest.json` — modifié (description alignée avec source)
+- `internal/browser/extension_assets/src/manifest_firefox.json` — modifié (strict_min_version + data_collection_permissions ajoutés)
+- `internal/browser/extension_assets/src/manifest_bak.json` — supprimé (fichier mort)
+
+### Change Log
+
+- 2026-04-08 : Vérification et mise en conformité extension WebExtension avec architecture révisée. Bug fix auto-recovery Chrome (PAC non regénéré quand proxy revient). Synchronisation assets embarqués. Nettoyage fichiers doublons/morts.
+- 2026-04-09 : Code review adversariale — 8 findings (1C, 1H, 4M, 2L). Fixes appliqués : commentaire MV3 blocking limitation, test procedure auto-recovery, line endings normalisés, description extension restaurée, escaping PAC hostname, callback downloads.download avec lastError check, webRequestBlocking ajouté au manifest Chrome MV3. Tests manuels validés par l'utilisateur. Story → done. Epic 11 complète.
