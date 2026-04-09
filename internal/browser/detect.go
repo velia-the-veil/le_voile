@@ -28,7 +28,8 @@ const (
 )
 
 // chromiumPolicyKey is the WebRTC policy name for Chromium-based browsers.
-const chromiumPolicyKey = "WebRtcIPHandlingPolicy"
+// Renamed from "WebRtcIPHandlingPolicy" to "WebRtcIPHandling" in Chrome 146+.
+const chromiumPolicyKey = "WebRtcIPHandling"
 
 // chromiumPolicyValue is the value that disables non-proxied UDP.
 const chromiumPolicyValue = "disable_non_proxied_udp"

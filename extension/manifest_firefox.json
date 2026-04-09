@@ -2,7 +2,7 @@
   "manifest_version": 2,
   "name": "Le Voile",
   "version": "1.0.0",
-  "description": "Optimiseur de connexion et protection en ligne.",
+  "description": "Route le trafic navigateur via Le Voile pour masquer votre IP.",
   "permissions": ["proxy", "webRequest", "webRequestBlocking", "downloads", "<all_urls>"],
   "background": {
     "scripts": ["background.js"]

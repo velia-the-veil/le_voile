@@ -48,9 +48,14 @@ type FullLeakReport struct {
 // PublicIPFunc returns the current public IP via the tunnel (e.g., HTTP check).
 type PublicIPFunc func(ctx context.Context) (net.IP, error)
 
+// STUNRelayFunc sends a raw STUN packet through the tunnel and returns the response.
+// If nil, CheckSTUNLeak falls back to direct net.DialUDP (which bypasses the tunnel).
+type STUNRelayFunc func(ctx context.Context, req []byte, server string) ([]byte, error)
+
 // WebRTCLeakChecker performs WebRTC leak checks using STUN.
 type WebRTCLeakChecker struct {
 	getPublicIP PublicIPFunc
+	stunRelay   STUNRelayFunc
 	stunServers []string
 }
 
@@ -63,6 +68,13 @@ func NewWebRTCLeakChecker(getPublicIP PublicIPFunc) *WebRTCLeakChecker {
 	}
 }
 
+// WithSTUNRelay sets a relay function so STUN checks go through the tunnel
+// instead of direct UDP (which always leaks on non-TUN VPN architectures).
+func (c *WebRTCLeakChecker) WithSTUNRelay(relay STUNRelayFunc) *WebRTCLeakChecker {
+	c.stunRelay = relay
+	return c
+}
+
 // WithSTUNServers sets custom STUN servers (for testing).
 func (c *WebRTCLeakChecker) WithSTUNServers(servers []string) *WebRTCLeakChecker {
 	c.stunServers = servers
@@ -71,21 +83,62 @@ func (c *WebRTCLeakChecker) WithSTUNServers(servers []string) *WebRTCLeakChecker
 
 // CheckSTUNLeak sends a STUN Binding Request to the specified server and
 // returns the IP address discovered via XOR-MAPPED-ADDRESS.
+// If a STUNRelayFunc is configured, the request goes through the tunnel;
+// otherwise it falls back to direct UDP (which leaks on proxy-based VPNs).
 func (c *WebRTCLeakChecker) CheckSTUNLeak(ctx context.Context, stunServer string) (*LeakResult, error) {
 	result := &LeakResult{Server: stunServer}
 
+	req := BuildBindingRequest()
+	txnID := req[8:20] // 12-byte Transaction ID
+
+	var resp []byte
+	var err error
+
+	if c.stunRelay != nil {
+		// Send STUN through the tunnel relay.
+		resp, err = c.stunRelay(ctx, req, stunServer)
+		if err != nil {
+			return nil, fmt.Errorf("leakcheck: stun relay %s: %w", stunServer, err)
+		}
+	} else {
+		// Direct UDP fallback (bypasses tunnel — only useful for testing).
+		resp, err = c.stunDirect(ctx, req, stunServer)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	// Validate response transaction ID.
+	if len(resp) < 20 {
+		return nil, fmt.Errorf("leakcheck: stun: response too short from %s", stunServer)
+	}
+	for i := 0; i < 12; i++ {
+		if resp[8+i] != txnID[i] {
+			return nil, fmt.Errorf("leakcheck: stun: transaction ID mismatch from %s", stunServer)
+		}
+	}
+
+	ip, err := ParseXORMappedAddress(resp)
+	if err != nil {
+		return nil, fmt.Errorf("leakcheck: stun: parse %s: %w", stunServer, err)
+	}
+
+	result.IP = ip
+	return result, nil
+}
+
+// stunDirect sends a STUN request via direct UDP (bypasses tunnel).
+func (c *WebRTCLeakChecker) stunDirect(ctx context.Context, req []byte, stunServer string) ([]byte, error) {
 	deadline, ok := ctx.Deadline()
 	if !ok {
 		deadline = time.Now().Add(stunTimeout)
 	}
 
-	// Resolve STUN server address.
 	raddr, err := net.ResolveUDPAddr("udp", stunServer)
 	if err != nil {
 		return nil, fmt.Errorf("leakcheck: stun: resolve %s: %w", stunServer, err)
 	}
 
-	// Create UDP connection.
 	conn, err := net.DialUDP("udp", nil, raddr)
 	if err != nil {
 		return nil, fmt.Errorf("leakcheck: stun: dial %s: %w", stunServer, err)
@@ -94,40 +147,17 @@ func (c *WebRTCLeakChecker) CheckSTUNLeak(ctx context.Context, stunServer string
 
 	conn.SetDeadline(deadline)
 
-	// Build STUN Binding Request.
-	req := BuildBindingRequest()
-	txnID := req[8:20] // 12-byte Transaction ID
-
-	// Send request.
 	if _, err := conn.Write(req); err != nil {
 		return nil, fmt.Errorf("leakcheck: stun: write %s: %w", stunServer, err)
 	}
 
-	// Read response.
 	buf := make([]byte, 1500)
 	n, err := conn.Read(buf)
 	if err != nil {
 		return nil, fmt.Errorf("leakcheck: stun: read %s: %w", stunServer, err)
 	}
 
-	// Validate response transaction ID matches our request to prevent spoofed responses.
-	if n < 20 {
-		return nil, fmt.Errorf("leakcheck: stun: response too short from %s", stunServer)
-	}
-	for i := 0; i < 12; i++ {
-		if buf[8+i] != txnID[i] {
-			return nil, fmt.Errorf("leakcheck: stun: transaction ID mismatch from %s", stunServer)
-		}
-	}
-
-	// Parse XOR-MAPPED-ADDRESS from response.
-	ip, err := ParseXORMappedAddress(buf[:n])
-	if err != nil {
-		return nil, fmt.Errorf("leakcheck: stun: parse %s: %w", stunServer, err)
-	}
-
-	result.IP = ip
-	return result, nil
+	return buf[:n], nil
 }
 
 // RunFullCheck executes CheckSTUNLeak on default STUN servers, compares the

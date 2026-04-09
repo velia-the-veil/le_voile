@@ -74,8 +74,12 @@ type UI struct {
 	mu               sync.Mutex
 	last             string // last known state to avoid redundant updates
 	connected        bool
-	shutdownDone     bool
 	shutdownInProgress atomic.Bool
+	shutdownOnce     sync.Once
+
+	// webviewTerminate terminates the webview event loop (if open).
+	// Protected by mu.
+	webviewTerminate func()
 
 	sysProxy    *SysProxy
 	webviewOpen atomic.Bool // prevents multiple windows
@@ -137,14 +141,13 @@ func (u *UI) onReady() {
 
 	go u.connectAndPoll(ctx)
 	go u.menuHandler(ctx)
+
+	// Auto-open webview on startup.
+	u.handleOpenWebview()
 }
 
 func (u *UI) onExit() {
-	u.shutdownServiceAndRestore()
-	if u.cancel != nil {
-		u.cancel()
-	}
-	u.client.Close()
+	u.shutdown()
 }
 
 func (u *UI) menuHandler(ctx context.Context) {
@@ -164,7 +167,7 @@ func (u *UI) menuHandler(ctx context.Context) {
 
 func (u *UI) handleOpenWebview() {
 	if u.webviewOpen.Load() {
-		return // already open
+		return // already open — no double window
 	}
 	addr := u.httpServer.Addr()
 	if addr == "" {
@@ -173,7 +176,18 @@ func (u *UI) handleOpenWebview() {
 	u.webviewOpen.Store(true)
 	go func() {
 		defer u.webviewOpen.Store(false)
-		openWebview(addr)
+		openWebview(addr,
+			func(terminate func()) {
+				u.mu.Lock()
+				u.webviewTerminate = terminate
+				u.mu.Unlock()
+			},
+			func() {
+				u.mu.Lock()
+				u.webviewTerminate = nil
+				u.mu.Unlock()
+			},
+		)
 	}()
 }
 
@@ -217,36 +231,58 @@ func (u *UI) handleToggle(ctx context.Context) {
 }
 
 func (u *UI) handleQuit() {
-	u.shutdownServiceAndRestore()
+	u.shutdown()
 	u.menuAPI.Quit()
 }
 
-// shutdownServiceAndRestore stops the service, restores DNS and proxy.
-// Idempotent — safe to call multiple times.
-func (u *UI) shutdownServiceAndRestore() {
-	u.mu.Lock()
-	if u.shutdownDone {
-		u.mu.Unlock()
-		return
-	}
-	u.shutdownDone = true
-	u.mu.Unlock()
+const httpShutdownTimeout = 3 * time.Second
 
+// shutdown performs the complete UI shutdown sequence. Idempotent via sync.Once.
+// Sequence: shutdownInProgress → destroy webview → restore proxy →
+// shutdown HTTP server → ActionQuit IPC → RecoverOrphanDNS → cancel ctx → close IPC.
+func (u *UI) shutdown() {
+	u.shutdownOnce.Do(u.doShutdown)
+}
+
+func (u *UI) doShutdown() {
+	// 1. Block orphan recovery in handleIPCError.
 	u.shutdownInProgress.Store(true)
 
-	// Restore WinINET proxy.
+	// 2. Terminate webview if open.
+	u.mu.Lock()
+	terminate := u.webviewTerminate
+	u.webviewTerminate = nil
+	u.mu.Unlock()
+	if terminate != nil {
+		terminate()
+	}
+
+	// 3. Restore WinINET proxy (UI owns this resource — AC5).
 	if u.sysProxy != nil {
 		u.sysProxy.Restore()
 	}
 
-	// Tell the service to stop.
-	quitCtx, cancel := context.WithTimeout(context.Background(), quitTimeout)
-	defer cancel()
-	u.client.SendContext(quitCtx, ipc.Request{Action: ipc.ActionQuit})
+	// 4. Shutdown HTTP server (3s timeout).
+	if u.httpServer != nil {
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), httpShutdownTimeout)
+		u.httpServer.Shutdown(shutdownCtx)
+		shutdownCancel()
+	}
 
-	// Safety net: restore DNS from persisted file in case the service
+	// 5. Tell the service to stop (10s timeout).
+	quitCtx, quitCancel := context.WithTimeout(context.Background(), quitTimeout)
+	u.client.SendContext(quitCtx, ipc.Request{Action: ipc.ActionQuit})
+	quitCancel()
+
+	// 6. Safety net: restore DNS from persisted file in case the service
 	// didn't shut down cleanly. No-op if the service already restored.
 	dns.RecoverOrphanDNS(context.Background())
+
+	// 7. Cancel polling context and close IPC connection.
+	if u.cancel != nil {
+		u.cancel()
+	}
+	u.client.Close()
 }
 
 func (u *UI) connectAndPoll(ctx context.Context) {
@@ -329,6 +365,8 @@ func (u *UI) updateTrayState(resp ipc.Response) {
 		}
 		if resp.IP != "" {
 			tooltip = fmt.Sprintf("%s — IP : %s", tooltip, resp.IP)
+		} else {
+			tooltip = fmt.Sprintf("%s — IP en détection...", tooltip)
 		}
 		u.api.SetTooltip(tooltip)
 		if u.menuToggle != nil {

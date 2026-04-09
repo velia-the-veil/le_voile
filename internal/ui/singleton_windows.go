@@ -8,7 +8,7 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-const mutexName = "Global\\LeVoileTray"
+const mutexName = "Global\\LeVoileUI"
 
 var singletonHandle windows.Handle
 

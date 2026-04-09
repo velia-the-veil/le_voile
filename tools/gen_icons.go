@@ -1,6 +1,8 @@
 //go:build ignore
 
-// gen_icons generates simple colored square ICO files for the system tray.
+// gen_icons generates Le Voile ICO files.
+// Tray: colored circle (status) with blue "V".
+// Taskbar/installer: blue circle with green "V".
 // Usage: go run tools/gen_icons.go
 package main
 
@@ -8,11 +10,10 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 )
-
-// ICO file structures per https://en.wikipedia.org/wiki/ICO_(file_format)
 
 type iconDir struct {
 	Reserved uint16
@@ -21,12 +22,12 @@ type iconDir struct {
 }
 
 type iconDirEntry struct {
-	Width      byte
-	Height     byte
-	ColorCount byte
-	Reserved   byte
-	Planes     uint16
-	BitCount   uint16
+	Width       byte
+	Height      byte
+	ColorCount  byte
+	Reserved    byte
+	Planes      uint16
+	BitCount    uint16
 	SizeInBytes uint32
 	Offset      uint32
 }
@@ -34,7 +35,7 @@ type iconDirEntry struct {
 type bitmapInfoHeader struct {
 	Size          uint32
 	Width         int32
-	Height        int32 // 2x height for XOR+AND masks
+	Height        int32
 	Planes        uint16
 	BitCount      uint16
 	Compression   uint32
@@ -45,182 +46,195 @@ type bitmapInfoHeader struct {
 	ClrImportant  uint32
 }
 
-func generateICO(sizes []int, r, g, b byte) ([]byte, error) {
+type rgba struct{ r, g, b, a byte }
+
+var transparent = rgba{0, 0, 0, 0}
+
+// Colors
+var blue = rgba{0x1a, 0x6f, 0xc4, 255}
+var green = rgba{0x4a, 0xde, 0x80, 255}
+var orange = rgba{0xfb, 0x92, 0x3c, 255}
+var red = rgba{0xff, 0x3c, 0x3c, 255}
+
+func generateICO(sizes []int, drawFn func(size int) []rgba) ([]byte, error) {
 	var buf bytes.Buffer
-
-	// Calculate offsets and image data
 	headerSize := 6 + 16*len(sizes)
-	type imgData struct {
-		data []byte
-	}
-	images := make([]imgData, len(sizes))
 
+	type imgEntry struct{ data []byte }
+	images := make([]imgEntry, len(sizes))
 	for i, size := range sizes {
-		images[i].data = generateBMPData(size, r, g, b)
+		images[i].data = pixelsToBMP(size, drawFn(size))
 	}
 
-	// Write ICONDIR
-	dir := iconDir{Reserved: 0, Type: 1, Count: uint16(len(sizes))}
-	if err := binary.Write(&buf, binary.LittleEndian, dir); err != nil {
-		return nil, err
-	}
+	dir := iconDir{Type: 1, Count: uint16(len(sizes))}
+	binary.Write(&buf, binary.LittleEndian, dir)
 
-	// Write ICONDIRENTRY for each size
 	offset := uint32(headerSize)
 	for i, size := range sizes {
-		w := byte(size)
-		h := byte(size)
+		w, h := byte(size), byte(size)
 		if size == 256 {
-			w = 0 // 0 means 256 in ICO format
-			h = 0
+			w, h = 0, 0
 		}
 		entry := iconDirEntry{
-			Width:       w,
-			Height:      h,
-			ColorCount:  0,
-			Reserved:    0,
-			Planes:      1,
-			BitCount:    32,
-			SizeInBytes: uint32(len(images[i].data)),
-			Offset:      offset,
+			Width: w, Height: h, Planes: 1, BitCount: 32,
+			SizeInBytes: uint32(len(images[i].data)), Offset: offset,
 		}
-		if err := binary.Write(&buf, binary.LittleEndian, entry); err != nil {
-			return nil, err
-		}
+		binary.Write(&buf, binary.LittleEndian, entry)
 		offset += uint32(len(images[i].data))
 	}
-
-	// Write image data
 	for _, img := range images {
 		buf.Write(img.data)
 	}
-
 	return buf.Bytes(), nil
 }
 
-func generateBMPData(size int, r, g, b byte) []byte {
+func pixelsToBMP(size int, pixels []rgba) []byte {
 	var buf bytes.Buffer
-
-	// Row stride: each pixel is 4 bytes (BGRA), rows padded to 4-byte boundary
-	rowSize := size * 4
-	// AND mask: 1 bit per pixel, rows padded to 4-byte boundary
 	andRowSize := ((size + 31) / 32) * 4
-	pixelDataSize := rowSize * size
+	pixelDataSize := size * 4 * size
 	andMaskSize := andRowSize * size
 
 	hdr := bitmapInfoHeader{
-		Size:     40,
-		Width:    int32(size),
-		Height:   int32(size * 2), // double height for XOR+AND
-		Planes:   1,
-		BitCount: 32,
-		SizeImage: uint32(pixelDataSize + andMaskSize),
+		Size: 40, Width: int32(size), Height: int32(size * 2),
+		Planes: 1, BitCount: 32, SizeImage: uint32(pixelDataSize + andMaskSize),
 	}
 	binary.Write(&buf, binary.LittleEndian, hdr)
 
-	// XOR mask (BGRA pixel data, bottom-up)
-	// Create a shield-like shape: rounded square with slight border
-	center := float64(size) / 2.0
-	radius := float64(size) / 2.0 * 0.85 // 85% of half-size
-
-	for y := 0; y < size; y++ {
+	// BMP is bottom-up
+	for y := size - 1; y >= 0; y-- {
 		for x := 0; x < size; x++ {
-			// Distance from center (use Chebyshev for rounded square feel)
-			dx := abs(float64(x) - center + 0.5)
-			dy := abs(float64(y) - center + 0.5)
-			dist := max(dx, dy)
-
-			if dist <= radius {
-				// Inside the icon: solid color, fully opaque
-				buf.WriteByte(b) // B
-				buf.WriteByte(g) // G
-				buf.WriteByte(r) // R
-				buf.WriteByte(255) // A
-			} else {
-				// Outside: transparent
-				buf.WriteByte(0)
-				buf.WriteByte(0)
-				buf.WriteByte(0)
-				buf.WriteByte(0)
-			}
+			c := pixels[y*size+x]
+			buf.WriteByte(c.b)
+			buf.WriteByte(c.g)
+			buf.WriteByte(c.r)
+			buf.WriteByte(c.a)
 		}
 	}
-
-	// AND mask (all zeros = fully controlled by alpha channel)
-	andMask := make([]byte, andMaskSize)
-	buf.Write(andMask)
-
+	buf.Write(make([]byte, andMaskSize))
 	return buf.Bytes()
 }
 
-func abs(x float64) float64 {
-	if x < 0 {
-		return -x
+// drawCircleWithV draws a filled circle of bgColor with a "V" letter in fgColor.
+func drawCircleWithV(size int, bgColor, fgColor rgba) []rgba {
+	px := make([]rgba, size*size)
+	s := float64(size)
+	cx, cy := s/2, s/2
+	radius := s/2 - 0.5
+
+	for y := 0; y < size; y++ {
+		for x := 0; x < size; x++ {
+			fx, fy := float64(x)+0.5, float64(y)+0.5
+			dist := math.Hypot(fx-cx, fy-cy)
+
+			if dist > radius {
+				px[y*size+x] = transparent
+				continue
+			}
+
+			if inVLetter(fx, fy, s) {
+				px[y*size+x] = fgColor
+			} else {
+				px[y*size+x] = bgColor
+			}
+		}
 	}
-	return x
+	return px
 }
 
-func max(a, b float64) float64 {
-	if a > b {
-		return a
+// inVLetter tests if (fx,fy) is inside a "V" shape centered in a square of side s.
+func inVLetter(fx, fy, s float64) bool {
+	// V extends from top 25% to bottom 78% of the icon
+	topY := s * 0.22
+	botY := s * 0.78
+	if fy < topY || fy > botY {
+		return false
 	}
-	return b
+
+	cx := s / 2
+	// Normalize progress from top to bottom: 0..1
+	t := (fy - topY) / (botY - topY)
+
+	// Stroke thickness proportional to size
+	thick := s * 0.09
+	if thick < 1.5 {
+		thick = 1.5
+	}
+
+	// Left stroke goes from (-0.22*s, topY) to (cx, botY)
+	leftX := cx - (s * 0.22 * (1 - t))
+	// Right stroke goes from (+0.22*s, topY) to (cx, botY)
+	rightX := cx + (s * 0.22 * (1 - t))
+
+	if math.Abs(fx-leftX) < thick || math.Abs(fx-rightX) < thick {
+		return true
+	}
+
+	// Fill the bottom area between the two strokes where they meet
+	if t > 0.85 && fx >= leftX-thick && fx <= rightX+thick {
+		return true
+	}
+
+	return false
 }
 
 func main() {
-	type iconSpec struct {
-		name string
-		r, g, b byte
-	}
-
-	icons := []iconSpec{
-		{"connected.ico", 0x2E, 0xCC, 0x40},    // Green
-		{"connecting.ico", 0xFF, 0x99, 0x00},     // Orange
-		{"disconnected.ico", 0xE0, 0x3C, 0x3C},   // Red
-	}
-
 	traySizes := []int{16, 32, 48}
-	trayDir := filepath.Join("internal", "tray")
-	assetsDir := filepath.Join("assets", "icons")
-	installerDir := "installer"
+	allSizes := []int{16, 32, 48, 256}
 
-	os.MkdirAll(assetsDir, 0755)
-	os.MkdirAll(installerDir, 0755)
+	type iconSpec struct {
+		name    string
+		bg, fg  rgba
+		sizes   []int
+	}
 
-	for _, icon := range icons {
-		// Generate tray icons (16, 32, 48)
-		data, err := generateICO(traySizes, icon.r, icon.g, icon.b)
+	// Tray icons: status-colored circle + blue V
+	// Taskbar/installer icon: blue circle + green V
+	trayIcons := []iconSpec{
+		{"connected.ico", green, blue, traySizes},
+		{"connecting.ico", orange, blue, traySizes},
+		{"disconnected.ico", red, blue, traySizes},
+	}
+
+	appIcon := iconSpec{"levoile.ico", blue, green, allSizes}
+
+	dirs := []string{
+		filepath.Join("internal", "ui", "icons"),
+		filepath.Join("internal", "tray"),
+	}
+
+	// Generate tray icons
+	for _, icon := range trayIcons {
+		bg, fg := icon.bg, icon.fg
+		data, err := generateICO(icon.sizes, func(size int) []rgba { return drawCircleWithV(size, bg, fg) })
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "error generating %s: %v\n", icon.name, err)
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			os.Exit(1)
 		}
-		trayPath := filepath.Join(trayDir, icon.name)
-		if err := os.WriteFile(trayPath, data, 0644); err != nil {
-			fmt.Fprintf(os.Stderr, "error writing %s: %v\n", trayPath, err)
-			os.Exit(1)
+		for _, dir := range dirs {
+			os.MkdirAll(dir, 0755)
+			path := filepath.Join(dir, icon.name)
+			os.WriteFile(path, data, 0644)
+			fmt.Printf("Generated %s (%d bytes)\n", path, len(data))
 		}
-		fmt.Printf("Generated %s (%d bytes)\n", trayPath, len(data))
-
-		// Copy to assets/icons/ for GoReleaser archive
-		assetsPath := filepath.Join(assetsDir, icon.name)
-		if err := os.WriteFile(assetsPath, data, 0644); err != nil {
-			fmt.Fprintf(os.Stderr, "error writing %s: %v\n", assetsPath, err)
-			os.Exit(1)
-		}
-		fmt.Printf("Generated %s (%d bytes)\n", assetsPath, len(data))
 	}
 
-	// Generate installer icon with 256px (multi-resolution for Windows Explorer)
-	installerSizes := []int{16, 32, 48, 256}
-	installerData, err := generateICO(installerSizes, 0x2E, 0xCC, 0x40) // Green (connected)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "error generating installer icon: %v\n", err)
-		os.Exit(1)
+	// Generate app icon (taskbar + installer)
+	{
+		bg, fg := appIcon.bg, appIcon.fg
+		data, err := generateICO(appIcon.sizes, func(size int) []rgba { return drawCircleWithV(size, bg, fg) })
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			os.Exit(1)
+		}
+		for _, dir := range dirs {
+			os.MkdirAll(dir, 0755)
+			path := filepath.Join(dir, appIcon.name)
+			os.WriteFile(path, data, 0644)
+			fmt.Printf("Generated %s (%d bytes)\n", path, len(data))
+		}
+		// Installer icon
+		installerPath := filepath.Join("installer", "levoile.ico")
+		os.WriteFile(installerPath, data, 0644)
+		fmt.Printf("Generated %s (%d bytes)\n", installerPath, len(data))
 	}
-	installerPath := filepath.Join(installerDir, "levoile.ico")
-	if err := os.WriteFile(installerPath, installerData, 0644); err != nil {
-		fmt.Fprintf(os.Stderr, "error writing %s: %v\n", installerPath, err)
-		os.Exit(1)
-	}
-	fmt.Printf("Generated %s (%d bytes)\n", installerPath, len(installerData))
 }

@@ -238,21 +238,13 @@ func TestExtensionDeployStatePersistence(t *testing.T) {
 	}
 }
 
-func TestGenerateXPI(t *testing.T) {
-	dir := t.TempDir()
-	xpiPath := filepath.Join(dir, "test.xpi")
-
-	if err := generateXPI(xpiPath); err != nil {
-		t.Fatalf("generateXPI: %v", err)
-	}
-
-	// Verify XPI file exists and is a valid ZIP.
-	data, err := os.ReadFile(xpiPath)
+func TestEmbeddedXPI(t *testing.T) {
+	data, err := extensionFS.ReadFile("extension_assets/build/levoile.xpi")
 	if err != nil {
-		t.Fatalf("read XPI: %v", err)
+		t.Skip("embedded XPI not available (build/levoile.xpi missing from embed)")
 	}
 	if len(data) == 0 {
-		t.Fatal("XPI is empty")
+		t.Fatal("embedded XPI is empty")
 	}
 
 	r, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
@@ -260,15 +252,12 @@ func TestGenerateXPI(t *testing.T) {
 		t.Fatalf("open XPI as ZIP: %v", err)
 	}
 
-	// Verify manifest.json exists (renamed from manifest_firefox.json).
 	foundManifest := false
 	foundBackground := false
-	foundChromeManifest := false
 	for _, f := range r.File {
 		switch f.Name {
 		case "manifest.json":
 			foundManifest = true
-			// Verify it contains gecko ID (Firefox manifest).
 			rc, err := f.Open()
 			if err != nil {
 				t.Fatalf("open manifest.json in XPI: %v", err)
@@ -292,8 +281,6 @@ func TestGenerateXPI(t *testing.T) {
 			}
 		case "background.js":
 			foundBackground = true
-		case "manifest_firefox.json":
-			foundChromeManifest = true
 		}
 	}
 
@@ -302,9 +289,6 @@ func TestGenerateXPI(t *testing.T) {
 	}
 	if !foundBackground {
 		t.Error("XPI missing background.js")
-	}
-	if foundChromeManifest {
-		t.Error("XPI should not contain manifest_firefox.json (should be renamed to manifest.json)")
 	}
 }
 

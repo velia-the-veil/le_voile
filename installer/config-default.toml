@@ -16,5 +16,10 @@ enabled = true
 enabled = true
 port = 50113
 
+[registry]
+enabled = true
+url = "https://relay.levoile.dev"
+master_public_key = "rjgDdexo2SOeNXhdy0fUKAONXeQGAyN2d3ixCeuXOpk="
+
 [browser_policies]
 enabled = true

@@ -95,7 +95,7 @@ func (d *Discoverer) Discover(ctx context.Context) ([]RelayEntry, error) {
 // Falls back to cached latency rankings if measurement fails.
 // Returns the original order if no checker or only one relay.
 func (d *Discoverer) sortByLatency(ctx context.Context, relays []RelayEntry) []RelayEntry {
-	if d.latencyChecker == nil || len(relays) <= 1 {
+	if d.latencyChecker == nil || len(relays) == 0 {
 		return relays
 	}
 

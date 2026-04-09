@@ -7,38 +7,80 @@
     <link rel="stylesheet" href="src/style.css">
 </head>
 <body>
-    <header class="app-header">
-        <div class="header-logo" id="header-logo">
-            <svg width="20" height="24" viewBox="0 0 20 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <path d="M10 0L0 4v8c0 6.627 4.477 12 10 12s10-5.373 10-12V4L10 0z" fill="currentColor"/>
-                <text x="10" y="17" text-anchor="middle" fill="#0b1526" font-size="12" font-weight="bold" font-family="sans-serif">V</text>
-            </svg>
+    <div class="titlebar">
+        <div class="titlebar-left">
+            <span class="titlebar-v" id="titlebar-v">V</span>
+            <span class="titlebar-name">Le Voile</span>
         </div>
-        <span class="header-text">Le Voile</span>
-    </header>
-    <main class="layout-split">
-        <aside class="sidebar" id="sidebar">
-            <div class="sidebar-header">Pays</div>
-            <div class="country-list" id="country-list">
-                <!-- Populated dynamically by JS -->
-            </div>
-        </aside>
-        <section class="main-panel">
-            <div class="status-panel">
-                <div class="status-dot" id="status-dot"></div>
-                <div class="country-display" id="country-display">
-                    <span class="country-flag-large" id="country-flag"></span>
-                    <span class="country-name-large" id="country-name"></span>
+        <div class="titlebar-controls">
+            <button class="titlebar-btn bell-btn" id="bell-btn" onclick="showPanel('notifications')" title="Alertes">
+                🔔<span class="bell-badge" id="bell-badge">0</span>
+            </button>
+            <button class="titlebar-btn" onclick="__minimize()" title="Reduire">─</button>
+            <button class="titlebar-btn close-btn" onclick="__close()" title="Quitter">✕</button>
+        </div>
+    </div>
+    <div class="window-body">
+        <div class="sidebar">
+            <button class="sidebar-tab active" id="tab-status" onclick="showPanel('status')">
+                <span class="tab-icon">🛡</span><span>Statut</span>
+            </button>
+            <button class="sidebar-tab" id="tab-settings" onclick="showPanel('settings')">
+                <span class="tab-icon">⚙</span><span>Parametres</span>
+            </button>
+            <div class="sidebar-divider"></div>
+            <div id="country-list"></div>
+        </div>
+        <div class="panel-area">
+            <!-- STATUS PANEL -->
+            <div class="panel visible" id="panel-status">
+                <div class="status-group">
+                    <div class="status-dot" id="status-dot"></div>
+                    <span class="status-text" id="status-text">Chargement...</span>
                 </div>
-                <div class="status-text" id="status-text">Chargement...</div>
-                <div class="status-ip" id="status-ip"></div>
-                <div class="relay-info" id="relay-info"></div>
-                <div class="status-uptime" id="status-uptime"></div>
-                <button class="btn-connect" id="btn-connect" onclick="toggleConnect()">Connecter</button>
-                <a class="test-link" id="test-link" href="https://plateformeliberte.fr/test-protection.html" target="_blank">Tester ma protection</a>
+                <div class="country-name-display" id="country-name"></div>
+                <div class="info-group">
+                    <div class="ip-row" id="ip-real"></div>
+                    <div class="ip-row" id="ip-visible"></div>
+                    <div class="relay-info" id="relay-info"></div>
+                </div>
+                <div class="actions-group">
+                    <button class="btn btn-connect" id="btn-connect" onclick="toggleConnect()">Connecter</button>
+                    <a class="link" id="test-link" href="https://plateformeliberte.fr/test-protection.html" target="_blank">Tester ma protection</a>
+                </div>
             </div>
-        </section>
-    </main>
+            <!-- NOTIFICATIONS PANEL -->
+            <div class="panel" id="panel-notifications">
+                <h3>ALERTES</h3>
+                <div class="notif-empty">Aucune notification</div>
+            </div>
+            <!-- SETTINGS PANEL -->
+            <div class="panel" id="panel-settings">
+                <h3>PARAMETRES</h3>
+                <div class="setting-group">
+                    <div class="toggle-row">
+                        <span class="setting-label">Demarrage automatique</span>
+                        <div class="toggle" id="toggle-autostart" onclick="toggleSetting('autostart')"><div class="toggle-knob"></div></div>
+                    </div>
+                    <div class="setting-desc">Lancer Le Voile au demarrage de Windows.</div>
+                </div>
+                <div class="setting-group">
+                    <div class="toggle-row">
+                        <span class="setting-label">Blocklist DNS</span>
+                        <div class="toggle" id="toggle-blocklist" onclick="toggleSetting('blocklist')"><div class="toggle-knob"></div></div>
+                    </div>
+                    <div class="setting-desc">Bloquer les trackers et publicites via DNS.</div>
+                </div>
+                <div class="setting-group">
+                    <div class="toggle-row">
+                        <span class="setting-label">Proxy HTTP</span>
+                        <div class="toggle" id="toggle-httpproxy" onclick="toggleSetting('httpproxy')"><div class="toggle-knob"></div></div>
+                    </div>
+                    <div class="setting-desc">Proxy CONNECT local pour les navigateurs.</div>
+                </div>
+            </div>
+        </div>
+    </div>
     <script src="src/app.js"></script>
 </body>
 </html>

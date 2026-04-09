@@ -139,6 +139,7 @@ type Program struct {
 	httpProxyAddr   atomic.Value // string
 
 	visibleIP atomic.Value // string — detected exit IP of the current relay
+	realIP    atomic.Value // string — client's real IP detected before tunnel
 }
 
 // NewProgram creates a Program with the given configuration.
@@ -377,6 +378,20 @@ func (p *Program) SetVisibleIP(ip string) {
 	p.visibleIP.Store(ip)
 }
 
+// RealIP returns the client's real IP detected before tunnel connection.
+func (p *Program) RealIP() string {
+	v := p.realIP.Load()
+	if v == nil {
+		return ""
+	}
+	return v.(string)
+}
+
+// SetRealIP stores the client's real IP.
+func (p *Program) SetRealIP(ip string) {
+	p.realIP.Store(ip)
+}
+
 // EnableBlocklist activates DNS blocklist filtering at runtime.
 // Creates and starts the Manager if it was never started, then injects it into
 // both proxies. Safe to call while the service is running.
@@ -508,6 +523,9 @@ func (p *Program) run() {
 			// If discover fails: keep static relayDomain/relayPubKey — no fatal error.
 		}
 	}
+
+	// --- 0e. Detect real IP before tunnel connect ---
+	p.detectRealIP(ctx)
 
 	// --- 1. Tunnel connect ---
 	client, err := tunnel.NewClient(relayDomain, relayPubKey, tunnel.WithInsecure(p.config.Insecure))
@@ -713,13 +731,28 @@ func (p *Program) run() {
 		}
 		return leakcheck.ParseXORMappedAddress(resp)
 	}
-	checker := leakcheck.NewWebRTCLeakChecker(getPublicIP)
+	// STUN relay function: sends STUN checks through the tunnel so the leak
+	// checker sees the relay's public IP, not the local machine's.
+	stunRelayFn := func(relayCtx context.Context, req []byte, server string) ([]byte, error) {
+		resp, err := client.SendSTUNRelay(relayCtx, req, server)
+		if err != nil {
+			// Retry once for transient QUIC stream errors.
+			select {
+			case <-relayCtx.Done():
+				return nil, err
+			case <-time.After(500 * time.Millisecond):
+			}
+			resp, err = client.SendSTUNRelay(relayCtx, req, server)
+		}
+		return resp, err
+	}
+	checker := leakcheck.NewWebRTCLeakChecker(getPublicIP).WithSTUNRelay(stunRelayFn)
 
 	var lkScheduler *leakcheck.PeriodicScheduler
 	onLeak := func(_ *leakcheck.FullLeakReport) {
-		// No-op: the leak checker sends STUN directly via net.DialUDP which
-		// bypasses the tunnel — if the STUN interceptor isn't active, this
-		// always reports a false positive. Do NOT disconnect the tunnel here.
+		// With STUN relay, a leak means the relay returned a different IP than
+		// expected — this is a genuine concern, but auto-disconnect is still
+		// disabled to avoid false positives from transient relay issues.
 	}
 	lkScheduler = leakcheck.NewPeriodicScheduler(
 		10*time.Minute,
@@ -1307,21 +1340,17 @@ func (p *Program) stopSTUN() {
 	}
 }
 
-// DetectVisibleIP fetches the exit IP from the relay's /ip endpoint.
-// Safe to call from any goroutine. Creates its own 5s timeout context.
-func (p *Program) DetectVisibleIP(ctx context.Context) {
-	tc := p.tunnelClient
-	if tc == nil {
-		return
-	}
+// detectRealIP fetches the client's real public IP before tunnel connection.
+// Uses a public API; best-effort with a 5s timeout.
+func (p *Program) detectRealIP(ctx context.Context) {
 	detectCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
-	req, err := http.NewRequestWithContext(detectCtx, http.MethodGet, "https://"+tc.RelayDomain()+"/ip", nil)
+	req, err := http.NewRequestWithContext(detectCtx, http.MethodGet, "https://api.ipify.org", nil)
 	if err != nil {
 		return
 	}
-	resp, err := tc.HTTPClient().Do(req)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return
 	}
@@ -1335,6 +1364,21 @@ func (p *Program) DetectVisibleIP(ctx context.Context) {
 	}
 	ip := strings.TrimSpace(string(body))
 	if ip != "" {
-		p.SetVisibleIP(ip)
+		p.SetRealIP(ip)
 	}
+}
+
+// DetectVisibleIP resolves the relay domain to get the exit IP that external
+// services see when traffic goes through the tunnel.
+// Safe to call from any goroutine.
+func (p *Program) DetectVisibleIP(_ context.Context) {
+	tc := p.tunnelClient
+	if tc == nil {
+		return
+	}
+	addrs, err := net.LookupHost(tc.RelayDomain())
+	if err != nil || len(addrs) == 0 {
+		return
+	}
+	p.SetVisibleIP(addrs[0])
 }

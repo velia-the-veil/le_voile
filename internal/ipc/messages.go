@@ -67,6 +67,7 @@ type Response struct {
 	RollbackReason   string `json:"rollback_reason,omitempty"`
 	LeakStatus       string `json:"leak_status,omitempty"`
 	LeakLastCheck    string `json:"leak_last_check,omitempty"`
+	AutoStart        bool   `json:"auto_start,omitempty"`
 	BlocklistEnabled bool   `json:"blocklist_enabled,omitempty"`
 	HTTPProxyActive  bool   `json:"http_proxy_active,omitempty"`
 	HTTPProxyAddr    string `json:"http_proxy_addr,omitempty"`
@@ -74,6 +75,8 @@ type Response struct {
 
 	BrowserPoliciesApplied []string `json:"browser_policies_applied,omitempty"`
 	BrowserPoliciesFailed  []string `json:"browser_policies_failed,omitempty"`
+
+	RealIP       string `json:"real_ip,omitempty"`       // client's real IP (detected before tunnel)
 
 	RelayDomain  string `json:"relay_domain,omitempty"`  // active relay domain
 	RelayID      string `json:"relay_id,omitempty"`      // active relay ID (e.g. "relay-fr-01")

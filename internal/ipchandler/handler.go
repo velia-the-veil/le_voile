@@ -70,7 +70,7 @@ func handleGetStatus(prg *svc.Program) ipc.Response {
 	tc := prg.TunnelClient()
 	if tc == nil {
 		// Tunnel not yet started, but rollback may have occurred before the first connect.
-		resp := ipc.Response{Status: ipc.StatusDisconnected}
+		resp := ipc.Response{Status: ipc.StatusDisconnected, RealIP: prg.RealIP()}
 		if prg.RollbackOccurred() {
 			resp.UpdateStatus = ipc.StatusRollback
 			resp.RollbackVersion = prg.RollbackVersion()
@@ -92,6 +92,7 @@ func handleGetStatus(prg *svc.Program) ipc.Response {
 	resp := ipc.Response{
 		Status:      string(state),
 		IP:          visibleIP,
+		RealIP:      prg.RealIP(),
 		Uptime:      uptime,
 		RelayDomain: relayDomain,
 	}

@@ -18,6 +18,8 @@ builds:
     binary: levoile-ui
     goos: [windows]
     goarch: [amd64]
+    env:
+      - CGO_ENABLED=1
     ldflags:
       - -s -w -X main.version={{.Version}} -H windowsgui
 
