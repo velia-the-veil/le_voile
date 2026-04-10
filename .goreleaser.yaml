@@ -23,14 +23,6 @@ builds:
     ldflags:
       - -s -w -X main.version={{.Version}} -H windowsgui
 
-  - id: tray
-    main: ./cmd/tray
-    binary: levoile-tray
-    goos: [windows]
-    goarch: [amd64]
-    ldflags:
-      - -s -w -X main.version={{.Version}} -H windowsgui
-
   - id: relay
     main: ./cmd/relay
     binary: levoile-relay

@@ -142,6 +142,18 @@ func (sp *SysProxy) Restore() error {
 	return nil
 }
 
+// ForceDisable sets ProxyEnable=0 as a last resort when Restore fails.
+func (sp *SysProxy) ForceDisable() {
+	k, err := registry.OpenKey(registry.CURRENT_USER, internetSettingsKey, registry.SET_VALUE)
+	if err != nil {
+		return
+	}
+	defer k.Close()
+	k.SetDWordValue("ProxyEnable", 0)
+	sp.removePersistedFile()
+	sp.broadcastSettingsChange()
+}
+
 // RecoverOrphan checks for a crashed previous session and restores if needed.
 func (sp *SysProxy) RecoverOrphan() error {
 	filePath := sp.persistedFilePath()

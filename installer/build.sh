@@ -31,7 +31,7 @@ mkdir -p "$BUILD_DIR/icons"
 
 # Copy binaries from GoReleaser output
 cp dist/service_windows_amd64_v1/levoile-service.exe "$BUILD_DIR/"
-cp dist/tray_windows_amd64_v1/levoile-tray.exe "$BUILD_DIR/"
+cp dist/ui_windows_amd64_v1/levoile-ui.exe "$BUILD_DIR/levoile-desktop.exe"
 
 # Copy assets
 cp "$PROJECT_ROOT/assets/icons/"*.ico "$BUILD_DIR/icons/"

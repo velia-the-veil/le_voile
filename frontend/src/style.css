@@ -148,8 +148,6 @@ html, body {
 }
 .btn-connect { background: var(--status-secure); color: var(--bg-primary); }
 .btn-connect:hover { box-shadow: 0 0 16px rgba(74, 222, 128, 0.3); filter: brightness(1.1); }
-.btn-disconnect { background: transparent; color: var(--accent-red); border: 1px solid rgba(212, 43, 43, 0.3); }
-.btn-disconnect:hover { background: rgba(212, 43, 43, 0.1); border-color: var(--accent-red); }
 .btn:disabled { opacity: 0.5; cursor: not-allowed; pointer-events: none; }
 .btn.hidden { display: none; }
 

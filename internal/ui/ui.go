@@ -84,9 +84,8 @@ type UI struct {
 	sysProxy    *SysProxy
 	webviewOpen atomic.Bool // prevents multiple windows
 
-	menuOpen   *systray.MenuItem
-	menuToggle *systray.MenuItem
-	menuQuit   *systray.MenuItem
+	menuOpen *systray.MenuItem
+	menuQuit *systray.MenuItem
 }
 
 // New creates a UI instance with real systray API.
@@ -123,7 +122,6 @@ func (u *UI) onReady() {
 
 	// Menu items — French UI.
 	u.menuOpen = u.menuAPI.AddMenuItem("Ouvrir la fenêtre", "")
-	u.menuToggle = u.menuAPI.AddMenuItem("Activer Le Voile", "Activer/Désactiver la protection")
 	u.menuAPI.AddSeparator()
 	u.menuQuit = u.menuAPI.AddMenuItem("Quitter", "Quitter Le Voile")
 
@@ -157,8 +155,6 @@ func (u *UI) menuHandler(ctx context.Context) {
 			return
 		case <-u.menuOpen.ClickedCh:
 			u.handleOpenWebview()
-		case <-u.menuToggle.ClickedCh:
-			u.handleToggle(ctx)
 		case <-u.menuQuit.ClickedCh:
 			u.handleQuit()
 		}
@@ -188,46 +184,11 @@ func (u *UI) handleOpenWebview() {
 				u.mu.Unlock()
 			},
 		)
+		// Webview closed — if not already shutting down, treat as quit.
+		if !u.shutdownInProgress.Load() {
+			u.handleQuit()
+		}
 	}()
-}
-
-func (u *UI) handleToggle(ctx context.Context) {
-	u.mu.Lock()
-	isConnected := u.connected
-	u.mu.Unlock()
-
-	action := ipc.ActionConnect
-	if isConnected {
-		action = ipc.ActionDisconnect
-	}
-
-	resp, err := u.client.SendContext(ctx, ipc.Request{Action: action})
-	if err != nil {
-		u.api.SetTooltip(fmt.Sprintf("Erreur : %s", err))
-		return
-	}
-
-	// Force a full state refresh on next poll.
-	u.mu.Lock()
-	u.last = ""
-	u.mu.Unlock()
-
-	switch resp.Status {
-	case ipc.StatusConnected:
-		u.api.SetIcon(IconConnected)
-		u.api.SetTooltip(fmt.Sprintf("Protégé — IP visible : %s", resp.IP))
-		if u.menuToggle != nil {
-			u.menuToggle.SetTitle("Désactiver Le Voile")
-		}
-	case ipc.StatusDisconnected:
-		u.api.SetIcon(IconDisconnected)
-		u.api.SetTooltip("Non protégé")
-		if u.menuToggle != nil {
-			u.menuToggle.SetTitle("Activer Le Voile")
-		}
-	case ipc.StatusError:
-		u.api.SetTooltip(fmt.Sprintf("Erreur : %s", resp.Error))
-	}
 }
 
 func (u *UI) handleQuit() {
@@ -259,7 +220,9 @@ func (u *UI) doShutdown() {
 
 	// 3. Restore WinINET proxy (UI owns this resource — AC5).
 	if u.sysProxy != nil {
-		u.sysProxy.Restore()
+		if err := u.sysProxy.Restore(); err != nil {
+			u.sysProxy.ForceDisable()
+		}
 	}
 
 	// 4. Shutdown HTTP server (3s timeout).
@@ -336,9 +299,6 @@ func (u *UI) handleIPCError(ctx context.Context) {
 
 	u.api.SetIcon(IconDisconnected)
 	u.api.SetTooltip("Service indisponible")
-	if u.menuToggle != nil {
-		u.menuToggle.SetTitle("Activer Le Voile")
-	}
 
 	// Close and reconnect.
 	u.client.Close()
@@ -369,9 +329,6 @@ func (u *UI) updateTrayState(resp ipc.Response) {
 			tooltip = fmt.Sprintf("%s — IP en détection...", tooltip)
 		}
 		u.api.SetTooltip(tooltip)
-		if u.menuToggle != nil {
-			u.menuToggle.SetTitle("Désactiver Le Voile")
-		}
 		u.mu.Lock()
 		u.connected = true
 		u.mu.Unlock()
@@ -391,9 +348,6 @@ func (u *UI) updateTrayState(resp ipc.Response) {
 	default: // disconnected, error
 		u.api.SetIcon(IconDisconnected)
 		u.api.SetTooltip("Non protégé")
-		if u.menuToggle != nil {
-			u.menuToggle.SetTitle("Activer Le Voile")
-		}
 		u.mu.Lock()
 		wasConnected := u.connected
 		u.connected = false
