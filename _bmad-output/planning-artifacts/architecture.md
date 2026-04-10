@@ -239,7 +239,7 @@ le_voile/
 - **Client → Registre** : GET `https://{any-relay}/.well-known/relay-registry.json` au démarrage. Réponse JSON signée avec liste complète des relais. Vérification Ed25519 master key. Fallback sur le cache local si aucun relais ne répond. Refresh toutes les 6h en arrière-plan
 - **Communication Service ↔ UI** : IPC via named pipes (Windows `\\.\pipe\levoile`) ou Unix sockets. Protocole JSON ligne par ligne. Messages : Request (Action + Value) → Response (Status + champs optionnels). Max 4 Ko par message
 - **Communication UI interne** : Serveur HTTP local embarqué (127.0.0.1:{port configurable}) servant les assets frontend et exposant une API REST JSON pour le webview. Remplace les bindings Go↔JS de Wails v2. Le frontend utilise `fetch()` vers ce serveur local au lieu de `window.go.main.App.Method()`
-- **IPC Actions** : GetStatus, Connect, Disconnect, SelectCountry, GetRegistry, GetLeakStatus, TriggerLeakCheck, GetUpdateStatus, CheckUpdate, GetAutoStart, SetAutoStart, GetBlocklist, SetBlocklist, GetHTTPProxy, SetHTTPProxy, GetBrowserPolicies, SetBrowserPolicies, Quit
+- **IPC Actions** : GetStatus, Connect, SelectCountry, GetRegistry, GetLeakStatus, TriggerLeakCheck, GetUpdateStatus, CheckUpdate, GetAutoStart, SetAutoStart, GetBlocklist, SetBlocklist, GetHTTPProxy, SetHTTPProxy, GetBrowserPolicies, SetBrowserPolicies, Quit (Note : Disconnect supprimé de l'UI — utilisé uniquement en interne lors du switch de pays et du shutdown)
 - **Limite par relais (DoH)** : 150 connexions simultanées via atomic.Int64. Au-delà : middleware rejection
 - **Limite par relais (CONNECT)** : 200 connexions max par IP source (sync.Map + atomics) + bandwidth limiting par IP (quota journalier)
 
@@ -255,9 +255,9 @@ Deux processus communiquant via IPC named pipes :
    - Flags CLI : -config, -relay-domain, -relay-pubkey, -insecure
 
 2. **levoile-ui.exe** (`cmd/ui/`) — UI unique : fyne.io/systray + webview/webview
-   - **Tray** (fyne.io/systray, thread principal) : Icône avec menu contextuel (Ouvrir, Connecter/Déconnecter, Pays, Quitter). Polling status service via IPC toutes les 2 secondes. Icônes embarquées via `//go:embed`. Gestion proxy système WinINET (HKCU)
+   - **Tray** (fyne.io/systray, thread principal) : Icône avec menu contextuel (Ouvrir la fenêtre, Quitter). Polling status service via IPC toutes les 2 secondes. Icônes embarquées via `//go:embed`. Gestion proxy système WinINET (HKCU)
    - **Webview** (webview/webview) : Fenêtre 420×540px, ouverte/fermée à la demande depuis le menu tray "Ouvrir". Utilise WebView2 (Windows). Affiche le frontend HTML/CSS/JS servi par le serveur HTTP local embarqué
-   - **Serveur HTTP local** (net/http, 127.0.0.1:{port}) : Sert les assets frontend embarqués (go:embed). Expose une API REST JSON qui proxie les commandes vers le service via IPC. Endpoints : /api/status, /api/connect, /api/disconnect, /api/country, /api/registry, /api/leak-status, etc.
+   - **Serveur HTTP local** (net/http, 127.0.0.1:{port}) : Sert les assets frontend embarqués (go:embed). Expose une API REST JSON qui proxie les commandes vers le service via IPC. Endpoints : /api/status, /api/connect, /api/country, /api/registry, /api/leak-status, etc.
    - Singleton via mutex nommé Windows (empêche instances multiples)
    - `-H windowsgui` dans ldflags (pas de console)
    - La fenêtre webview se ferme sans quitter l'app — le tray persiste. "Quitter" depuis le tray arrête tout
@@ -279,7 +279,7 @@ Deux processus communiquant via IPC named pipes :
 - **Détection fuites WebRTC** (`internal/leakcheck/` + `internal/stun/`) : STUN Binding Requests (RFC 5389) vers 3 serveurs (Google ×2, Cloudflare). XOR-MAPPED-ADDRESS parsing. Scheduler périodique avec skip quand kill switch actif ou tunnel déconnecté. Transaction ID validation anti-spoofing
 - **STUN Interceptor & Relayer** (`internal/stun/`) : Intercepte les paquets STUN sur les ports appropriés. Drop les messages TURN (hérite le masquage IP du serveur TURN). Relay des Binding Requests via tunnel. Semaphore-based concurrency control (20 slots)
 - **Protection navigateur** (`internal/browser/`) : Extension CRX/XPI embarquées via `//go:embed`. Déploiement via browser policies (registre Windows pour Chrome, policies.json pour Firefox). Parsing protobuf CRX header pour dérivation Extension ID. Génération dynamique updates.xml Chrome
-- **Proxy système** (`internal/ui/sysproxy_windows.go`) : Configuration WinINET proxy (HKCU) au connect, restauration au disconnect. Mécanisme de récupération orphelin en cas de crash
+- **Proxy système** (`internal/ui/sysproxy_windows.go`) : Configuration WinINET proxy (HKCU) au connect, restauration au quit (ForceDisable en fallback si Restore échoue). Mécanisme de récupération orphelin en cas de crash
 - **Singleton** (`internal/ui/singleton_windows.go`) : Mutex nommé Windows pour empêcher les instances multiples de l'UI
 - **Serveur HTTP local** (`internal/ui/httpserver.go`) : Sert les assets frontend embarqués et expose l'API REST JSON pour le webview. Écoute loopback uniquement. Proxie les commandes vers le service via IPC client
 - **Blocklist DNS** (`internal/blocklist/`) : Téléchargement StevenBlack/hosts (10 Mo max), parsing format hosts, stockage in-memory map, swap atomique. Refresh périodique configurable
@@ -397,7 +397,6 @@ type Response struct {
 GET  /api/status          → StatusResponse (état tunnel, IP, pays, latence)
 GET  /api/registry        → RegistryResponse (liste pays + relais)
 POST /api/connect         → connecte via IPC
-POST /api/disconnect      → déconnecte via IPC
 POST /api/country         → {code: "is"} sélectionne le pays via IPC
 GET  /api/leak-status     → état détection fuites
 POST /api/leak-check      → déclenche vérification fuites
@@ -463,11 +462,25 @@ http_port = 50114
   "master_public_key": "base64...",
   "relays": [
     {
-      "id": "is-01",
+      "id": "relay-is-01",
       "domain": "relay.levoile.dev",
       "public_key": "base64...",
       "signature": "base64...",
-      "added": "2026-03-16T10:00:00Z"
+      "added": "2026-04-09T22:22:36Z"
+    },
+    {
+      "id": "relay-fi-01",
+      "domain": "fi.levoile.dev",
+      "public_key": "base64...",
+      "signature": "base64...",
+      "added": "2026-04-09T22:22:36Z"
+    },
+    {
+      "id": "relay-de-01",
+      "domain": "de.levoile.dev",
+      "public_key": "base64...",
+      "signature": "base64...",
+      "added": "2026-04-09T22:22:36Z"
     }
   ]
 }
@@ -505,20 +518,20 @@ http_port = 50114
 - **Layout** : Sidebar 150px (sélecteur pays) + Main panel (statut connexion centré)
 - **Sélecteur de pays** : Liste avec drapeaux emoji + nom du pays + nombre de relais + indicateur actif
 - **Statut connexion** : Dot animé (vert connecté steady, orange connecting pulse 1.5s, rouge déconnecté), pays, IP visible, relay ID, latence, uptime
-- **Bouton** : Connect/Disconnect toggle. Désactivé pendant transition d'état
+- **Bouton** : Connect uniquement (visible quand déconnecté, masqué quand connecté). L'utilisateur quitte via le bouton X ou le tray → Quitter
 - **Modal** : Confirmation quitter avec "Ne plus afficher" checkbox, persisté config TOML
 - **Polling** : Frontend JS poll `fetch('/api/status')` toutes les 2s, `fetch('/api/registry')` toutes les 30s
 - **Tray (même processus)** :
   - fyne.io/systray sur le thread principal (bloquant — requis par systray)
-  - Menu contextuel : Ouvrir (ouvre/montre la fenêtre webview), Connecter/Déconnecter, Pays (sous-menu), Quitter
+  - Menu contextuel : Ouvrir la fenêtre (ouvre/montre la fenêtre webview), Quitter
   - Polling status service via IPC toutes les 2s
   - Icônes tray embarquées via `//go:embed` : connected.ico / connecting.ico / disconnected.ico
-  - Proxy système WinINET : set au connect, restore au disconnect
+  - Proxy système WinINET : set au connect, restore au quit (ForceDisable en fallback)
   - Singleton Windows : mutex nommé pour empêcher instances multiples
 - **Lifecycle** :
   - Lancement → tray démarre sur main thread, serveur HTTP local démarre en goroutine
   - "Ouvrir" depuis tray → crée/montre la fenêtre webview
-  - Fermer la fenêtre → la détruit, le tray persiste. Réouverture → nouvelle fenêtre webview
+  - Fermer la fenêtre (X) → shutdown complet : déconnexion tunnel, restauration proxy WinINET, arrêt service, exit tray. Le raccourci bureau relance le tout (run as admin)
   - "Quitter" depuis tray → arrêt serveur HTTP, libération webview, sortie processus
 
 ### Extension Navigateur Patterns
@@ -918,7 +931,7 @@ le_voile/
 - Communication via serveur HTTP local embarqué (API REST JSON sur 127.0.0.1:{port})
 - Le frontend utilise `fetch()` vers `/api/*` — pas de bindings Go↔JS directs
 - Le serveur HTTP local (`internal/ui/httpserver.go`) proxie les commandes vers le service via IPC client — pas d'accès direct aux composants internes
-- Endpoints : /api/status, /api/connect, /api/disconnect, /api/country, /api/registry, /api/leak-status, /api/settings, /api/quit, etc.
+- Endpoints : /api/status, /api/connect, /api/country, /api/registry, /api/leak-status, /api/settings, etc.
 
 **Frontière OS (DNS Manager) :**
 - Interface `DNSManager` dans `manager.go` — contrat unique

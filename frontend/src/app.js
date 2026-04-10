@@ -94,16 +94,11 @@ function updateUI(s) {
         dom.relayInfo.textContent = '';
     }
 
-    // Connect button
+    // Connect button (visible only when disconnected)
     if (dom.btnConnect) {
-        var countryMismatch = st === 'connected' && selectedCountryName && s.country && selectedCountryName !== s.country;
-        if (countryMismatch || st === 'disconnected') {
+        if (st === 'disconnected') {
             dom.btnConnect.className = 'btn btn-connect';
             dom.btnConnect.textContent = 'Connecter';
-            dom.btnConnect.disabled = false;
-        } else if (st === 'connected') {
-            dom.btnConnect.className = 'btn btn-disconnect';
-            dom.btnConnect.textContent = 'Deconnecter';
             dom.btnConnect.disabled = false;
         } else {
             dom.btnConnect.className = 'btn hidden';
@@ -172,13 +167,12 @@ async function selectCountry(code, name) {
     } catch (e) {}
 }
 
-// === Connect/Disconnect ===
+// === Connect ===
 async function toggleConnect() {
     var btn = dom.btnConnect;
     btn.disabled = true;
     try {
-        var action = btn.classList.contains('btn-disconnect') ? 'disconnect' : 'connect';
-        var resp = await fetch('/api/' + action, { method: 'POST' });
+        var resp = await fetch('/api/connect', { method: 'POST' });
         var data = await resp.json();
         if (data.error) dom.text.textContent = data.error;
     } catch (e) {}

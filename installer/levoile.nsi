@@ -82,14 +82,17 @@ Section "Install"
   ; Launch desktop GUI immediately (includes systray)
   Exec '"$INSTDIR\${DESKTOP_EXE}"'
 
-  ; Desktop shortcut — starts the service + tray + desktop GUI
+  ; Desktop shortcut — starts the service + tray + desktop GUI (run as admin)
   CreateShortCut "$DESKTOP\${APP_NAME}.lnk" "$INSTDIR\${DESKTOP_EXE}" "" \
     "$INSTDIR\levoile.ico" 0
+  ; Mark shortcut as "Run as administrator" (set byte 0x15 bit 0x20)
+  nsExec::Exec 'powershell -NoProfile -Command "$$b=[IO.File]::ReadAllBytes(\"$DESKTOP\${APP_NAME}.lnk\"); $$b[0x15]=$$b[0x15] -bor 0x20; [IO.File]::WriteAllBytes(\"$DESKTOP\${APP_NAME}.lnk\",$$b)"'
 
-  ; Start menu shortcut
+  ; Start menu shortcut (run as admin)
   CreateDirectory "$SMPROGRAMS\${APP_NAME}"
   CreateShortCut "$SMPROGRAMS\${APP_NAME}\${APP_NAME}.lnk" "$INSTDIR\${DESKTOP_EXE}" "" \
     "$INSTDIR\levoile.ico" 0
+  nsExec::Exec 'powershell -NoProfile -Command "$$b=[IO.File]::ReadAllBytes(\"$SMPROGRAMS\${APP_NAME}\${APP_NAME}.lnk\"); $$b[0x15]=$$b[0x15] -bor 0x20; [IO.File]::WriteAllBytes(\"$SMPROGRAMS\${APP_NAME}\${APP_NAME}.lnk\",$$b)"'
   CreateShortCut "$SMPROGRAMS\${APP_NAME}\D$\'esinstaller.lnk" "$INSTDIR\uninstall.exe" "" \
     "$INSTDIR\uninstall.exe" 0
 

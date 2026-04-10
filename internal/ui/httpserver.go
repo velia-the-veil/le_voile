@@ -53,8 +53,7 @@ func NewHTTPServer(ipcClient *SafeIPCClient, frontendFS fs.FS) *HTTPServer {
 	// API endpoints.
 	s.mux.HandleFunc("/api/status", s.handleStatus)
 	s.mux.HandleFunc("/api/connect", s.handleConnect)
-	s.mux.HandleFunc("/api/disconnect", s.handleDisconnect)
-	s.mux.HandleFunc("/api/registry", s.handleRegistry)
+s.mux.HandleFunc("/api/registry", s.handleRegistry)
 	s.mux.HandleFunc("/api/country", s.handleCountry)
 	s.mux.HandleFunc("/api/settings", s.handleGetSettings)
 	s.mux.HandleFunc("/api/settings/autostart", s.handleSetAutoStart)
@@ -145,17 +144,7 @@ func (s *HTTPServer) handleConnect(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(actionResponse(resp))
 }
 
-func (s *HTTPServer) handleDisconnect(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	resp := s.sendIPC(r.Context(), ipc.ActionDisconnect, "")
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(actionResponse(resp))
-}
-
-// actionResponse builds a JSON-friendly map from an IPC response for connect/disconnect actions.
+// actionResponse builds a JSON-friendly map from an IPC response for connect actions.
 func actionResponse(resp ipc.Response) map[string]string {
 	m := map[string]string{"status": resp.Status}
 	if resp.Error != "" {

@@ -34,7 +34,7 @@ New-Item -ItemType Directory -Path (Join-Path $BuildDir "icons") -Force | Out-Nu
 
 # Copy binaries from GoReleaser output
 Copy-Item (Join-Path $ProjectRoot "dist\service_windows_amd64_v1\levoile-service.exe") $BuildDir
-Copy-Item (Join-Path $ProjectRoot "dist\tray_windows_amd64_v1\levoile-tray.exe") $BuildDir
+Copy-Item (Join-Path $ProjectRoot "dist\ui_windows_amd64_v1\levoile-ui.exe") (Join-Path $BuildDir "levoile-desktop.exe")
 
 # Copy assets
 Copy-Item (Join-Path $ProjectRoot "assets\icons\*.ico") (Join-Path $BuildDir "icons\")
