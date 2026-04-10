@@ -10,6 +10,9 @@
   !define APP_VERSION "0.0.0-dev"
 !endif
 
+!include "MUI2.nsh"
+!include "nsDialogs.nsh"
+
 SetCompressor /SOLID lzma
 ManifestDPIAware true
 Name "${APP_NAME}"
@@ -19,6 +22,21 @@ RequestExecutionLevel admin
 
 Icon "levoile.ico"
 UninstallIcon "levoile.ico"
+
+; --- MUI Settings ---
+!define MUI_ICON "levoile.ico"
+!define MUI_WELCOMEFINISHPAGE_BITMAP "welcome.bmp"
+!define MUI_WELCOMEPAGE_TITLE "Bienvenue dans l'installation de ${APP_NAME}"
+!define MUI_WELCOMEPAGE_TEXT "\
+Les navigateurs portables ne sont pas couverts par la protection WebRTC.$\r$\n$\r$\n\
+Fermez vos navigateurs afin d'appliquer les regles et l'extension.$\r$\n$\r$\n\
+Le VPN sera installe dans :$\r$\n\
+$PROGRAMFILES64\${APP_KEY}"
+
+!insertmacro MUI_PAGE_WELCOME
+!insertmacro MUI_PAGE_INSTFILES
+
+!insertmacro MUI_LANGUAGE "French"
 
 Section "Install"
   SetOutPath $INSTDIR
@@ -95,10 +113,6 @@ Section "Install"
 
   ; Write uninstaller
   WriteUninstaller "$INSTDIR\uninstall.exe"
-
-  ; Note about browser WebRTC protection (portable browsers not covered)
-  MessageBox MB_OK|MB_ICONINFORMATION \
-    "Les navigateurs portables ne sont pas couverts par la protection WebRTC. Seuls les navigateurs installes normalement sont proteges."
 SectionEnd
 
 Section "Uninstall"

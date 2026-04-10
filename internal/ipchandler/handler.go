@@ -518,12 +518,13 @@ func handleSelectCountry(prg *svc.Program, req ipc.Request, opts Options) ipc.Re
 		return ipc.Response{Status: ipc.StatusError, Error: fmt.Sprintf("ipchandler: update relay: %v", err)}
 	}
 
-	// Stop reconnector to prevent race during manual reconnect.
+	// Stop reconnector and drop current tunnel before switching.
 	if r := prg.Reconnector(); r != nil {
 		r.Stop()
 	}
+	_ = tc.Disconnect()
 
-	// Reconnect through the new relay.
+	// Connect through the new relay.
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if err := tc.Connect(ctx); err != nil {
@@ -553,10 +554,8 @@ func handleSelectCountry(prg *svc.Program, req ipc.Request, opts Options) ipc.Re
 		configMu.Unlock()
 	}
 
-	// Clear stale IP before async detection so GetStatus won't return the old relay's IP.
+	// Clear stale IP before async detection.
 	prg.SetVisibleIP("")
-
-	// Detect visible IP after reconnection (reuse service method to avoid duplication).
 	go prg.DetectVisibleIP(prg.Context())
 
 	return ipc.Response{Status: ipc.StatusConnected}
