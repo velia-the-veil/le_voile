@@ -140,8 +140,11 @@ func (u *UI) onReady() {
 	go u.connectAndPoll(ctx)
 	go u.menuHandler(ctx)
 
-	// Auto-open webview on startup.
-	u.handleOpenWebview()
+	// Open webview once HTTP server is ready (in goroutine to avoid blocking systray).
+	go func() {
+		u.httpServer.Addr() // blocks until listener is bound
+		u.handleOpenWebview()
+	}()
 }
 
 func (u *UI) onExit() {
@@ -172,7 +175,7 @@ func (u *UI) handleOpenWebview() {
 	u.webviewOpen.Store(true)
 	go func() {
 		defer u.webviewOpen.Store(false)
-		openWebview(addr,
+		quit := openWebview(addr,
 			func(terminate func()) {
 				u.mu.Lock()
 				u.webviewTerminate = terminate
@@ -184,8 +187,8 @@ func (u *UI) handleOpenWebview() {
 				u.mu.Unlock()
 			},
 		)
-		// Webview closed — if not already shutting down, treat as quit.
-		if !u.shutdownInProgress.Load() {
+		// Only quit if user clicked X (not minimize to tray).
+		if quit && !u.shutdownInProgress.Load() {
 			u.handleQuit()
 		}
 	}()
