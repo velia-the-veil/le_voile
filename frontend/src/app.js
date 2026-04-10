@@ -23,6 +23,9 @@ function init() {
 
     startPolling();
     startRegistryPolling();
+
+    // Retry if page failed to render (cold WebView2 runtime).
+    setTimeout(function() { if (!dom.dot || !dom.dot.offsetParent) location.reload(); }, 1500);
 }
 
 // === Panels ===
@@ -113,7 +116,15 @@ function updateUI(s) {
 function startRegistryPolling() {
     if (registryId) clearInterval(registryId);
     loadRegistry();
-    registryId = setInterval(loadRegistry, REGISTRY_POLL_INTERVAL);
+    // Retry quickly until countries appear, then slow down to normal interval.
+    var fastId = setInterval(function() {
+        if (dom.countryList && dom.countryList.children.length > 0) {
+            clearInterval(fastId);
+            registryId = setInterval(loadRegistry, REGISTRY_POLL_INTERVAL);
+            return;
+        }
+        loadRegistry();
+    }, 2000);
 }
 
 async function loadRegistry() {

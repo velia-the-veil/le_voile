@@ -79,7 +79,8 @@ Section "Install"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Run" \
     "${APP_KEY}" '"$INSTDIR\${DESKTOP_EXE}"'
 
-  ; Launch desktop GUI immediately (includes systray)
+  ; Launch desktop GUI after service has had time to initialize.
+  Sleep 3000
   Exec '"$INSTDIR\${DESKTOP_EXE}"'
 
   ; Desktop shortcut — starts the service + tray + desktop GUI (run as admin)

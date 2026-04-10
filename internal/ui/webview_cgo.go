@@ -93,10 +93,11 @@ func moveToBottomRight(hwnd uintptr, w, h int) {
 	procSetWindowPos.Call(hwnd, 0, uintptr(x), uintptr(y), uintptr(w), uintptr(h), swpNoZOrder)
 }
 
-func openWebview(addr string, setTerminate func(func()), clearTerminate func()) {
+// openWebview opens the webview window. Returns true if user requested quit, false if just hidden.
+func openWebview(addr string, setTerminate func(func()), clearTerminate func()) bool {
 	w := webview.New(false)
 	if w == nil {
-		return
+		return false
 	}
 	// Guard against calling w.Terminate() after w.Destroy() (use-after-free).
 	// If the user closes the window and shutdown runs concurrently,
@@ -124,10 +125,16 @@ func openWebview(addr string, setTerminate func(func()), clearTerminate func()) 
 	})
 
 	// Window control bindings for custom titlebar.
+	// __minimize: hide webview back to tray (not taskbar minimize).
 	w.Bind("__minimize", func() {
-		procShowWindow.Call(hwnd, swMinimize)
+		if alive.Load() {
+			w.Terminate()
+		}
 	})
+	// __close: quit the entire application.
+	var quitRequested atomic.Bool
 	w.Bind("__close", func() {
+		quitRequested.Store(true)
 		if alive.Load() {
 			w.Terminate()
 		}
@@ -152,4 +159,5 @@ func openWebview(addr string, setTerminate func(func()), clearTerminate func()) 
 
 	w.Navigate("http://" + addr + "/")
 	w.Run()
+	return quitRequested.Load()
 }
