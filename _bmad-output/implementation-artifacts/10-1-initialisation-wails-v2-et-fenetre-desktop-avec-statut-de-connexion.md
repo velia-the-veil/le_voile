@@ -1,6 +1,6 @@
 # Story 10.1 : Initialisation Wails v2 et Fenêtre Desktop avec Statut de Connexion
 
-Status: done
+Status: deprecated — remplacé par 10-1-binaire-ui-unique-systray-webview-serveur-http-local-avec-statut-de-connexion.md (architecture webview/webview + fyne.io/systray)
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 

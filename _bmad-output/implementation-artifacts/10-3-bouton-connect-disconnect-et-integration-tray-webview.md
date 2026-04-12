@@ -1,44 +1,42 @@
-# Story 10.3 : Bouton Connect/Disconnect et Intégration Tray ↔ Webview
+# Story 10.3 : Bouton Connect et Intégration Tray ↔ Webview
 
-Status: done
+Status: done (révisé 2026-04-12 — suppression bouton Disconnect, X = quit, minimize = hide)
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
 ## Story
 
 En tant qu'utilisateur,
-je veux connecter/déconnecter Le Voile depuis la fenêtre ou le tray, et ouvrir la fenêtre depuis le tray,
-afin de contrôler ma protection depuis n'importe quel point d'accès.
+je veux connecter Le Voile depuis la fenêtre, réduire dans le tray, et quitter depuis le tray ou le bouton X,
+afin de contrôler ma protection simplement.
 
 ## Acceptance Criteria
 
-1. **AC1 — Bouton Connect/Disconnect dans la fenêtre webview**
-   **Given** la fenêtre webview est ouverte
-   **When** l'utilisateur clique sur le bouton Connect/Disconnect
-   **Then** le frontend appelle `fetch('/api/connect', {method:'POST'})` ou `fetch('/api/disconnect', {method:'POST'})`
-   **And** le serveur HTTP local proxie la commande vers le service via IPC (`ActionConnect` / `ActionDisconnect`)
+1. **AC1 — Bouton Connect dans la fenêtre webview**
+   **Given** la fenêtre webview est ouverte et le VPN est déconnecté
+   **When** l'utilisateur clique sur le bouton "Connecter"
+   **Then** le frontend appelle `fetch('/api/connect', {method:'POST'})`
+   **And** le serveur HTTP local proxie la commande vers le service via IPC (`ActionConnect`)
    **And** l'indicateur de statut et l'icône tray se mettent à jour simultanément
+   **And** le bouton disparaît une fois connecté (pas de bouton Déconnecter)
 
-2. **AC2 — Menu tray "Ouvrir" crée/montre la fenêtre webview**
+2. **AC2 — Menu tray "Ouvrir la fenêtre" montre la fenêtre**
    **Given** le tray icon est visible dans la barre des tâches
-   **When** l'utilisateur sélectionne "Ouvrir" dans le menu tray
-   **Then** une fenêtre webview (420×540px, frameless) est créée et navigue vers `http://127.0.0.1:{port}/`
-   **And** si une fenêtre existe déjà, elle est mise au premier plan
+   **When** l'utilisateur sélectionne "Ouvrir la fenêtre" dans le menu tray
+   **Then** la fenêtre webview masquée réapparaît (SW_SHOW) avec son état intact
+   **And** la fenêtre est mise au premier plan
 
-3. **AC3 — Fermeture webview → destruction, tray persiste**
+3. **AC3 — Bouton "─" (minimize) = masquer dans le tray**
    **Given** la fenêtre webview est ouverte
-   **When** l'utilisateur ferme la fenêtre (croix ✕ ou via le modal quitter)
-   **Then** la fenêtre webview est détruite (ressources libérées)
+   **When** l'utilisateur clique sur "─"
+   **Then** la fenêtre est masquée (SW_HIDE), pas détruite
    **And** le tray et le service continuent de fonctionner
    **And** la protection reste active (tunnel, DNS, proxy)
-   **And** une réouverture depuis le tray crée une nouvelle fenêtre webview
 
-4. **AC4 — Menu tray "Connecter/Déconnecter" synchronisé**
-   **Given** le menu clic droit du tray contient "Connecter" ou "Déconnecter" (selon l'état)
-   **When** l'utilisateur sélectionne cette option
-   **Then** le tunnel s'active/se désactive via IPC
-   **And** l'icône tray change (vert/orange/rouge)
-   **And** la fenêtre webview (si ouverte) reflète le changement d'état via le polling /api/status
+4. **AC4 — Bouton "✕" (close) = quitter Le Voile**
+   **Given** la fenêtre webview est ouverte
+   **When** l'utilisateur clique sur "✕"
+   **Then** shutdown complet : proxy WinINET restauré, service arrêté, tray fermé
 
 5. **AC5 — États du bouton et feedback visuel**
    **Given** l'état du tunnel change
@@ -46,10 +44,9 @@ afin de contrôler ma protection depuis n'importe quel point d'accès.
    **Then** le bouton s'adapte selon le tableau :
    | État | Action visible |
    |---|---|
-   | Connecté | Bouton "Déconnecter" (rouge transparent, bordure rouge) |
-   | Transition/Reconnexion | Aucun bouton (masqué, disabled) |
+   | Connecté | Aucun bouton (masqué) |
+   | Transition/Reconnexion | Aucun bouton (masqué) |
    | Déconnecté | Bouton "Connecter" (fond vert `#4ade80`) |
-   | Pays sélectionné ≠ pays connecté | Bouton "Connecter" (fond vert) |
    | Erreur (aucun relais) | Aucun bouton |
 
 ## Tasks / Subtasks

@@ -23,20 +23,23 @@ afin de ne jamais avoir de fuite accidentelle ni de processus orphelin.
 **And** le processus UI se termine (`systray.Quit()`)
 **And** aucun processus orphelin ne subsiste
 
-**AC2 — Fermer webview ≠ quitter**
+**AC2 — Bouton "─" (minimize) = masquer dans le tray**
 **Given** le service Le Voile est actif et le tunnel connecté
-**When** l'utilisateur ferme la fenêtre webview (croix ou bouton OS)
-**Then** la fenêtre webview est détruite (`w.Destroy()`)
+**When** l'utilisateur clique sur "─" (minimize)
+**Then** la fenêtre webview est masquée (`ShowWindow(hwnd, SW_HIDE)`), pas détruite
 **And** le tray continue de fonctionner (même processus)
-**And** le serveur HTTP local continue d'écouter (prêt pour une réouverture)
-**And** le service continue de fonctionner
-**And** le tunnel, la protection DNS, le kill switch et le proxy restent actifs
+**And** le service, tunnel, DNS, proxy restent actifs
 **And** les politiques navigateur restent appliquées
 
+**AC2b — Bouton "✕" (close) = quitter Le Voile**
+**Given** le service Le Voile est actif
+**When** l'utilisateur clique sur "✕"
+**Then** shutdown complet : proxy WinINET restauré (avec ForceDisable si nécessaire), service arrêté via IPC ActionQuit, tray fermé
+
 **AC3 — Réouverture webview depuis tray**
-**Given** le service est actif et la fenêtre webview est fermée
-**When** l'utilisateur sélectionne "Ouvrir" dans le menu tray
-**Then** une nouvelle fenêtre webview est créée (`webview.New(false)`) et navigue vers `http://127.0.0.1:{port}/`
+**Given** le service est actif et la fenêtre webview est masquée
+**When** l'utilisateur sélectionne "Ouvrir la fenêtre" dans le menu tray
+**Then** la fenêtre existante est montrée (`ShowWindow(hwnd, SW_SHOW)`) — pas de recréation
 **And** l'état actuel (pays, relais, IP, statut) est affiché correctement via le polling `fetch('/api/status')`
 
 **AC4 — Robustesse shutdown service**

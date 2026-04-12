@@ -1,6 +1,6 @@
 # Story 10.3: Bouton Connect/Disconnect et Intégration Tray ↔ Wails
 
-Status: done
+Status: deprecated — remplacé par 10-3-bouton-connect-disconnect-et-integration-tray-webview.md (architecture webview/webview + fyne.io/systray). Le bouton Disconnect a été supprimé — l'utilisateur quitte via X ou tray > Quitter.
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
