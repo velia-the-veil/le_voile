@@ -243,7 +243,7 @@ func (u *UI) doShutdown() {
 	u.client.SendContext(quitCtx, ipc.Request{Action: ipc.ActionQuit})
 	quitCancel()
 	// Give the service time to shut down cleanly via SCM.
-	time.Sleep(2 * time.Second)
+	time.Sleep(1 * time.Second)
 
 	// 6. Safety net: restore DNS from persisted file in case the service
 	// didn't shut down cleanly. No-op if the service already restored.

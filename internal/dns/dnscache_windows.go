@@ -35,7 +35,7 @@ func StopDnscache() error {
 		if svc.stopped {
 			continue
 		}
-		out, err := exec.Command("net", "stop", svc.name).CombinedOutput()
+		out, err := hiddenCommand("net", "stop", svc.name).CombinedOutput()
 		if err != nil {
 			// Exit code 2 = service already stopped — that's fine.
 			if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 2 {
@@ -70,7 +70,7 @@ func RestartDnscache() error {
 		if !svc.stopped {
 			continue
 		}
-		out, err := exec.Command("net", "start", svc.name).CombinedOutput()
+		out, err := hiddenCommand("net", "start", svc.name).CombinedOutput()
 		if err != nil {
 			// Exit code 2 = already running — that's fine.
 			if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 2 {
