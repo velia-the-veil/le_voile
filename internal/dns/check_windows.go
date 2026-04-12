@@ -5,7 +5,6 @@ package dns
 import (
 	"context"
 	"fmt"
-	"os/exec"
 	"strings"
 )
 
@@ -21,7 +20,7 @@ func CheckCurrentResolver(ctx context.Context) (string, error) {
 		return "", ErrNoActiveInterface
 	}
 
-	out, err := exec.CommandContext(ctx, "netsh", "interface", "ip", "show", "dns", ifaces[0]).CombinedOutput()
+	out, err := defaultRunner(ctx, "netsh", "interface", "ip", "show", "dns", ifaces[0])
 	if err != nil {
 		return "", fmt.Errorf("dns: check resolver: %w", err)
 	}
@@ -38,8 +37,8 @@ func ForceResolver(ctx context.Context, addr string) error {
 	}
 
 	for _, iface := range ifaces {
-		out, err := exec.CommandContext(ctx, "netsh", "interface", "ip", "set", "dns",
-			fmt.Sprintf("name=%s", iface), "static", addr).CombinedOutput()
+		out, err := defaultRunner(ctx, "netsh", "interface", "ip", "set", "dns",
+			fmt.Sprintf("name=%s", iface), "static", addr)
 		if err != nil {
 			return fmt.Errorf("dns: force resolver for %q: %s: %w", iface, strings.TrimSpace(string(out)), err)
 		}

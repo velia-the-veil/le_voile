@@ -39,6 +39,8 @@ type DNSManager interface {
 type commandRunner func(ctx context.Context, name string, args ...string) ([]byte, error)
 
 // defaultRunner executes a real OS command.
-func defaultRunner(ctx context.Context, name string, args ...string) ([]byte, error) {
+// On Windows, init() in cmd_windows.go replaces this with hiddenRunner
+// to prevent console window flashes.
+var defaultRunner commandRunner = func(ctx context.Context, name string, args ...string) ([]byte, error) {
 	return exec.CommandContext(ctx, name, args...).CombinedOutput()
 }
