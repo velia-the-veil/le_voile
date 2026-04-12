@@ -26,5 +26,8 @@ func (sp *SysProxy) Restore() error { return nil }
 // ForceDisable is a no-op on non-Windows.
 func (sp *SysProxy) ForceDisable() {}
 
+// IsOurProxyActive is a no-op on non-Windows.
+func (sp *SysProxy) IsOurProxyActive() bool { return false }
+
 // RecoverOrphan is a no-op on non-Windows.
 func (sp *SysProxy) RecoverOrphan() error { return nil }

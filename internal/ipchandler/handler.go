@@ -5,6 +5,7 @@ package ipchandler
 import (
 	"context"
 	"fmt"
+	"math/rand"
 	"net"
 	"sort"
 	"sync"
@@ -511,7 +512,8 @@ func handleSelectCountry(prg *svc.Program, req ipc.Request, opts Options) ipc.Re
 		return ipc.Response{Status: ipc.StatusError, Error: "no_relays_for_country"}
 	}
 
-	relay := countryRelays[0] // best relay by latency (already sorted)
+	// Pick a random relay for fair distribution across VPS in the same country.
+	relay := countryRelays[rand.Intn(len(countryRelays))]
 
 	// Update the tunnel to use the new relay.
 	if err := tc.UpdateRelay(relay.Domain, relay.PublicKey); err != nil {
@@ -528,7 +530,6 @@ func handleSelectCountry(prg *svc.Program, req ipc.Request, opts Options) ipc.Re
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if err := tc.Connect(ctx); err != nil {
-		// Restart reconnector so it can retry later.
 		if r := prg.Reconnector(); r != nil {
 			go r.Start(prg.Context())
 		}

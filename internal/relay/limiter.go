@@ -3,7 +3,7 @@ package relay
 import "sync/atomic"
 
 // MaxConnections is the default maximum number of concurrent connections.
-const MaxConnections int64 = 150
+const MaxConnections int64 = 1000
 
 // Limiter tracks concurrent connections using atomic operations.
 // Thread-safe without mutex — uses atomic.Int64 for lock-free counting.
