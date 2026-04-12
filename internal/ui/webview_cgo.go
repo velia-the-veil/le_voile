@@ -29,7 +29,9 @@ const (
 	wsBorder        = 0x00800000
 	wsCaption       = 0x00C00000
 	wsThickFrame    = 0x00040000
-	swMinimize      = 6
+	swMinimize = 6
+	swHide     = 0
+	swShow     = 5
 )
 
 type rect struct {
@@ -93,15 +95,13 @@ func moveToBottomRight(hwnd uintptr, w, h int) {
 	procSetWindowPos.Call(hwnd, 0, uintptr(x), uintptr(y), uintptr(w), uintptr(h), swpNoZOrder)
 }
 
-// openWebview opens the webview window. Returns true if user requested quit, false if just hidden.
-func openWebview(addr string, setTerminate func(func()), clearTerminate func()) bool {
+// openWebview opens the webview window. Returns true if user requested quit.
+// showCh receives signals to show the window when hidden (from tray menu).
+func openWebview(addr string, setTerminate func(func()), clearTerminate func(), showCh <-chan struct{}) bool {
 	w := webview.New(false)
 	if w == nil {
 		return false
 	}
-	// Guard against calling w.Terminate() after w.Destroy() (use-after-free).
-	// If the user closes the window and shutdown runs concurrently,
-	// shutdown might capture the terminate func before clearTerminate runs.
 	var alive atomic.Bool
 	alive.Store(true)
 	setTerminate(func() {
@@ -110,7 +110,7 @@ func openWebview(addr string, setTerminate func(func()), clearTerminate func()) 
 		}
 	})
 	defer func() {
-		alive.Store(false) // prevent late w.Terminate() calls
+		alive.Store(false)
 		clearTerminate()
 		w.Destroy()
 	}()
@@ -124,13 +124,11 @@ func openWebview(addr string, setTerminate func(func()), clearTerminate func()) 
 		exec.Command("rundll32", "url.dll,FileProtocolHandler", url).Start()
 	})
 
-	// Window control bindings for custom titlebar.
-	// __minimize: hide webview back to tray (not taskbar minimize).
+	// __minimize: hide window to tray (keep webview alive).
 	w.Bind("__minimize", func() {
-		if alive.Load() {
-			w.Terminate()
-		}
+		procShowWindow.Call(hwnd, swHide)
 	})
+
 	// __close: quit the entire application.
 	var quitRequested atomic.Bool
 	w.Bind("__close", func() {
@@ -156,6 +154,19 @@ func openWebview(addr string, setTerminate func(func()), clearTerminate func()) 
 		setWindowIcon(hwnd, IconDefault)
 		moveToBottomRight(hwnd, 420, 540)
 	})
+
+	// Listen for show signals from tray menu.
+	go func() {
+		for range showCh {
+			if alive.Load() {
+				w.Dispatch(func() {
+					procShowWindow.Call(hwnd, swShow)
+					// Bring to foreground.
+					procSetWindowPos.Call(hwnd, 0, 0, 0, 0, 0, swpNoZOrder|0x0001|0x0002|0x0040)
+				})
+			}
+		}
+	}()
 
 	w.Navigate("http://" + addr + "/")
 	w.Run()

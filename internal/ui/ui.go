@@ -84,6 +84,7 @@ type UI struct {
 	sysProxy       *SysProxy
 	webviewOpen    atomic.Bool // prevents multiple windows
 	sysProxyActive atomic.Bool // tracks whether WinINET is currently set to Le Voile proxy
+	showCh         chan struct{} // signals webview to show itself
 
 	menuOpen *systray.MenuItem
 	menuQuit *systray.MenuItem
@@ -167,12 +168,18 @@ func (u *UI) menuHandler(ctx context.Context) {
 
 func (u *UI) handleOpenWebview() {
 	if u.webviewOpen.Load() {
-		return // already open — no double window
+		// Webview exists but hidden — signal it to show.
+		select {
+		case u.showCh <- struct{}{}:
+		default:
+		}
+		return
 	}
 	addr := u.httpServer.Addr()
 	if addr == "" {
 		return
 	}
+	u.showCh = make(chan struct{}, 1)
 	u.webviewOpen.Store(true)
 	go func() {
 		defer u.webviewOpen.Store(false)
@@ -187,6 +194,7 @@ func (u *UI) handleOpenWebview() {
 				u.webviewTerminate = nil
 				u.mu.Unlock()
 			},
+			u.showCh,
 		)
 		// Only quit if user clicked X (not minimize to tray).
 		if quit && !u.shutdownInProgress.Load() {

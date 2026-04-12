@@ -87,7 +87,7 @@ Afin de déployer un relais fiable et observable sur le VPS Islande.
 
 - [x] Task 6 — Câbler le point d'entrée relay mis à jour (AC: #1, #2, #3, #4)
   - [x] 6.1 Le câblage se fait automatiquement dans `NewServer()` qui crée `Limiter` et `StartTime`, puis dans `ListenAndServe()` qui les passe au `NewHealthHandler` et au `LimitMiddleware`
-  - [x] 6.2 `MaxConnections = 150` est une constante exportée dans `internal/relay/limiter.go`
+  - [x] 6.2 `MaxConnections = 1000` est une constante exportée dans `internal/relay/limiter.go` (augmenté de 150 à 1000 pour supporter plus d'utilisateurs par relay)
   - [x] 6.3 Le graceful shutdown (Story 1.2) continue de fonctionner — le `defer limiter.Release()` dans le middleware assure la cohérence du compteur
 
 - [x] Task 7 — Validation globale (AC: #1, #2, #3, #4)

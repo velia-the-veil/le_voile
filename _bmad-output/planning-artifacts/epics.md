@@ -359,12 +359,11 @@ afin de contrôler ma protection depuis n'importe quel point d'accès.
 **Then** la fenêtre webview est détruite
 **And** le tray et le service continuent de fonctionner
 **And** la protection reste active
-**And** une réouverture depuis le tray crée une nouvelle fenêtre webview
+**And** une réouverture depuis le tray montre la fenêtre masquée (pas de recréation)
 
-**Given** le menu clic droit du tray contient "Connecter/Déconnecter"
-**When** l'utilisateur sélectionne cette option
-**Then** le tunnel s'active/se désactive via IPC
-**And** la fenêtre webview (si ouverte) reflète le changement d'état via le polling status
+**Given** le menu clic droit du tray contient "Ouvrir la fenêtre" et "Quitter"
+**When** l'utilisateur sélectionne "Quitter"
+**Then** le tunnel se déconnecte, le proxy WinINET est restauré, le service s'arrête, le tray disparaît
 
 ---
 

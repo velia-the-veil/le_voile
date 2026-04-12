@@ -333,7 +333,7 @@ L'innovation est dans ce qui est **absent** : pas de login, pas de choix de prot
 **2. Usage quotidien :**
 - Le processus tourne. L'icône tray montre le V vert. Rien d'autre.
 - Clic gauche sur le tray = toggle fenêtre (vérification rapide)
-- Clic droit = menu contextuel (Ouvrir / Connecter-Déconnecter / Quitter)
+- Clic droit = menu contextuel (Ouvrir la fenêtre / Quitter)
 
 **3. Changement de pays :**
 - Ouverture fenêtre → clic sur le sélecteur → clic sur le drapeau voulu
@@ -917,7 +917,7 @@ Pas de design system externe. Tous les composants sont custom, construits en HTM
 
 **Tray comme point d'entrée :**
 - Clic gauche tray = toggle fenêtre (visible/masquée)
-- Clic droit tray = menu contextuel minimal : Ouvrir | Connecter/Déconnecter | Quitter
+- Clic droit tray = menu contextuel minimal : Ouvrir la fenêtre | Quitter
 
 ### Modal Pattern
 
