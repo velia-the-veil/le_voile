@@ -81,8 +81,9 @@ type UI struct {
 	// Protected by mu.
 	webviewTerminate func()
 
-	sysProxy    *SysProxy
-	webviewOpen atomic.Bool // prevents multiple windows
+	sysProxy       *SysProxy
+	webviewOpen    atomic.Bool // prevents multiple windows
+	sysProxyActive atomic.Bool // tracks whether WinINET is currently set to Le Voile proxy
 
 	menuOpen *systray.MenuItem
 	menuQuit *systray.MenuItem
@@ -222,8 +223,10 @@ func (u *UI) doShutdown() {
 	}
 
 	// 3. Restore WinINET proxy (UI owns this resource — AC5).
+	// Try Restore first, then verify proxy is no longer ours.
 	if u.sysProxy != nil {
-		if err := u.sysProxy.Restore(); err != nil {
+		u.sysProxy.Restore()
+		if u.sysProxy.IsOurProxyActive() {
 			u.sysProxy.ForceDisable()
 		}
 	}
@@ -235,10 +238,12 @@ func (u *UI) doShutdown() {
 		shutdownCancel()
 	}
 
-	// 5. Tell the service to stop (10s timeout).
+	// 5. Tell the service to stop and wait for it to exit.
 	quitCtx, quitCancel := context.WithTimeout(context.Background(), quitTimeout)
 	u.client.SendContext(quitCtx, ipc.Request{Action: ipc.ActionQuit})
 	quitCancel()
+	// Give the service time to shut down cleanly via SCM.
+	time.Sleep(2 * time.Second)
 
 	// 6. Safety net: restore DNS from persisted file in case the service
 	// didn't shut down cleanly. No-op if the service already restored.
@@ -336,9 +341,11 @@ func (u *UI) updateTrayState(resp ipc.Response) {
 		u.connected = true
 		u.mu.Unlock()
 
-		// Sync WinINET proxy.
+		// Sync WinINET proxy with current HTTP proxy state.
 		if resp.HTTPProxyActive && resp.HTTPProxyAddr != "" {
 			u.syncSysProxy(true, resp.HTTPProxyAddr)
+		} else if u.sysProxyActive.Load() {
+			u.syncSysProxy(false, "")
 		}
 
 	case ipc.StatusConnecting:
@@ -369,7 +376,9 @@ func (u *UI) syncSysProxy(active bool, addr string) {
 	if active && addr != "" {
 		u.sysProxy.Save()
 		u.sysProxy.Set(addr)
+		u.sysProxyActive.Store(true)
 	} else {
 		u.sysProxy.Restore()
+		u.sysProxyActive.Store(false)
 	}
 }

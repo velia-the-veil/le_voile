@@ -152,12 +152,7 @@ function renderCountryList(countries) {
         name.className = 'name';
         name.textContent = c.name;
 
-        var count = document.createElement('span');
-        count.className = 'count';
-        count.textContent = c.relay_count;
-
         btn.appendChild(name);
-        btn.appendChild(count);
         btn.addEventListener('click', function() {
             selectCountry(c.code, c.name);
             showPanel('status');

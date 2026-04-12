@@ -154,6 +154,15 @@ func (sp *SysProxy) ForceDisable() {
 	sp.broadcastSettingsChange()
 }
 
+// IsOurProxyActive checks if WinINET proxy is currently set to Le Voile's local proxy.
+func (sp *SysProxy) IsOurProxyActive() bool {
+	server, err := sp.readRegistryString("ProxyServer")
+	if err != nil {
+		return false
+	}
+	return sp.isOurProxy(server)
+}
+
 // RecoverOrphan checks for a crashed previous session and restores if needed.
 func (sp *SysProxy) RecoverOrphan() error {
 	filePath := sp.persistedFilePath()
