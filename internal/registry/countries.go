@@ -18,6 +18,8 @@ var CountryMetaMap = map[string]CountryMeta{
 	"fi": {Name: "Finlande", Flag: "🇫🇮"},
 	"us": {Name: "États-Unis", Flag: "🇺🇸"},
 	"fr": {Name: "France", Flag: "🇫🇷"},
+	"es": {Name: "Espagne", Flag: "🇪🇸"},
+	"gb": {Name: "Royaume-Uni", Flag: "🇬🇧"},
 }
 
 // ExtractCountryCode extracts the ISO 2-letter country code from a relay ID

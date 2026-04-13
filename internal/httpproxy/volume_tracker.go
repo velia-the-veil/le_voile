@@ -13,7 +13,7 @@ import (
 
 // Volume bypass constants.
 const (
-	VolumeThreshold    int64         = 500 * 1024 * 1024 // 500 MB
+	VolumeThreshold    int64         = 1024 * 1024 * 1024 // 1 GiB
 	WindowDuration     time.Duration = 1 * time.Hour
 	BypassCooldown     time.Duration = 24 * time.Hour
 	BypassDialTimeout  time.Duration = 3 * time.Second

@@ -8,8 +8,8 @@ import (
 )
 
 const (
-	// DailyQuotaBytes is the per-IP daily download quota (2 GiB).
-	DailyQuotaBytes int64 = 2 * 1024 * 1024 * 1024
+	// DailyQuotaBytes is the per-IP daily download quota (10 GiB).
+	DailyQuotaBytes int64 = 10 * 1024 * 1024 * 1024
 
 	// ThrottleBytesPerSec is the throttled rate once quota is exceeded (5 Mbps = 625 KB/s).
 	ThrottleBytesPerSec int64 = 625_000
