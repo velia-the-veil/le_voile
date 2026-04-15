@@ -34,7 +34,7 @@ func TestReconnector_KillSwitchActivateFailure(t *testing.T) {
 	updates <- StateDisconnected
 
 	// Wait for reconnection attempt.
-	time.Sleep(2 * time.Second)
+	time.Sleep(500 * time.Millisecond)
 
 	r.Stop()
 	<-done
@@ -118,16 +118,29 @@ func TestNextBackoff_SubSecondInput(t *testing.T) {
 	if got != want {
 		t.Errorf("nextBackoff(500ms) = %v, want %v", got, want)
 	}
+	// Initial backoff doubles from 100ms to 200ms.
+	if got2 := nextBackoff(InitialBackoff); got2 != 200*time.Millisecond {
+		t.Errorf("nextBackoff(InitialBackoff) = %v, want 200ms", got2)
+	}
 }
 
 func TestReconnector_MultipleDisconnects_OnlyOneReconnection(t *testing.T) {
+	// Validates the reconnecting-guard semantics: while a handleDisconnect
+	// cycle is in flight, subsequent StateDisconnected notifications must be
+	// dropped. Uses a gated connectFn so the first cycle stays busy until the
+	// test releases it — this prevents flakiness from the 100ms InitialBackoff
+	// allowing multiple cycles to squeak through.
 	ks := &mockKillSwitch{}
 	updates := make(chan ConnState, 10)
 	var connectCount atomic.Int64
 
-	connectFn := func(_ context.Context) error {
+	release := make(chan struct{})
+	connectFn := func(ctx context.Context) error {
 		connectCount.Add(1)
-		time.Sleep(100 * time.Millisecond)
+		select {
+		case <-release:
+		case <-ctx.Done():
+		}
 		return nil
 	}
 
@@ -141,21 +154,26 @@ func TestReconnector_MultipleDisconnects_OnlyOneReconnection(t *testing.T) {
 		done <- r.Start(ctx)
 	}()
 
-	// Send multiple disconnected states rapidly.
+	// Send multiple disconnected states rapidly. The first will enter
+	// handleDisconnect and block on `release`; the rest MUST be ignored by
+	// the reconnecting guard (not merely delayed by backoff).
 	for i := 0; i < 5; i++ {
 		updates <- StateDisconnected
 	}
 
-	time.Sleep(2 * time.Second)
+	// Give the Start loop ample time to drain and attempt to dispatch. If
+	// the guard is broken, we'd see connectCount climb to 5 here.
+	time.Sleep(800 * time.Millisecond)
+
+	if got := connectCount.Load(); got != 1 {
+		t.Errorf("connectFn called %d times while 1st cycle in flight, want exactly 1 (dedup)", got)
+	}
+
+	// Release the in-flight cycle and stop.
+	close(release)
+	time.Sleep(200 * time.Millisecond)
 	r.Stop()
 	<-done
-
-	// The reconnecting guard should prevent multiple concurrent reconnections.
-	// We expect exactly 1 connect call (the duplicate disconnects are ignored
-	// while r.reconnecting is true).
-	if connectCount.Load() > 5 {
-		t.Errorf("connectFn called %d times, expected reasonable count (deduplication)", connectCount.Load())
-	}
 }
 
 func TestReconnector_DeactivateFailure_RetryOnce(t *testing.T) {
@@ -176,7 +194,7 @@ func TestReconnector_DeactivateFailure_RetryOnce(t *testing.T) {
 	}()
 
 	updates <- StateDisconnected
-	time.Sleep(2 * time.Second)
+	time.Sleep(500 * time.Millisecond)
 
 	r.Stop()
 	<-done

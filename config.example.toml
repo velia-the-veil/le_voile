@@ -6,3 +6,11 @@ public_key_ed25519 = "YOUR_ED25519_PUBLIC_KEY_BASE64"
 
 [client]
 auto_start = true
+
+[tun]
+# Nom de l'interface TUN/Wintun créée par le service. Ne modifier que si
+# conflit d'interface (regex autorisée : ^[a-z][a-z0-9]{0,14}$).
+name = "levoile0"
+# MTU en octets — bornes [576, 9000]. 1420 = défaut compatible QUIC/HTTP3
+# (laisse 80 octets pour l'encapsulation IP + tunnel).
+mtu = 1420

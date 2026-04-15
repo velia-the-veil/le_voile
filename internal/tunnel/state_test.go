@@ -21,6 +21,7 @@ func TestStateManager_SetGet(t *testing.T) {
 		{"connecting", StateConnecting},
 		{"connected", StateConnected},
 		{"disconnected", StateDisconnected},
+		{"failed", StateFailed},
 	}
 
 	for _, tt := range tests {
@@ -47,6 +48,41 @@ func TestStateManager_Updates(t *testing.T) {
 		}
 	case <-time.After(100 * time.Millisecond):
 		t.Fatal("timed out waiting for update")
+	}
+}
+
+func TestStateManager_FailedTransition(t *testing.T) {
+	// StateFailed must be accepted by the StateManager and emitted on the
+	// updates channel like any other state.
+	sm := NewStateManager()
+	ch := sm.Updates()
+
+	sm.Set(StateConnecting)
+	<-ch // drain
+
+	sm.Set(StateFailed)
+	select {
+	case got := <-ch:
+		if got != StateFailed {
+			t.Errorf("update = %q, want %q", got, StateFailed)
+		}
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("timed out waiting for StateFailed update")
+	}
+
+	if got := sm.Get(); got != StateFailed {
+		t.Errorf("Get() = %q, want %q", got, StateFailed)
+	}
+
+	// Reset path: StateFailed -> StateConnecting should succeed and emit.
+	sm.Set(StateConnecting)
+	select {
+	case got := <-ch:
+		if got != StateConnecting {
+			t.Errorf("reset update = %q, want %q", got, StateConnecting)
+		}
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("timed out waiting for StateConnecting update after reset")
 	}
 }
 

@@ -107,16 +107,23 @@ func (v *CloudflareIPValidator) IsTrustedSource(remoteAddr string) bool {
 	return false
 }
 
+// IsInsecure reports whether the validator is in dev/insecure mode.
+func (v *CloudflareIPValidator) IsInsecure() bool {
+	return v.insecure
+}
+
 // ExtractClientIP extracts the real client IP from the request.
 // If the source is trusted (Cloudflare), uses CF-Connecting-IP.
 // Otherwise falls back to RemoteAddr (or rejects in strict mode).
+//
+// NFR20: returned errors NEVER contain the client IP — log-safe.
 func (v *CloudflareIPValidator) ExtractClientIP(r *http.Request) (string, error) {
 	if v.IsTrustedSource(r.RemoteAddr) {
 		cfIP := r.Header.Get("CF-Connecting-IP")
 		if cfIP != "" {
 			// Validate it's a real IP
 			if _, err := netip.ParseAddr(cfIP); err != nil {
-				return "", fmt.Errorf("cfip: invalid CF-Connecting-IP: %q", cfIP)
+				return "", fmt.Errorf("cfip: invalid CF-Connecting-IP")
 			}
 			return cfIP, nil
 		}
@@ -128,7 +135,7 @@ func (v *CloudflareIPValidator) ExtractClientIP(r *http.Request) (string, error)
 		}
 		return host, nil
 	}
-	return "", fmt.Errorf("cfip: untrusted source %s", r.RemoteAddr)
+	return "", fmt.Errorf("cfip: untrusted source")
 }
 
 // StartRefresh starts a goroutine that refreshes Cloudflare IP ranges every 24h.

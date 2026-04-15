@@ -43,6 +43,17 @@ func main() {
 	srv.STUNHandler = relay.NewSTUNHandler()
 	srv.RegistryFile = *registryFile
 
+	// Cloudflare source validation runs on every public endpoint, even when
+	// no signing key is configured. Refusals are logged aggregate-only — no
+	// IP is ever written to logs (NFR20).
+	cfv := relay.NewCloudflareIPValidator(*cfInsecure, func(format string, args ...any) {
+		fmt.Fprintf(os.Stderr, "relay: cfip: "+format+"\n", args...)
+	})
+	srv.CFIPValidator = cfv
+	srv.CFRejectLog = func(reason string) {
+		fmt.Fprintf(os.Stderr, "relay: %s\n", reason)
+	}
+
 	if *signingKeyPath != "" {
 		key, err := loadSigningKey(*signingKeyPath)
 		if err != nil {
@@ -50,12 +61,6 @@ func main() {
 			os.Exit(1)
 		}
 		srv.SigningKey = key
-
-		// Enable Cloudflare IP validation for session tokens.
-		// In production behind Cloudflare, use default (insecure=false).
-		// Pass -cf-insecure for dev/direct mode (no Cloudflare proxy).
-		cfv := relay.NewCloudflareIPValidator(*cfInsecure, nil)
-		srv.CFIPValidator = cfv
 
 		// Enable per-IP connection limiter and bandwidth limiter.
 		ipLimiter := relay.NewIPLimiter(relay.IPLimiterMaxPerIP)

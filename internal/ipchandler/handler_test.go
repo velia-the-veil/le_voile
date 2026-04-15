@@ -82,6 +82,64 @@ func TestHandle_UnknownAction(t *testing.T) {
 	}
 }
 
+func TestHandle_GetStatus_CircuitBreakerTripped(t *testing.T) {
+	// When the Program records a circuit breaker trip, GetStatus must
+	// surface the tripped flag and French message so the UI can render
+	// a persistent banner. Validates the happy path with a nil tunnel
+	// (tripping before first connect is theoretically possible during
+	// a rollback scenario).
+	prg := newTestProgram()
+	prg.ForTestTripCircuitBreaker(svc.CircuitBreakerAlertMessage)
+
+	resp := Handle(prg, ipc.Request{Action: ipc.ActionGetStatus}, Options{})
+
+	if !resp.CircuitBreakerTripped {
+		t.Error("CircuitBreakerTripped = false, want true")
+	}
+	if resp.CircuitBreakerMessage != svc.CircuitBreakerAlertMessage {
+		t.Errorf("CircuitBreakerMessage = %q, want %q",
+			resp.CircuitBreakerMessage, svc.CircuitBreakerAlertMessage)
+	}
+}
+
+func TestHandle_Connect_ResetsCircuitBreaker(t *testing.T) {
+	// handleConnect MUST reset the circuit breaker before attempting a
+	// manual reconnect — otherwise the UI banner would persist through
+	// user-initiated retries. Validated via the nil-tunnel path which
+	// still exercises ResetCircuitBreaker... wait: actually the nil
+	// tunnel returns early with service_not_ready WITHOUT resetting.
+	// So we seed a tripped state and assert it's preserved when tunnel
+	// is nil, then call Connect with a real tunnel in StateDisconnected
+	// and verify reset occurs.
+	prg := newTestProgram()
+	prg.ForTestTripCircuitBreaker(svc.CircuitBreakerAlertMessage)
+
+	// Nil tunnel: Connect returns early, tripped state must be untouched.
+	resp := Handle(prg, ipc.Request{Action: ipc.ActionConnect}, Options{})
+	if resp.Status != ipc.StatusError || resp.Error != "service_not_ready" {
+		t.Fatalf("expected service_not_ready, got %q/%q", resp.Status, resp.Error)
+	}
+	if !prg.CircuitBreakerTripped() {
+		t.Error("circuit breaker reset on service_not_ready path; must be preserved")
+	}
+
+	// Attach a tunnel in StateDisconnected. Connect will try and fail
+	// (invalid pinned key will error out), but the code path BEFORE
+	// tc.Connect must call ResetCircuitBreaker.
+	const zeroKey32 = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+	client, err := tunnel.NewClient("127.0.0.1:1", zeroKey32, tunnel.WithInsecure(true))
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	prg.ForTestSetTunnelClient(client)
+
+	_ = Handle(prg, ipc.Request{Action: ipc.ActionConnect}, Options{})
+
+	if prg.CircuitBreakerTripped() {
+		t.Error("circuit breaker still tripped after Connect; ResetCircuitBreaker not called")
+	}
+}
+
 func TestHandle_SetAutoStart_NoConfigPath(t *testing.T) {
 	opts := Options{
 		ConfigPathFn: func() string { return "" },

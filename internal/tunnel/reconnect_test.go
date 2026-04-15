@@ -10,10 +10,10 @@ import (
 
 // mockKillSwitch is a test double for KillSwitchController.
 type mockKillSwitch struct {
-	activateCount  atomic.Int64
+	activateCount   atomic.Int64
 	deactivateCount atomic.Int64
-	activateErr    error
-	deactivateErr  error
+	activateErr     error
+	deactivateErr   error
 }
 
 func (m *mockKillSwitch) Activate(_ context.Context) error {
@@ -36,11 +36,15 @@ func TestReconnector_BackoffSequence(t *testing.T) {
 		current  time.Duration
 		expected time.Duration
 	}{
-		{"1s -> 2s", 1 * time.Second, 2 * time.Second},
-		{"2s -> 4s", 2 * time.Second, 4 * time.Second},
-		{"4s -> 8s", 4 * time.Second, 8 * time.Second},
-		{"8s -> 16s", 8 * time.Second, 16 * time.Second},
-		{"16s -> 30s (capped)", 16 * time.Second, 30 * time.Second},
+		{"100ms -> 200ms", 100 * time.Millisecond, 200 * time.Millisecond},
+		{"200ms -> 400ms", 200 * time.Millisecond, 400 * time.Millisecond},
+		{"400ms -> 800ms", 400 * time.Millisecond, 800 * time.Millisecond},
+		{"800ms -> 1600ms", 800 * time.Millisecond, 1600 * time.Millisecond},
+		{"1600ms -> 3200ms", 1600 * time.Millisecond, 3200 * time.Millisecond},
+		{"3200ms -> 6400ms", 3200 * time.Millisecond, 6400 * time.Millisecond},
+		{"6400ms -> 12800ms", 6400 * time.Millisecond, 12800 * time.Millisecond},
+		{"12800ms -> 25600ms", 12800 * time.Millisecond, 25600 * time.Millisecond},
+		{"25600ms -> 30s (capped)", 25600 * time.Millisecond, 30 * time.Second},
 		{"30s -> 30s (stays capped)", 30 * time.Second, 30 * time.Second},
 	}
 
@@ -51,6 +55,21 @@ func TestReconnector_BackoffSequence(t *testing.T) {
 				t.Errorf("nextBackoff(%v) = %v, want %v", tt.current, got, tt.expected)
 			}
 		})
+	}
+}
+
+func TestReconnector_InitialBackoff_100ms(t *testing.T) {
+	// NFR12: reconnect initiated < 1s after loss. With InitialBackoff = 100ms,
+	// the Reconnector fires connectFn within ~100ms of receiving the
+	// StateDisconnected notification.
+	if InitialBackoff != 100*time.Millisecond {
+		t.Errorf("InitialBackoff = %v, want 100ms (NFR12)", InitialBackoff)
+	}
+	if CircuitBreakerThreshold != 5 {
+		t.Errorf("CircuitBreakerThreshold = %d, want 5", CircuitBreakerThreshold)
+	}
+	if MaxBackoff != 30*time.Second {
+		t.Errorf("MaxBackoff = %v, want 30s", MaxBackoff)
 	}
 }
 
@@ -74,11 +93,9 @@ func TestReconnector_SuccessfulReconnect(t *testing.T) {
 		done <- r.Start(ctx)
 	}()
 
-	// Send disconnected state.
 	updates <- StateDisconnected
 
-	// Wait for reconnection to complete.
-	time.Sleep(2 * time.Second)
+	time.Sleep(500 * time.Millisecond)
 
 	r.Stop()
 	<-done
@@ -94,6 +111,49 @@ func TestReconnector_SuccessfulReconnect(t *testing.T) {
 	}
 }
 
+func TestReconnector_DetectionLatencyUnder1s(t *testing.T) {
+	// NFR12: after StateDisconnected, the first connectFn call must happen
+	// within 1 second. With InitialBackoff = 100ms this is a large margin,
+	// but we validate the end-to-end path through the updates channel.
+	ks := &mockKillSwitch{}
+	updates := make(chan ConnState, 1)
+
+	firstCall := make(chan time.Time, 1)
+	connectFn := func(_ context.Context) error {
+		select {
+		case firstCall <- time.Now():
+		default:
+		}
+		return nil
+	}
+
+	r := NewReconnector(updates, connectFn, ks)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	done := make(chan error, 1)
+	go func() { done <- r.Start(ctx) }()
+
+	// Small delay to ensure Start is listening on updates.
+	time.Sleep(20 * time.Millisecond)
+	sent := time.Now()
+	updates <- StateDisconnected
+
+	select {
+	case got := <-firstCall:
+		elapsed := got.Sub(sent)
+		if elapsed > time.Second {
+			t.Errorf("detection latency = %v, want < 1s (NFR12)", elapsed)
+		}
+	case <-time.After(1500 * time.Millisecond):
+		t.Fatal("connectFn was not called within 1.5s of StateDisconnected")
+	}
+
+	r.Stop()
+	<-done
+}
+
 func TestReconnector_BackoffOnFailures(t *testing.T) {
 	ks := &mockKillSwitch{}
 	updates := make(chan ConnState, 1)
@@ -104,12 +164,12 @@ func TestReconnector_BackoffOnFailures(t *testing.T) {
 		if n < 3 {
 			return errors.New("connection refused")
 		}
-		return nil // succeed on 3rd attempt
+		return nil
 	}
 
 	r := NewReconnector(updates, connectFn, ks)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
 	done := make(chan error, 1)
@@ -119,8 +179,8 @@ func TestReconnector_BackoffOnFailures(t *testing.T) {
 
 	updates <- StateDisconnected
 
-	// Wait for 3 attempts: 1s wait + fail, 2s wait + fail, 4s wait + succeed = ~7s total.
-	time.Sleep(8 * time.Second)
+	// 100ms + 200ms + 400ms backoff before 3rd attempt = ~700ms. Wait 2s.
+	time.Sleep(2 * time.Second)
 
 	r.Stop()
 	<-done
@@ -155,8 +215,7 @@ func TestReconnector_CancellationDuringBackoff(t *testing.T) {
 
 	updates <- StateDisconnected
 
-	// Let it attempt one reconnection, then cancel.
-	time.Sleep(1500 * time.Millisecond)
+	time.Sleep(300 * time.Millisecond)
 	cancel()
 
 	select {
@@ -184,7 +243,7 @@ func TestReconnector_Stop(t *testing.T) {
 
 	updates <- StateDisconnected
 
-	time.Sleep(500 * time.Millisecond)
+	time.Sleep(200 * time.Millisecond)
 	r.Stop()
 
 	select {
@@ -212,10 +271,8 @@ func TestReconnector_DoubleStart(t *testing.T) {
 		done <- r.Start(ctx)
 	}()
 
-	// Let it initialize.
 	time.Sleep(100 * time.Millisecond)
 
-	// Second Start should return ErrReconnectInProgress.
 	err := r.Start(ctx)
 	if !errors.Is(err, ErrReconnectInProgress) {
 		t.Errorf("second Start returned %v, want ErrReconnectInProgress", err)
@@ -263,7 +320,7 @@ func TestReconnector_FailoverAfterMaxRetries(t *testing.T) {
 	var failoverCalled atomic.Int64
 	failoverFn := func(_ context.Context) error {
 		failoverCalled.Add(1)
-		return nil // failover succeeds
+		return nil
 	}
 
 	r := NewReconnector(updates, connectFn, ks, WithFailoverFn(failoverFn))
@@ -274,11 +331,9 @@ func TestReconnector_FailoverAfterMaxRetries(t *testing.T) {
 	done := make(chan error, 1)
 	go func() { done <- r.Start(ctx) }()
 
-	// Trigger disconnect.
 	updates <- StateDisconnected
 
-	// Wait for failover to be called (after MaxRetriesBeforeFailover connect failures).
-	deadline := time.After(15 * time.Second)
+	deadline := time.After(5 * time.Second)
 	for {
 		select {
 		case <-deadline:
@@ -289,7 +344,7 @@ func TestReconnector_FailoverAfterMaxRetries(t *testing.T) {
 		if failoverCalled.Load() > 0 {
 			break
 		}
-		time.Sleep(100 * time.Millisecond)
+		time.Sleep(50 * time.Millisecond)
 	}
 
 	if connectCount.Load() < int64(MaxRetriesBeforeFailover) {
@@ -313,7 +368,7 @@ func TestReconnector_NoFailoverIfConnectSucceeds(t *testing.T) {
 	connectFn := func(_ context.Context) error {
 		n := connectCount.Add(1)
 		if n >= 2 {
-			return nil // succeed on 2nd attempt
+			return nil
 		}
 		return errors.New("connect failed")
 	}
@@ -334,8 +389,7 @@ func TestReconnector_NoFailoverIfConnectSucceeds(t *testing.T) {
 
 	updates <- StateDisconnected
 
-	// Wait for reconnection to succeed (2nd attempt).
-	time.Sleep(5 * time.Second)
+	time.Sleep(1 * time.Second)
 
 	if failoverCalled.Load() != 0 {
 		t.Errorf("failover should not be called when connect succeeds, called %d times",
@@ -350,20 +404,73 @@ func TestReconnector_NoFailoverIfConnectSucceeds(t *testing.T) {
 	}
 }
 
-func TestReconnector_FailoverFnNil_ContinuesBackoff(t *testing.T) {
+func TestReconnector_CircuitBreakerAfter5Failures(t *testing.T) {
 	updates := make(chan ConnState, 1)
 	ks := &mockKillSwitch{}
 
 	var connectCount atomic.Int64
 	connectFn := func(_ context.Context) error {
-		n := connectCount.Add(1)
-		if n >= 4 {
-			return nil // succeed on 4th attempt (after 1s + 2s + 4s = 7s backoff)
-		}
+		connectCount.Add(1)
 		return errors.New("connect failed")
 	}
 
-	// No failoverFn — nil: backoff continues past MaxRetriesBeforeFailover
+	var hookCalled atomic.Int64
+	hook := func(_ context.Context) {
+		hookCalled.Add(1)
+	}
+
+	// No failoverFn — circuit breaker is the only exit path.
+	r := NewReconnector(updates, connectFn, ks, WithCircuitBreakerHook(hook))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	done := make(chan error, 1)
+	go func() { done <- r.Start(ctx) }()
+
+	updates <- StateDisconnected
+
+	// 100+200+400+800+1600 = 3.1s cumulative backoff for 5 attempts.
+	deadline := time.After(6 * time.Second)
+	for {
+		select {
+		case <-deadline:
+			t.Fatalf("circuit breaker hook not called; connectCount=%d", connectCount.Load())
+		default:
+		}
+		if hookCalled.Load() > 0 {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	if hookCalled.Load() != 1 {
+		t.Errorf("circuit breaker hook called %d times, want 1", hookCalled.Load())
+	}
+	if connectCount.Load() != int64(CircuitBreakerThreshold) {
+		t.Errorf("connectFn called %d times before circuit breaker, want %d",
+			connectCount.Load(), CircuitBreakerThreshold)
+	}
+	if !r.Failed() {
+		t.Error("Reconnector.Failed() = false, want true after circuit breaker")
+	}
+
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("Start did not return")
+	}
+}
+
+func TestReconnector_KillSwitchActiveAfterCircuitBreaker(t *testing.T) {
+	updates := make(chan ConnState, 1)
+	ks := &mockKillSwitch{}
+
+	connectFn := func(_ context.Context) error {
+		return errors.New("always fail")
+	}
+
 	r := NewReconnector(updates, connectFn, ks)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -374,23 +481,166 @@ func TestReconnector_FailoverFnNil_ContinuesBackoff(t *testing.T) {
 
 	updates <- StateDisconnected
 
-	// Wait for reconnection to succeed after retries (needs > MaxRetriesBeforeFailover).
-	deadline := time.After(20 * time.Second)
+	// Wait for circuit breaker to trip (>3.1s cumulative backoff).
+	deadline := time.After(6 * time.Second)
 	for {
 		select {
 		case <-deadline:
-			t.Fatalf("reconnect never succeeded; connectCount=%d", connectCount.Load())
+			t.Fatal("circuit breaker did not trip")
 		default:
 		}
-		if connectCount.Load() >= 4 {
+		if r.Failed() {
 			break
 		}
-		time.Sleep(200 * time.Millisecond)
+		time.Sleep(50 * time.Millisecond)
 	}
 
-	// Verify connectCount > MaxRetriesBeforeFailover (no failover was triggered, kept retrying).
-	if connectCount.Load() < int64(MaxRetriesBeforeFailover) {
-		t.Errorf("expected at least %d retries, got %d", MaxRetriesBeforeFailover, connectCount.Load())
+	// Kill switch MUST remain active — no Deactivate call after circuit breaker.
+	if ks.deactivateCount.Load() != 0 {
+		t.Errorf("kill switch deactivated %d times after circuit breaker, want 0",
+			ks.deactivateCount.Load())
+	}
+	if !ks.IsActive() {
+		t.Error("kill switch is inactive after circuit breaker; want active")
+	}
+
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("Start did not return")
+	}
+}
+
+func TestReconnector_ResetAfterCircuitBreaker(t *testing.T) {
+	updates := make(chan ConnState, 2)
+	ks := &mockKillSwitch{}
+
+	var connectCount atomic.Int64
+	var failPhase atomic.Bool
+	failPhase.Store(true)
+
+	connectFn := func(_ context.Context) error {
+		connectCount.Add(1)
+		if failPhase.Load() {
+			return errors.New("fail")
+		}
+		return nil
+	}
+
+	r := NewReconnector(updates, connectFn, ks)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	done := make(chan error, 1)
+	go func() { done <- r.Start(ctx) }()
+
+	updates <- StateDisconnected
+
+	// Wait for circuit breaker.
+	deadline := time.After(6 * time.Second)
+	for {
+		select {
+		case <-deadline:
+			t.Fatal("circuit breaker did not trip")
+		default:
+		}
+		if r.Failed() {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	countAtTrip := connectCount.Load()
+
+	// Subsequent StateDisconnected must be IGNORED while failed=true.
+	updates <- StateDisconnected
+	time.Sleep(300 * time.Millisecond)
+	if connectCount.Load() != countAtTrip {
+		t.Errorf("connectFn called after circuit breaker without Reset(): count went %d -> %d",
+			countAtTrip, connectCount.Load())
+	}
+
+	// Reset clears the flag; next disconnect triggers a fresh reconnect cycle.
+	failPhase.Store(false)
+	r.Reset()
+	if r.Failed() {
+		t.Error("Reconnector.Failed() = true after Reset(), want false")
+	}
+	updates <- StateDisconnected
+
+	time.Sleep(500 * time.Millisecond)
+
+	if connectCount.Load() <= countAtTrip {
+		t.Errorf("connectFn was not called after Reset(); count still %d", connectCount.Load())
+	}
+
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("Start did not return")
+	}
+}
+
+func TestReconnector_FailoverFailsThenCircuitBreaker(t *testing.T) {
+	// When WithFailoverFn is provided but failover itself fails, the
+	// Reconnector must continue backoff and eventually trip the circuit
+	// breaker at CircuitBreakerThreshold.
+	updates := make(chan ConnState, 1)
+	ks := &mockKillSwitch{}
+
+	var connectCount atomic.Int64
+	connectFn := func(_ context.Context) error {
+		connectCount.Add(1)
+		return errors.New("connect failed")
+	}
+
+	var failoverCalled atomic.Int64
+	failoverFn := func(_ context.Context) error {
+		failoverCalled.Add(1)
+		return errors.New("failover unavailable")
+	}
+
+	var hookCalled atomic.Int64
+	hook := func(_ context.Context) { hookCalled.Add(1) }
+
+	r := NewReconnector(updates, connectFn, ks,
+		WithFailoverFn(failoverFn),
+		WithCircuitBreakerHook(hook),
+	)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	done := make(chan error, 1)
+	go func() { done <- r.Start(ctx) }()
+
+	updates <- StateDisconnected
+
+	deadline := time.After(6 * time.Second)
+	for {
+		select {
+		case <-deadline:
+			t.Fatalf("circuit breaker not tripped; connect=%d failover=%d hook=%d",
+				connectCount.Load(), failoverCalled.Load(), hookCalled.Load())
+		default:
+		}
+		if hookCalled.Load() > 0 {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	if failoverCalled.Load() != 1 {
+		t.Errorf("failover called %d times, want exactly 1 (one-shot)", failoverCalled.Load())
+	}
+	if hookCalled.Load() != 1 {
+		t.Errorf("circuit breaker hook called %d times, want 1", hookCalled.Load())
+	}
+	if connectCount.Load() != int64(CircuitBreakerThreshold) {
+		t.Errorf("connectFn called %d times, want %d", connectCount.Load(), CircuitBreakerThreshold)
 	}
 
 	cancel()

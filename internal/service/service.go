@@ -23,6 +23,7 @@ import (
 	"github.com/velia-the-veil/le_voile/internal/leakcheck"
 	"github.com/velia-the-veil/le_voile/internal/registry"
 	"github.com/velia-the-veil/le_voile/internal/stun"
+	"github.com/velia-the-veil/le_voile/internal/tun"
 	"github.com/velia-the-veil/le_voile/internal/tunnel"
 	"github.com/velia-the-veil/le_voile/internal/updater"
 	"github.com/velia-the-veil/le_voile/internal/watchdog"
@@ -34,6 +35,11 @@ var serviceStderr io.Writer = os.Stderr
 
 // ServiceName is the OS service name used for registration.
 const ServiceName = "LeVoile"
+
+// CircuitBreakerAlertMessage is the French user-facing message surfaced to
+// the UI when the tunnel Reconnector has exhausted its retry budget.
+// Extracted as a constant so future i18n can substitute locale variants.
+const CircuitBreakerAlertMessage = "Connexion impossible après 5 tentatives — vérifiez votre réseau"
 
 // rollbackTimeout is the maximum time to wait for a tunnel connection after
 // a fresh install. If the tunnel doesn't connect within this time, a rollback
@@ -67,12 +73,21 @@ type Config struct {
 	BrowserPoliciesEnabled bool
 
 	PreferredCountry string // ISO 2-letter code from config, used for initial relay selection
+
+	// TUNEnabled active la création de l'interface TUN/Wintun levoile0 au
+	// démarrage (Epic 2 — capture L3). Défaut false tant que les stories
+	// routing (2.4) / firewall (2.6-2.7) / pump tunnel (1.1 étendue) ne sont
+	// pas livrées : créer une TUN sans router le trafic via elle est inutile.
+	TUNEnabled bool
+	TUNName    string // défaut "levoile0" si vide
+	TUNMTU     int    // défaut 1420 si 0
 }
 
 // Program implements kardianos/service.Interface for lifecycle management.
 type Program struct {
 	config Config
 
+	tunDev          tun.Device // interface TUN/Wintun (Epic 2), nil si TUNEnabled=false
 	tunnelClient    *tunnel.Client
 	dnsManager      dns.DNSManager
 	killSwitch      *dns.KillSwitch
@@ -140,6 +155,13 @@ type Program struct {
 
 	visibleIP atomic.Value // string — detected exit IP of the current relay
 	realIP    atomic.Value // string — client's real IP detected before tunnel
+
+	// circuitBreakerTripped and circuitBreakerMessage are set when the tunnel
+	// Reconnector gives up after CircuitBreakerThreshold consecutive failures.
+	// Surfaced to the UI via IPC (GetStatus) so the webview can display a
+	// persistent banner until the user triggers a manual reconnect.
+	circuitBreakerTripped atomic.Bool
+	circuitBreakerMessage atomic.Value // string
 }
 
 // NewProgram creates a Program with the given configuration.
@@ -147,6 +169,36 @@ func NewProgram(cfg Config) *Program {
 	return &Program{
 		config: cfg,
 	}
+}
+
+// tunFactory permet d'injecter un Device mocké dans les tests sans
+// dépendre de privilèges CAP_NET_ADMIN / LocalSystem. Défaut : appelle
+// tun.CleanupOrphan + tun.New.
+var tunFactory = func(name string, mtu int) (tun.Device, error) {
+	if err := tun.CleanupOrphan(name); err != nil {
+		return nil, fmt.Errorf("cleanup orphan: %w", err)
+	}
+	return tun.New(name, mtu)
+}
+
+// ensureTUN nettoie une interface orpheline (crash-recovery NFR17 < 5s)
+// puis crée levoile0. Échec retourne une erreur — l'appelant décide de la
+// fatalité (actuellement non fatal pendant la transition Epic 2).
+func (p *Program) ensureTUN() error {
+	name := p.config.TUNName
+	if name == "" {
+		name = "levoile0"
+	}
+	mtu := p.config.TUNMTU
+	if mtu == 0 {
+		mtu = 1420
+	}
+	dev, err := tunFactory(name, mtu)
+	if err != nil {
+		return fmt.Errorf("tun %s: %w", name, err)
+	}
+	p.tunDev = dev
+	return nil
 }
 
 // SetIPCServer registers IPC start/stop callbacks to be called during lifecycle.
@@ -198,6 +250,57 @@ func (p *Program) DNSManager() dns.DNSManager {
 // Reconnector returns the reconnector (used by IPC handler to pause/resume).
 func (p *Program) Reconnector() *tunnel.Reconnector {
 	return p.reconnector
+}
+
+// CircuitBreakerTripped reports whether the tunnel reconnector has given up
+// after CircuitBreakerThreshold consecutive failures.
+func (p *Program) CircuitBreakerTripped() bool {
+	return p.circuitBreakerTripped.Load()
+}
+
+// CircuitBreakerMessage returns the user-facing French message explaining
+// the tripped state. Empty when not tripped.
+func (p *Program) CircuitBreakerMessage() string {
+	if v := p.circuitBreakerMessage.Load(); v != nil {
+		if s, ok := v.(string); ok {
+			return s
+		}
+	}
+	return ""
+}
+
+// tripCircuitBreaker is called by the Reconnector hook when the circuit
+// breaker opens. It captures the user-facing message and transitions the
+// tunnel state to StateFailed so IPC polling reflects the new state.
+func (p *Program) tripCircuitBreaker(message string) {
+	p.circuitBreakerMessage.Store(message)
+	p.circuitBreakerTripped.Store(true)
+	if tc := p.tunnelClient; tc != nil {
+		tc.State().Set(tunnel.StateFailed)
+	}
+}
+
+// ResetCircuitBreaker clears the tripped state and resets the Reconnector
+// so subsequent StateDisconnected notifications resume the reconnect loop.
+// Called from the IPC Connect handler when the user asks to retry.
+func (p *Program) ResetCircuitBreaker() {
+	p.circuitBreakerTripped.Store(false)
+	p.circuitBreakerMessage.Store("")
+	if r := p.reconnector; r != nil {
+		r.Reset()
+	}
+}
+
+// ForTestTripCircuitBreaker exposes tripCircuitBreaker for external test
+// packages. Do NOT call from production code.
+func (p *Program) ForTestTripCircuitBreaker(message string) {
+	p.tripCircuitBreaker(message)
+}
+
+// ForTestSetTunnelClient injects a tunnel client for tests without running
+// the full service lifecycle. Do NOT call from production code.
+func (p *Program) ForTestSetTunnelClient(c *tunnel.Client) {
+	p.tunnelClient = c
 }
 
 // Context returns the service lifecycle context.
@@ -527,6 +630,18 @@ func (p *Program) run() {
 	// --- 0e. Detect real IP before tunnel connect ---
 	p.detectRealIP(ctx)
 
+	// --- 0f. TUN/Wintun interface (Epic 2 — capture L3) ---
+	// Opt-in via TUNEnabled : tant que routing (story 2.4) et firewall
+	// (stories 2.6/2.7) ne sont pas livrés, créer l'interface sans router le
+	// trafic est inutile. Échec non fatal — log + continue (le tunnel QUIC
+	// fonctionne indépendamment). Architecture ordre : elevation → tun.New →
+	// routing → firewall → tunnel.Connect.
+	if p.config.TUNEnabled {
+		if err := p.ensureTUN(); err != nil {
+			fmt.Fprintf(serviceStderr, "service: tun setup: %v\n", err)
+		}
+	}
+
 	// --- 1. Tunnel connect ---
 	client, err := tunnel.NewClient(relayDomain, relayPubKey, tunnel.WithInsecure(p.config.Insecure))
 	if err != nil {
@@ -704,6 +819,9 @@ func (p *Program) run() {
 	if p.failoverMgr != nil {
 		reconnOpts = append(reconnOpts, tunnel.WithFailoverFn(p.failoverMgr.HandleFailover))
 	}
+	reconnOpts = append(reconnOpts, tunnel.WithCircuitBreakerHook(func(_ context.Context) {
+		p.tripCircuitBreaker(CircuitBreakerAlertMessage)
+	}))
 	reconnector := tunnel.NewReconnector(client.State().Updates(), client.Connect, ks, reconnOpts...)
 	p.reconnector = reconnector
 	go reconnector.Start(ctx)
@@ -923,6 +1041,15 @@ func (p *Program) shutdown() {
 		if err := p.tunnelClient.Disconnect(); err != nil {
 			fmt.Fprintf(serviceStderr, "service: disconnect: %v\n", err)
 		}
+	}
+
+	// 8a. Close TUN/Wintun interface LAST (Epic 2 — architecture ordre strict
+	// de shutdown : tunnel → firewall → routing → tun.Close).
+	if p.tunDev != nil {
+		if err := p.tunDev.Close(); err != nil {
+			fmt.Fprintf(serviceStderr, "service: tun close: %v\n", err)
+		}
+		p.tunDev = nil
 	}
 
 	// 9. Stop IPC server LAST — tray waits for shutdown confirmation (AC8)

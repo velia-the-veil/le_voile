@@ -12,6 +12,13 @@ import (
 )
 
 // Server wraps an HTTP/3 server for the stateless relay.
+//
+// Public endpoints (/health, /verify, /ip, /dns-query, /stun-relay,
+// /.well-known/relay-registry.json) are protected by CFSourceMiddleware
+// when CFIPValidator is set in strict (non-insecure) mode: requests from
+// IPs outside Cloudflare's published ranges receive HTTP 403.
+// /connect is the documented exception — it carries its own per-IP
+// validation via the bearer-token / IPLimiter path.
 type Server struct {
 	Addr           string
 	CertFile       string
@@ -19,13 +26,13 @@ type Server struct {
 	Handler        http.Handler
 	STUNHandler    http.Handler
 	ConnectHandler http.Handler
-	SigningKey      ed25519.PrivateKey
+	SigningKey     ed25519.PrivateKey
 	Limiter        *Limiter
 	IPLimiter      *IPLimiter
 	CFIPValidator  *CloudflareIPValidator
 	StartTime      time.Time
-	Insecure       bool   // dev mode: trust non-CF sources
-	RegistryFile   string // path to relay-registry.json (served at /.well-known/relay-registry.json)
+	RegistryFile   string       // path to relay-registry.json (served at /.well-known/relay-registry.json)
+	CFRejectLog    func(string) // invoked with "cf-reject" on each refused request; never receives IPs (NFR20)
 	h3             *http3.Server
 }
 
@@ -54,10 +61,17 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 	})
 
 	mux := http.NewServeMux()
-	if s.Handler != nil {
-		mux.Handle("/dns-query", LimitMiddleware(s.Limiter, s.Handler))
+
+	// cfWrap applies CF source filtering BEFORE the connection limiter so
+	// non-CF requests don't consume a slot. nil-safe and insecure-aware.
+	cfWrap := func(h http.Handler) http.Handler {
+		return CFSourceMiddleware(s.CFIPValidator, s.CFRejectLog, h)
 	}
-	mux.Handle("/health", LimitMiddleware(s.Limiter, NewHealthHandler(s.Limiter, s.StartTime)))
+
+	if s.Handler != nil {
+		mux.Handle("/dns-query", cfWrap(LimitMiddleware(s.Limiter, s.Handler)))
+	}
+	mux.Handle("/health", cfWrap(LimitMiddleware(s.Limiter, NewHealthHandler(s.Limiter, s.StartTime))))
 
 	// Create verify handler and wire CF validator for session token issuance.
 	if s.SigningKey != nil {
@@ -65,27 +79,29 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 		if s.CFIPValidator != nil {
 			vh.SetCFValidator(s.CFIPValidator)
 		}
-		mux.Handle("/verify", LimitMiddleware(s.Limiter, vh))
+		mux.Handle("/verify", cfWrap(LimitMiddleware(s.Limiter, vh)))
 	}
 	if s.STUNHandler != nil {
-		mux.Handle("/stun-relay", LimitMiddleware(s.Limiter, s.STUNHandler))
+		mux.Handle("/stun-relay", cfWrap(LimitMiddleware(s.Limiter, s.STUNHandler)))
 	}
 	if s.ConnectHandler != nil {
 		// /connect uses its own per-IP limiter (IPLimiter), not the global
 		// connection limiter. CONNECT tunnels are long-lived streams that
 		// would exhaust the global short-request limiter (150 slots).
+		// Documented exception to CF source filtering — handler enforces
+		// its own bearer-token + per-IP validation.
 		mux.Handle("/connect", s.ConnectHandler)
 	}
 
 	// /ip returns the client's visible IP — used by desktop to display exit IP.
-	mux.Handle("/ip", LimitMiddleware(s.Limiter, NewIPHandler(s.CFIPValidator)))
+	mux.Handle("/ip", cfWrap(LimitMiddleware(s.Limiter, NewIPHandler(s.CFIPValidator))))
 
 	// Serve relay registry JSON if configured.
 	if s.RegistryFile != "" {
-		mux.HandleFunc("/.well-known/relay-registry.json", func(w http.ResponseWriter, r *http.Request) {
+		mux.Handle("/.well-known/relay-registry.json", cfWrap(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			http.ServeFile(w, r, s.RegistryFile)
-		})
+		})))
 	}
 
 	s.h3 = &http3.Server{
@@ -94,8 +110,8 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 		TLSConfig: tlsCfg,
 		QUICConfig: &quic.Config{
 			MaxIncomingStreams: 1000,             // default 100 — too low for browser proxy
-			MaxIdleTimeout:    90 * time.Second,  // match client
-			KeepAlivePeriod:   10 * time.Second,  // survive aggressive NAT timeouts
+			MaxIdleTimeout:     90 * time.Second, // match client
+			KeepAlivePeriod:    10 * time.Second, // survive aggressive NAT timeouts
 		},
 	}
 

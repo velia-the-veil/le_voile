@@ -15,6 +15,12 @@ var ErrPinningFailed = errors.New("crypto: certificate pinning failed: key misma
 // contains an Ed25519 public key that matches pinnedPubKey exactly.
 // Returns ErrPinningFailed if the key does not match.
 // Returns a non-ErrPinningFailed error if the certificate does not use Ed25519.
+//
+// NFR9c compliance: the key comparison uses ed25519.PublicKey.Equal, which is
+// implemented via subtle.ConstantTimeCompare in the Go standard library
+// (crypto/ed25519: func (pub PublicKey) Equal(x crypto.PublicKey) bool). This
+// makes the comparison resistant to timing attacks — do NOT replace with
+// bytes.Equal or == without auditing the timing implications.
 func VerifyEd25519CertPin(cert *x509.Certificate, pinnedPubKey ed25519.PublicKey) error {
 	certPubKey, ok := cert.PublicKey.(ed25519.PublicKey)
 	if !ok {

@@ -3,6 +3,8 @@ stepsCompleted: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]
 lastStep: 14
 status: 'complete'
 completedAt: '2026-03-16'
+lastRevisedAt: '2026-04-15'
+revisionNote: 'Sélecteur pays mis à jour : 4 pays (DE/ES/GB/US). FR/IS/FI retirés sur demande utilisateur.'
 inputDocuments: ['prd.md', 'architecture.md', 'epics.md']
 workflowType: 'ux-design'
 project_name: 'bmad_vpn_le_voile_de_velia'
@@ -32,7 +34,7 @@ Le produit répond à deux problèmes simultanés : le blocage imminent des VPN 
 - Sait installer un .exe, ne veut pas toucher aux réglages réseau
 - Besoin : installer et oublier. Protection permanente sans action
 - Motivation : méfiance envers les VPN classiques (promesses non vérifiables), inquiétude face au blocage VPN en France
-- Moment "wow" attendu : installer Le Voile, aller sur plateformeliberte.fr/test-protection.html, voir une IP islandaise/allemande/finlandaise/US sans avoir rien configuré
+- Moment "wow" attendu : installer Le Voile, aller sur plateformeliberte.fr/test-protection.html, voir une IP étrangère (Allemagne, Espagne, Royaume-Uni ou États-Unis) sans avoir rien configuré
 
 **Utilisateur secondaire — "Akerimus" (opérateur)**
 - Développeur technique, gère les relais VPS
@@ -49,7 +51,7 @@ Le produit répond à deux problèmes simultanés : le blocage imminent des VPN 
 
 1. **Circuit de confiance immédiat** — Lien direct depuis l'UI vers plateformeliberte.fr/test-protection.html. Installation → vérification → confiance en moins de 30 secondes. Meilleur onboarding possible pour un produit de sécurité
 2. **Cohérence visuelle totale avec plateformeliberte.fr** — Thème sombre navy (#0b1526), accents bleus luminescents (#1a6fc4, #2a8dff), rouge alerte (#d42b2b), typographies Bebas Neue (titres) / Rajdhani (UI) / Inter (corps). La fenêtre desktop est une extension naturelle du site
-3. **Simplicité radicale de l'interface** — Le sélecteur de pays (4 pays : Islande, Allemagne, Finlande, US) avec drapeaux est la seule interaction significative. Le pays préféré est sauvegardé. Pas de paramètres avancés, pas de menus complexes
+3. **Simplicité radicale de l'interface** — Le sélecteur de pays (4 pays : Allemagne, Espagne, Royaume-Uni, États-Unis) avec drapeaux est la seule interaction significative. Le pays préféré est sauvegardé. Pas de paramètres avancés, pas de menus complexes
 
 ## Core User Experience
 
@@ -85,7 +87,7 @@ Le Voile inverse le paradigme des VPN traditionnels : là où les concurrents de
 1. **Premier lancement post-installation** (make-or-break) — L'utilisateur ouvre la fenêtre et voit : connecté, IP étrangère, pays avec drapeau. Si ce moment échoue (erreur, écran de choix, délai > 30s), l'utilisateur désinstalle
 2. **Vérification sur test-protection.html** — L'utilisateur clique le lien dans l'UI, la page confirme que l'IP est masquée, DNS protégé, WebRTC sécurisé. Moment de confiance prouvée
 3. **Coupure réseau transparente** — L'utilisateur change de Wi-Fi ou perd la connexion. Le Voile bascule silencieusement. L'utilisateur ne remarque rien — succès par absence de friction
-4. **Changement de pays** — L'utilisateur veut apparaître depuis la France. Clic sur le drapeau, reconnexion rapide, IP française confirmée. Seule interaction active du produit
+4. **Changement de pays** — L'utilisateur veut apparaître depuis le Royaume-Uni. Clic sur le drapeau, reconnexion rapide, IP britannique confirmée. Seule interaction active du produit
 
 ### Experience Principles
 
@@ -142,7 +144,7 @@ Le Voile inverse le paradigme des VPN traditionnels : là où les concurrents de
 
 1. **La preuve remplace la promesse** — Aucun texte marketing dans l'UI. Seulement des données vérifiables : IP visible, pays, statut DNS, lien de test indépendant
 2. **Le silence est une émotion** — L'absence de notification, l'absence de choix, l'absence de friction sont des décisions de design intentionnelles qui génèrent la sérénité
-3. **Le français humain, pas le jargon** — Tous les messages utilisateur en français courant. "Connecté — Islande" pas "QUIC tunnel established to is-01.levoile.dev:443"
+3. **Le français humain, pas le jargon** — Tous les messages utilisateur en français courant. "Connecté — Allemagne" pas "QUIC tunnel established to de-01.levoile.dev:443"
 4. **La légitimité par le design** — Thème sombre professionnel, cohérence avec plateformeliberte.fr, code source ouvert. L'esthétique inspire la confiance sans la demander
 
 ## UX Pattern Analysis & Inspiration
@@ -325,7 +327,7 @@ L'innovation est dans ce qui est **absent** : pas de login, pas de choix de prot
 
 **1. Circuit de preuve (premier lancement) :**
 - Le binaire est lancé → UAC acceptée → la fenêtre Wails v3 s'ouvre automatiquement → l'icône tray apparaît (V vert)
-- La fenêtre affiche : statut vert "Connecté", drapeau du pays (ex: Islande), relais actif (is-01), IP visible (ex: 82.221.xxx.xxx)
+- La fenêtre affiche : statut vert "Connecté", drapeau du pays (ex: Allemagne), relais actif (de-01), IP visible (ex: 85.214.xxx.xxx)
 - Un lien "Tester ma protection" ouvre test-protection.html dans le navigateur par défaut
 - La page confirme indépendamment : IP masquée, DNS protégé, WebRTC sécurisé
 - L'utilisateur ferme la fenêtre. L'icône tray reste verte. C'est fini.
@@ -466,7 +468,7 @@ Showcase interactif : `planning-artifacts/ux-design-directions.html`
 
 **Sidebar — Organisation des pays :**
 - Pays favori en tête de liste (s'il y en a un)
-- Puis pays restants par ordre alphabétique (Allemagne, États-Unis, Finlande, Islande)
+- Puis pays restants par ordre alphabétique (Allemagne, Espagne, États-Unis, Royaume-Uni)
 - Étoile jaune à droite de chaque pays :
   - Contour jaune par défaut
   - Jaune plein au hover
@@ -950,11 +952,11 @@ Pas de design system externe. Tous les composants sont custom, construits en HTM
 **Règles :**
 - Pas de points d'exclamation (sauf erreur critique)
 - Pas de majuscules agressives (sauf titres Bebas Neue qui sont naturellement uppercase)
-- Noms de pays en français ("États-Unis" pas "USA", "Allemagne" pas "Germany")
+- Noms de pays en français ("Royaume-Uni" pas "UK", "États-Unis" pas "USA", "Allemagne" pas "Germany", "Espagne" pas "Spain")
 - Messages d'erreur = description de la situation + suggestion, jamais un code technique
 
 **Exemples :**
-- "Connecté — Islande" (pas "Connected to is-01.levoile.dev:443")
+- "Connecté — Allemagne" (pas "Connected to de-01.levoile.dev:443")
 - "Reconnexion en cours..." (pas "QUIC handshake failed, retrying...")
 - "Aucun relais disponible. Vérifiez votre connexion internet." (pas "Error: all relays unreachable, timeout 3000ms")
 

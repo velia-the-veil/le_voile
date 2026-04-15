@@ -1,4 +1,4 @@
-# generated: 08-04-2026
+# generated: 2026-04-15
 # project: bmad_vpn_le_voile_de_velia
 # project_key: NOKEY
 # tracking_system: file-system
@@ -28,97 +28,102 @@
 #
 # WORKFLOW NOTES:
 # ===============
-# - Epic transitions to 'in-progress' automatically when first story is created
-# - Stories can be worked in parallel if team capacity allows
-# - SM typically creates next story after previous one is 'done' to incorporate learnings
-# - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
-# - 2026-04-08: Architecture revisee — suppression mode portable, Wails v2 remplace par webview/webview + fyne.io/systray
-# - Epics 10, 12 reecrites. Epic 13 supprime (fusionne dans Epic 12). Story files 10-1, 10-3, 12-x a recreer.
+# - 2026-04-15: Restructure complete suite a la revision Linux + capture L3 (TUN/Wintun) + suppression extension navigateur.
+# - Anciens 12 epics obsoletes. Nouveaux 8 epics organises par valeur utilisateur (FR1-FR36, FR37-40 supprimes).
+# - Snapshot Windows-stable preserve : git tag windows-stable-2026-04-15 + branch backup/windows-stable.
+# - Code existant couvre substantiellement Epics 1, 4, 8 et partiellement 3, 5, 6, 7. Verification story par story
+#   via create-story qui ouvrira le code et marquera done si deja implemente.
+# - Chemin critique recommande : Epic 2 (TUN/firewall) + Epic 3 stories 3.3-3.5 (refactor /tunnel + NAT) en parallele
+#   d'abord, puis Epic 1 + Epic 6 (validation), puis Epic 5 stories nouvelles + Epic 7 packaging Linux.
 
-generated: 08-04-2026
+generated: 2026-04-15
 project: bmad_vpn_le_voile_de_velia
 project_key: NOKEY
 tracking_system: file-system
 story_location: _bmad-output/implementation-artifacts
 
 development_status:
-  # Epic 1: Relais VPS Stateless Deploye et Operationnel — DONE
-  epic-1: done
-  1-1-initialisation-du-projet-et-module-cryptographique-ed25519: done
-  1-2-serveur-relais-http3-et-handler-dns-over-https: done
-  1-3-limiteur-de-connexions-monitoring-et-deploiement: done
+  # Epic 1: Tunnel Chiffre et Authentification Relais
+  # Code existant couvre l'essentiel (issu des anciens Epics 1+2). A verifier story par story.
+  epic-1: in-progress
+  1-1-etablir-un-tunnel-quic-http3-vers-un-relais-via-cloudflare-avec-certificate-pinning: done
+  1-2-reconnexion-automatique-avec-backoff-exponentiel-et-circuit-breaker: done
+  1-3-relais-accepte-les-connexions-quic-http3-entrantes: done
   epic-1-retrospective: optional
 
-  # Epic 2: Tunnel Chiffre et Protection DNS — DONE
-  epic-2: done
-  2-1-client-tunnel-quic-https-avec-connexion-au-relais: done
-  2-2-gestion-dns-systeme-et-redirection-doh: done
-  2-3-kill-switch-dns-watchdog-et-reconnexion-automatique: done
+  # Epic 2: Capture L3 Machine-Wide & Kill Switch Firewall
+  # CHEMIN CRITIQUE — entierement nouveau (refactor majeur TUN/Wintun + nftables/WFP).
+  epic-2: in-progress
+  2-1-creation-et-destruction-de-l-interface-tun-wintun-levoile0: review
+  2-2-watchdog-tun-detection-d-alteration-externe: ready-for-dev
+  2-3-detection-de-vpn-concurrent-au-demarrage: ready-for-dev
+  2-4-routage-systeme-route-par-defaut-via-tun-route-specifique-relais: ready-for-dev
+  2-5-flush-du-cache-dns-systeme-au-disconnect: ready-for-dev
+  2-6-kill-switch-firewall-os-level-via-nftables-linux: ready-for-dev
+  2-7-kill-switch-firewall-os-level-via-wfp-windows: ready-for-dev
+  2-8-detection-captive-portal-wifi-lockdown-firewall-relaxe: ready-for-dev
+  2-9-option-ipv6-hors-tunnel-avec-avertissement-explicite: ready-for-dev
   epic-2-retrospective: optional
 
-  # Epic 3: Experience Desktop - Service, Tray et Lifecycle — DONE
-  epic-3: done
-  3-1-service-systeme-avec-kardianos-service-et-module-ipc: done
-  3-2-system-tray-ui-avec-icones-detat-et-tooltip-ip: done
-  3-3-menu-clic-droit-et-controles-utilisateur: done
+  # Epic 3: Relais Stateless Multi-VPS avec Tunnel IP & NAT
+  # Mix : binaire relais + verify + rate limiting + organisation pays = existant ;
+  # handler /tunnel + NAT + DNS interne + blocklist cote relais = NOUVEAU.
+  epic-3: in-progress
+  3-1-binaire-relais-go-http3-stateless-deployable-via-systemd: ready-for-dev
+  3-2-endpoint-verify-avec-emission-session-tokens-ed25519: ready-for-dev
+  3-3-handler-tunnel-avec-stream-bidirectionnel-paquets-ip: ready-for-dev
+  3-4-nat-cote-relais-avec-table-en-ram-et-ttl-court: ready-for-dev
+  3-5-resolveur-dns-interne-cote-relais-avec-blocklist-stevenblack: ready-for-dev
+  3-6-rate-limiting-par-ip-source-bandwidth-quota-journalier: ready-for-dev
+  3-7-limite-globale-tunnels-par-relais-http-503: ready-for-dev
+  3-8-organisation-des-relais-par-pays-de-es-gb-us-2-relais: ready-for-dev
   epic-3-retrospective: optional
 
-  # Epic 4: Distribution et Installation Windows — DONE
-  epic-4: done
-  4-1-installateur-windows-avec-enregistrement-du-service: done
-  4-2-version-portable-et-build-multi-plateforme: done
+  # Epic 4: Decouverte & Failover Multi-Pays
+  # Largement existant (issu de l'ancien Epic 9). 4.2 a enrichir avec DoH bootstrap (NFR9i).
+  epic-4: backlog
+  4-1-endpoint-well-known-relay-registry-json-signe-ed25519: backlog
+  4-2-bootstrap-via-relais-hardcode-au-premier-lancement: backlog
+  4-3-selection-relais-par-pays-avec-round-robin-intra-pays: backlog
+  4-4-failover-automatique-avec-kill-switch-maintenu: backlog
   epic-4-retrospective: optional
 
-  # Epic 5: Proxy STUN Transparent - Protection WebRTC — DONE
-  epic-5: done
-  5-1-interception-et-parsing-des-paquets-stun: done
-  5-2-relai-stun-via-tunnel-et-substitution-dip: done
-  5-3-gestion-du-fallback-turn-et-validation-anti-fuite-webrtc: done
+  # Epic 5: Interface Desktop Cross-Platform (Tray + Webview)
+  # Stories 5.1-5.5 et 5.8 substantiellement existantes (ancien Epic 10).
+  # 5.6 (fallback service down), 5.7 (supervision UI Linux), 5.9 (mode degrade) = NOUVEAU.
+  epic-5: backlog
+  5-1-binaire-ui-unique-systray-webview-serveur-http-local-avec-affichage-de-statut: backlog
+  5-2-affichage-du-pays-selectionne-du-relais-actif-et-de-l-ip-visible: backlog
+  5-3-selecteur-de-pays-avec-drapeaux-et-nombre-de-relais: backlog
+  5-4-bouton-connect-disconnect: backlog
+  5-5-toggle-fenetre-via-clic-gauche-tray-quitter-via-clic-droit: backlog
+  5-6-ecran-fallback-service-non-demarre-retry-ipc: backlog
+  5-7-supervision-ui-avec-auto-restart-en-cas-de-crash: backlog
+  5-8-quitter-ui-via-tray-sans-tuer-le-service: backlog
+  5-9-mode-degrade-kill-switch-indicateur-visuel-permanent: backlog
   epic-5-retrospective: optional
 
-  # Epic 6: Auto-Update et Rollback — DONE
-  epic-6: done
-  6-1-verification-de-version-et-telechargement-en-arriere-plan: done
-  6-2-installation-au-redemarrage-et-notification-tray: done
-  6-3-rollback-automatique-en-cas-dechec: done
+  # Epic 6: Validation Anti-Fuite (STUN + Watchdog TUN)
+  # 6.1 existant (STUN Binding). 6.2 refactor (role redefini : validation TUN au lieu de relay STUN). 6.3 partiel.
+  epic-6: backlog
+  6-1-emission-de-stun-binding-requests-via-la-tun: backlog
+  6-2-comparaison-ip-stun-vs-ip-tunnel-attendue: backlog
+  6-3-reconnexion-automatique-alerte-ui-log-en-cas-d-anomalie: backlog
   epic-6-retrospective: optional
 
-  # Epic 7: Resilience DNS et Auto-Diagnostic — DONE
-  epic-7: done
-  7-1-fallback-dns-multi-resolveur-et-certificate-pinning-ed25519: done
-  7-2-auto-test-de-fuite-periodique-et-alertes-tray: done
+  # Epic 7: Distribution & Installation Cross-Platform Signee
+  # 7.1 (NSIS Windows) et 7.5 (config TOML) existants. 7.2/7.3/7.4 = NOUVEAU (packaging Linux + signature paquets).
+  epic-7: backlog
+  7-1-installeur-nsis-windows-service-scm-ui-autostart-wintun-dll: backlog
+  7-2-paquets-linux-deb-rpm-apk-via-goreleaser-nfpm: backlog
+  7-3-pkgbuild-aur-publication-github-action: backlog
+  7-4-signature-ed25519-de-tous-les-paquets-de-distribution: backlog
+  7-5-configuration-toml-persistee-avec-paths-cross-platform: backlog
   epic-7-retrospective: optional
 
-  # Epic 8: Blocklist DNS Communautaire — DONE
-  epic-8: done
-  8-1-telechargement-et-parsing-de-la-blocklist-stevenblack-hosts: done
-  8-2-filtrage-dns-local-et-controle-utilisateur-via-tray: done
+  # Epic 8: Auto-Update Securise avec Rollback
+  # Largement existant (ancien Epic 6). A valider + ajout systemctl restart pour Linux.
+  epic-8: backlog
+  8-1-verification-periodique-des-releases-github: backlog
+  8-2-telechargement-signe-application-rollback-automatique: backlog
   epic-8-retrospective: optional
-
-  # Epic 9: Decouverte Dynamique des Relais — DONE
-  epic-9: done
-  9-1-registre-de-relais-et-decouverte-dynamique: done
-  9-2-selection-par-latence-et-failover-automatique: done
-  epic-9-retrospective: optional
-
-  # Epic 10: Interface Desktop webview/webview + fyne.io/systray
-  # Stories reecrites 2026-04-08 — ancien contenu Wails v2 obsolete, story files a recreer
-  epic-10: done
-  10-1-binaire-ui-unique-systray-webview-serveur-http-local-avec-statut-de-connexion: done
-  10-2-selecteur-de-pays-et-affichage-ip-visible: done
-  10-3-bouton-connect-disconnect-et-integration-tray-webview: done
-  epic-10-retrospective: optional
-
-  # Epic 11: Extension Navigateur & Routage Intelligent
-  epic-11: done
-  11-1-extension-webextension-routage-par-defaut-via-proxy-le-voile: done
-  11-2-bypass-intelligent-des-telechargements-volumineux: done
-  11-3-installation-automatique-et-cohabitation-sysproxy: done
-  epic-11-retrospective: optional
-
-  # Epic 12: Integration Bout en Bout & Polish MVP Revise
-  # Reecrit 2026-04-08 — ancien Epic 12 (portable) + Epic 13 (integration) fusionnes
-  epic-12: done
-  12-1-shutdown-propre-et-independance-service-ui: done
-  12-2-validation-bout-en-bout-et-tests-dintegration: done
-  epic-12-retrospective: optional

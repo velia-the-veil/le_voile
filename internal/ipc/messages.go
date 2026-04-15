@@ -85,6 +85,12 @@ type Response struct {
 	CountryFlag  string `json:"country_flag,omitempty"`  // country flag emoji (e.g. "🇫🇷")
 
 	RegistryCountries []RegistryCountry `json:"registry_countries,omitempty"`
+
+	// CircuitBreakerTripped is true when the tunnel reconnector has given up
+	// after 5 consecutive failures. CircuitBreakerMessage carries a French
+	// user-facing message suitable for a UI banner.
+	CircuitBreakerTripped bool   `json:"circuit_breaker_tripped,omitempty"`
+	CircuitBreakerMessage string `json:"circuit_breaker_message,omitempty"`
 }
 
 // RegistryCountry holds country info for the registry response.

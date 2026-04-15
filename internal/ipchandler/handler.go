@@ -84,6 +84,8 @@ func handleGetStatus(prg *svc.Program) ipc.Response {
 		resp.HTTPProxySeq = prg.HTTPProxySeq()
 		resp.BrowserPoliciesApplied = prg.BrowserPolicyApplied()
 		resp.BrowserPoliciesFailed = prg.BrowserPolicyFailed()
+		resp.CircuitBreakerTripped = prg.CircuitBreakerTripped()
+		resp.CircuitBreakerMessage = prg.CircuitBreakerMessage()
 		return resp
 	}
 	state := tc.State().Get()
@@ -136,6 +138,8 @@ func handleGetStatus(prg *svc.Program) ipc.Response {
 	resp.HTTPProxySeq = prg.HTTPProxySeq()
 	resp.BrowserPoliciesApplied = prg.BrowserPolicyApplied()
 	resp.BrowserPoliciesFailed = prg.BrowserPolicyFailed()
+	resp.CircuitBreakerTripped = prg.CircuitBreakerTripped()
+	resp.CircuitBreakerMessage = prg.CircuitBreakerMessage()
 	return resp
 }
 
@@ -162,6 +166,9 @@ func handleConnect(prg *svc.Program) ipc.Response {
 	if tc.State().Get() == tunnel.StateConnected {
 		return ipc.Response{Status: ipc.StatusConnected}
 	}
+	// Clear circuit-breaker tripped state so the Reconnector resumes normal
+	// behavior and the UI banner disappears once the user triggers a retry.
+	prg.ResetCircuitBreaker()
 	// Stop reconnector to prevent race during manual connect.
 	if r := prg.Reconnector(); r != nil {
 		r.Stop()

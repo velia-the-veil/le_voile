@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/tls"
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -516,6 +517,14 @@ func TestClient_PinningRefusesWrongKey(t *testing.T) {
 		wrongClient.Disconnect()
 		t.Fatal("expected pinning failure, got nil")
 	}
+	// NFR regression guard: the error must wrap ErrPinningFailed so callers
+	// can distinguish pinning rejection from generic transport failures.
+	// Note: quic-go wraps VerifyPeerCertificate errors — errors.Is walks the
+	// chain and should still find ErrPinningFailed from our %w wrapping in
+	// VerifyPeerCertificate.
+	if !errors.Is(err, ErrPinningFailed) {
+		t.Errorf("expected error wrapping ErrPinningFailed, got %v", err)
+	}
 	if wrongClient.state.Get() != StateDisconnected {
 		t.Errorf("state = %q after pinning failure, want %q", wrongClient.state.Get(), StateDisconnected)
 	}
@@ -532,6 +541,54 @@ func TestClient_PinningRefusesWrongKey(t *testing.T) {
 		t.Errorf("state = %q after correct pinning, want %q", correctClient.state.Get(), StateConnected)
 	}
 	correctClient.Disconnect()
+}
+
+// TestConnectNew_OneShot verifies the Story 1.1 convenience helper that
+// matches the acceptance-criteria signature tunnel.Connect(ctx, domain, key).
+func TestConnectNew_OneShot(t *testing.T) {
+	pub, priv, err := lecrypto.GenerateKeyPair()
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+
+	addr, cleanup := startTestRelayWithSharedKey(t, priv)
+	defer cleanup()
+
+	pubB64 := lecrypto.ExportPublicKeyBase64(pub)
+	client, err := ConnectNew(context.Background(), addr, pubB64, WithInsecureSkipCAOnly())
+	if err != nil {
+		t.Fatalf("ConnectNew: %v", err)
+	}
+	defer client.Disconnect()
+
+	if client.state.Get() != StateConnected {
+		t.Errorf("state = %q, want %q", client.state.Get(), StateConnected)
+	}
+}
+
+// TestConnectNew_PinningFailure verifies ConnectNew propagates pinning errors
+// from Connect and guarantees (nil, err) on failure (no client leak).
+func TestConnectNew_PinningFailure(t *testing.T) {
+	_, priv, err := lecrypto.GenerateKeyPair()
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	addr, cleanup := startTestRelayWithSharedKey(t, priv)
+	defer cleanup()
+
+	wrongPub, _, err := lecrypto.GenerateKeyPair()
+	if err != nil {
+		t.Fatalf("generate wrong key: %v", err)
+	}
+	wrongB64 := lecrypto.ExportPublicKeyBase64(wrongPub)
+
+	client, err := ConnectNew(context.Background(), addr, wrongB64, WithInsecureSkipCAOnly())
+	if err == nil {
+		t.Fatal("expected pinning error, got nil")
+	}
+	if client != nil {
+		t.Errorf("contract violation: expected nil client on failure, got %v", client)
+	}
 }
 
 func TestClient_UpdateRelay_ThreadSafe(t *testing.T) {

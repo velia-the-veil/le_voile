@@ -10,6 +10,11 @@ const (
 	StateConnected    ConnState = "connected"
 	StateConnecting   ConnState = "connecting"
 	StateDisconnected ConnState = "disconnected"
+	// StateFailed indicates the Reconnector gave up after CircuitBreakerThreshold
+	// consecutive connection failures. Kill switch remains active. Recovery
+	// requires a manual user action (ForceReconnect / Connect) which resets
+	// the Reconnector and the state machine.
+	StateFailed ConnState = "failed"
 )
 
 // StateManager provides thread-safe tunnel state management with change notifications.

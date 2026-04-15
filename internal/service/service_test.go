@@ -11,8 +11,55 @@ import (
 	"time"
 
 	"github.com/velia-the-veil/le_voile/internal/browser"
+	"github.com/velia-the-veil/le_voile/internal/tunnel"
 	"github.com/velia-the-veil/le_voile/internal/updater"
 )
+
+func TestProgram_CircuitBreakerHook(t *testing.T) {
+	// Validate the contract between the reconnector hook and Program state:
+	// tripCircuitBreaker must set the tripped flag, capture the message,
+	// and transition the tunnel state to StateFailed so IPC polling sees it.
+	prg := NewProgram(Config{RelayDomain: "test.example.com", RelayPubKey: "dGVzdA=="})
+
+	// A tunnel client is required for the StateFailed transition; build one
+	// through the public helper. Any valid-length Ed25519 key works — we
+	// never dial. 32 zero bytes base64-encoded is a valid-length stand-in.
+	const zeroKey32 = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+	client, err := tunnel.NewClient("127.0.0.1:1", zeroKey32, tunnel.WithInsecure(true))
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	prg.tunnelClient = client
+
+	if prg.CircuitBreakerTripped() {
+		t.Fatal("CircuitBreakerTripped = true before trip, want false")
+	}
+	if prg.CircuitBreakerMessage() != "" {
+		t.Fatalf("CircuitBreakerMessage = %q before trip, want empty", prg.CircuitBreakerMessage())
+	}
+
+	prg.tripCircuitBreaker(CircuitBreakerAlertMessage)
+
+	if !prg.CircuitBreakerTripped() {
+		t.Error("CircuitBreakerTripped = false after trip, want true")
+	}
+	if got := prg.CircuitBreakerMessage(); got != CircuitBreakerAlertMessage {
+		t.Errorf("CircuitBreakerMessage = %q, want %q", got, CircuitBreakerAlertMessage)
+	}
+	if got := client.State().Get(); got != tunnel.StateFailed {
+		t.Errorf("tunnel state = %q, want %q", got, tunnel.StateFailed)
+	}
+
+	// Reset must clear all three: flag, message, and reconnector.Reset()
+	// (we don't assert reconnector here since it's nil — covered by tunnel tests).
+	prg.ResetCircuitBreaker()
+	if prg.CircuitBreakerTripped() {
+		t.Error("CircuitBreakerTripped = true after Reset, want false")
+	}
+	if prg.CircuitBreakerMessage() != "" {
+		t.Errorf("CircuitBreakerMessage = %q after Reset, want empty", prg.CircuitBreakerMessage())
+	}
+}
 
 func TestNewProgram(t *testing.T) {
 	cfg := Config{RelayDomain: "test.example.com", RelayPubKey: "dGVzdA=="}

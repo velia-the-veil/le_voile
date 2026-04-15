@@ -5,9 +5,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 
 	"github.com/BurntSushi/toml"
 )
+
+var tunNameRe = regexp.MustCompile(`^[a-z][a-z0-9]{0,14}$`)
 
 // Config holds the application configuration.
 type Config struct {
@@ -19,6 +22,13 @@ type Config struct {
 	Registry  RegistryConfig  `toml:"registry"`
 	HTTPProxy       HTTPProxyConfig       `toml:"http_proxy"`
 	BrowserPolicies BrowserPoliciesConfig `toml:"browser_policies"`
+	TUN             TUNConfig             `toml:"tun"`
+}
+
+// TUNConfig holds TUN/Wintun interface settings (Epic 2 — capture L3).
+type TUNConfig struct {
+	Name string `toml:"name"` // ex: "levoile0" — regex ^[a-z][a-z0-9]{0,14}$
+	MTU  int    `toml:"mtu"`  // bornes [576, 9000], défaut 1420
 }
 
 // BrowserPoliciesConfig holds browser WebRTC policy settings.
@@ -107,6 +117,10 @@ func Load(path string) (*Config, error) {
 		BrowserPolicies: BrowserPoliciesConfig{
 			Enabled: true,
 		},
+		TUN: TUNConfig{
+			Name: "levoile0",
+			MTU:  1420,
+		},
 	}
 
 	if _, err := toml.DecodeFile(path, cfg); err != nil {
@@ -119,6 +133,20 @@ func Load(path string) (*Config, error) {
 	// Validate mandatory fields when relay is configured.
 	if cfg.Relay.Domain != "" && cfg.Relay.PublicKeyEd25519 == "" && !cfg.Relay.Insecure {
 		return nil, fmt.Errorf("config: relay.public_key_ed25519 is required when relay.domain is set")
+	}
+
+	// Validate TUN bounds (MTU may be 0 in legacy configs → normalize to defaults).
+	if cfg.TUN.Name == "" {
+		cfg.TUN.Name = "levoile0"
+	}
+	if cfg.TUN.MTU == 0 {
+		cfg.TUN.MTU = 1420
+	}
+	if cfg.TUN.MTU < 576 || cfg.TUN.MTU > 9000 {
+		return nil, fmt.Errorf("config: tun.mtu=%d hors bornes [576,9000]", cfg.TUN.MTU)
+	}
+	if !tunNameRe.MatchString(cfg.TUN.Name) {
+		return nil, fmt.Errorf("config: tun.name=%q invalide (regex ^[a-z][a-z0-9]{0,14}$)", cfg.TUN.Name)
 	}
 
 	return cfg, nil

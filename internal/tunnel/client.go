@@ -32,6 +32,13 @@ var (
 )
 
 const (
+	// connectTimeout bounds the whole Connect() flow (TLS 1.3 handshake +
+	// /verify roundtrip). NFR11 targets <3s on ADSL/fibre with RTT <50ms to
+	// Cloudflare — this is an empirical performance target, not a deadline we
+	// want to enforce as a hard timeout. We set a 5s ceiling so that users on
+	// higher-RTT links (lossy Wi-Fi, 3G fallback) are not spuriously cut off;
+	// normal handshakes complete well under 3s and are validated empirically
+	// pre-release via the procedure in docs/testing/dpi-verification.md.
 	connectTimeout     = 5 * time.Second
 	dohTimeout         = 8 * time.Second
 	stunRelayTimeout   = 5 * time.Second
@@ -102,6 +109,22 @@ type Client struct {
 
 // NewClient creates a tunnel client configured for HTTP/3 with TLS 1.3.
 // Use WithInsecure(true) to skip TLS certificate verification (development only).
+//
+// Establishment is a two-step sequence:
+//
+//  1. NewClient(domain, pinnedKey) — builds the HTTP/3 transport, resolves the
+//     relay IP (via system DNS at this stage — DoH bootstrap is handled by
+//     internal/registry/doh_resolver.go at the registry layer, not here), and
+//     wires the Ed25519 pinning callback into tls.Config.VerifyPeerCertificate.
+//     Does NOT open a QUIC connection.
+//  2. Connect(ctx) — opens QUIC/HTTP3 via /verify (TLS 1.3 handshake fails
+//     immediately with ErrPinningFailed if the relay's leaf cert does not carry
+//     the pinned Ed25519 key).
+//
+// The split exists so that reconnection (internal/tunnel/reconnect.go) can
+// reuse the same Client instance across network failures without re-running
+// DNS resolution. For a one-shot convenience wrapper matching the Story 1.1
+// acceptance-criteria signature, see ConnectNew.
 func NewClient(relayDomain string, relayPubKeyBase64 string, opts ...ClientOption) (*Client, error) {
 	o := clientOptions{}
 	for _, opt := range opts {
@@ -146,6 +169,32 @@ func NewClient(relayDomain string, relayPubKeyBase64 string, opts ...ClientOptio
 	c.httpClient = &http.Client{Transport: tr}
 	c.transport = tr
 
+	return c, nil
+}
+
+// ConnectNew is a one-shot helper that builds a Client via NewClient and
+// immediately establishes the tunnel via Connect. Matches the Story 1.1
+// acceptance-criteria signature tunnel.Connect(ctx, relayDomain, pinnedKey).
+//
+// Production code should prefer the two-step NewClient + Connect sequence so
+// that the same Client can be reused across reconnection attempts (see
+// internal/tunnel/reconnect.go). Use ConnectNew in integration tests or
+// throw-away scripts where reconnection is not needed.
+//
+// On any failure (NewClient or Connect), ConnectNew returns (nil, err) and
+// guarantees no resources are retained: if Connect fails after the HTTP/3
+// transport is built, Disconnect is called to close the QUIC transport
+// before returning. Callers must NOT call Disconnect on the returned client
+// when err != nil (client is nil).
+func ConnectNew(ctx context.Context, relayDomain string, relayPubKeyBase64 string, opts ...ClientOption) (*Client, error) {
+	c, err := NewClient(relayDomain, relayPubKeyBase64, opts...)
+	if err != nil {
+		return nil, err
+	}
+	if err := c.Connect(ctx); err != nil {
+		_ = c.Disconnect() // close transport to avoid QUIC socket leak
+		return nil, err
+	}
 	return c, nil
 }
 

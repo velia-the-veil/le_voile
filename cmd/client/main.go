@@ -49,6 +49,10 @@ type resolvedConfig struct {
 	browserPoliciesEnabled bool
 
 	preferredCountry string
+
+	tunEnabled bool
+	tunName    string
+	tunMTU     int
 }
 
 // resolveConfig loads config from file and applies CLI flag overrides.
@@ -140,6 +144,16 @@ func resolveConfig(cfgPath, flagDomain, flagPubKey string, flagInsecure bool) (r
 
 	// Resolve preferred country.
 	rc.preferredCountry = cfg.Client.PreferredCountry
+
+	// Resolve TUN config (Epic 2). Gardé opt-in tant que routing/firewall
+	// stories 2.4/2.6/2.7 ne sont pas livrés.
+	rc.tunName = cfg.TUN.Name
+	rc.tunMTU = cfg.TUN.MTU
+	// tunEnabled n'est pas encore dans le schéma TOML — activation via env
+	// LEVOILE_TUN_ENABLED=1 pour les tests pendant la transition Epic 2.
+	if os.Getenv("LEVOILE_TUN_ENABLED") == "1" {
+		rc.tunEnabled = true
+	}
 
 	return rc, nil
 }
@@ -243,6 +257,10 @@ func main() {
 		HTTPProxyPort:           rc.httpProxyPort,
 		BrowserPoliciesEnabled: rc.browserPoliciesEnabled,
 		PreferredCountry:       rc.preferredCountry,
+
+		TUNEnabled: rc.tunEnabled,
+		TUNName:    rc.tunName,
+		TUNMTU:     rc.tunMTU,
 	})
 
 	// Set up IPC server with handler that bridges to the service.
