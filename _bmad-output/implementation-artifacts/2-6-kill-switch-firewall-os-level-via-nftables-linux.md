@@ -1,6 +1,6 @@
 # Story 2.6: Kill switch firewall OS-level via nftables (Linux)
 
-Status: ready-for-dev
+Status: done
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -81,50 +81,50 @@ so that **aucune fuite n'est possible même si le service crashe (SIGKILL, panic
 
 ## Tasks / Subtasks
 
-- [ ] **Task 1 : Créer l'interface et le squelette du package** (AC: 7)
-  - [ ] Créer `internal/firewall/firewall.go` (sans build tag) : interface `Firewall`, erreurs exportées (`ErrNftablesUnavailable`, `ErrNotImplemented`), fonction `New() Firewall` déclarée via build-tag-split
-  - [ ] Créer `internal/firewall/firewall_linux.go` avec `//go:build linux`
-  - [ ] Créer `internal/firewall/firewall_windows.go` avec `//go:build windows` (stub retournant `ErrNotImplemented`)
-  - [ ] Créer `internal/firewall/firewall_test.go` (sans build tag — tests de l'interface + compilation)
+- [x] **Task 1 : Créer l'interface et le squelette du package** (AC: 7)
+  - [x] Créer `internal/firewall/firewall.go` (sans build tag) : interface `Firewall`, erreurs exportées (`ErrNftablesUnavailable`, `ErrNotImplemented`), fonction `New() Firewall` déclarée via build-tag-split
+  - [x] Créer `internal/firewall/firewall_linux.go` avec `//go:build linux`
+  - [x] Créer `internal/firewall/firewall_windows.go` avec `//go:build windows` (stub retournant `ErrNotImplemented`)
+  - [x] Créer `internal/firewall/firewall_test.go` (sans build tag — tests de l'interface + compilation)
 
-- [ ] **Task 2 : Détection `nft` et `nf_tables` au démarrage** (AC: 4)
-  - [ ] Implémenter `detectNft() error` dans `firewall_linux.go` : `exec.LookPath("nft")` puis `nft list ruleset` probe
-  - [ ] Mapper les erreurs shellout stderr vers `ErrNftablesUnavailable` (binary missing, module unavailable)
-  - [ ] Appeler `detectNft()` en tête de `Activate()` — échec hard early
-  - [ ] Test unitaire : mock exec (via injection de `execCommand func(name string, args ...string) *exec.Cmd`) vérifiant binary-missing et module-unavailable
+- [x] **Task 2 : Détection `nft` et `nf_tables` au démarrage** (AC: 4)
+  - [x] Implémenter `detectNft() error` dans `firewall_linux.go` : `exec.LookPath("nft")` puis `nft list ruleset` probe
+  - [x] Mapper les erreurs shellout stderr vers `ErrNftablesUnavailable` (binary missing, module unavailable)
+  - [x] Appeler `detectNft()` en tête de `Activate()` — échec hard early
+  - [x] Test unitaire : mock exec (via injection de `execCommand func(name string, args ...string) *exec.Cmd`) vérifiant binary-missing et module-unavailable
 
-- [ ] **Task 3 : Template ruleset nftables** (AC: 1, 3)
-  - [ ] Créer `internal/firewall/ruleset.nft.tmpl` — template Go `text/template` avec paramètres `{{.RelayIP}}`, `{{.TunName}}`
-  - [ ] Inclure `flush table inet levoile` puis `table inet levoile { chain input {...} chain output {...} }` dans un seul script (atomicité)
-  - [ ] Embed via `//go:embed ruleset.nft.tmpl` dans `firewall_linux.go`
-  - [ ] Fonction `renderRuleset(relayIP net.IP, tunName string) (string, error)` (rejette IP nil, tunName vide, IPv6 → hors scope NFR24 / Story 2.9)
-  - [ ] Test unitaire : snapshot du ruleset rendu pour un cas nominal + cas edge (IP privée, IP publique)
+- [x] **Task 3 : Template ruleset nftables** (AC: 1, 3)
+  - [x] Créer `internal/firewall/ruleset.nft.tmpl` — template Go `text/template` avec paramètres `{{.RelayIP}}`, `{{.TunName}}`
+  - [x] Inclure `flush table inet levoile` puis `table inet levoile { chain input {...} chain output {...} }` dans un seul script (atomicité)
+  - [x] Embed via `//go:embed ruleset.nft.tmpl` dans `firewall_linux.go`
+  - [x] Fonction `renderRuleset(relayIP net.IP, tunName string) (string, error)` (rejette IP nil, tunName vide, IPv6 → hors scope NFR24 / Story 2.9)
+  - [x] Test unitaire : snapshot du ruleset rendu pour un cas nominal + cas edge (IP privée, IP publique)
 
-- [ ] **Task 4 : Shellout `nft -f -` atomique** (AC: 1, 3)
-  - [ ] `applyRuleset(script string) error` : `cmd := exec.Command("nft", "-f", "-")` ; `cmd.Stdin = strings.NewReader(script)` ; capture stderr ; échec si exit != 0
-  - [ ] Chronométrer l'application (assertion `< 100ms` uniquement dans test e2e, pas en prod — log DEBUG de la durée)
-  - [ ] Test unitaire avec `execCommand` injecté : vérifier que le script stdin contient bien `flush table inet levoile` et les règles attendues
+- [x] **Task 4 : Shellout `nft -f -` atomique** (AC: 1, 3)
+  - [x] `applyRuleset(script string) error` : `cmd := exec.Command("nft", "-f", "-")` ; `cmd.Stdin = strings.NewReader(script)` ; capture stderr ; échec si exit != 0
+  - [x] Chronométrer l'application (assertion `< 100ms` uniquement dans test e2e, pas en prod — log DEBUG de la durée)
+  - [x] Test unitaire avec `execCommand` injecté : vérifier que le script stdin contient bien `flush table inet levoile` et les règles attendues
 
-- [ ] **Task 5 : `Activate` complet** (AC: 1, 3)
-  - [ ] `(f *nftFirewall) Activate(relayIP net.IP, tunName string) error` : `detectNft` → `renderRuleset` → `applyRuleset` → vérification post-apply via `IsActive()`
-  - [ ] Log INFO : `"firewall activated"` avec `relay_ip`, `tun_name`, `duration_ms`
-  - [ ] Gestion orphelin : la séquence `flush ... ; table ...` dans le template rend `Activate` idempotent sans code spécifique — ajouter un log WARN si la table était déjà présente (détectable via `IsActive()` pré-appel)
-  - [ ] Test unitaire : succès nominal, échec shellout, détection orphelin (log WARN)
+- [x] **Task 5 : `Activate` complet** (AC: 1, 3)
+  - [x] `(f *nftFirewall) Activate(relayIP net.IP, tunName string) error` : `detectNft` → `renderRuleset` → `applyRuleset` → vérification post-apply via `IsActive()`
+  - [x] Log INFO : `"firewall activated"` avec `relay_ip`, `tun_name`, `duration_ms`
+  - [x] Gestion orphelin : la séquence `flush ... ; table ...` dans le template rend `Activate` idempotent sans code spécifique — ajouter un log WARN si la table était déjà présente (détectable via `IsActive()` pré-appel)
+  - [x] Test unitaire : succès nominal, échec shellout, détection orphelin (log WARN)
 
-- [ ] **Task 6 : `Deactivate` idempotent + `IsActive`** (AC: 5, 6)
-  - [ ] `(f *nftFirewall) Deactivate() error` : `nft delete table inet levoile`, ignorer erreur "No such file or directory"
-  - [ ] `(f *nftFirewall) IsActive() (bool, error)` : `nft list table inet levoile` ; exit 0 → true ; stderr contient "No such file" → false, nil ; autre erreur → false, err
-  - [ ] Tests unitaires : Deactivate × 2 appels (second = no-op), IsActive true/false/error
+- [x] **Task 6 : `Deactivate` idempotent + `IsActive`** (AC: 5, 6)
+  - [x] `(f *nftFirewall) Deactivate() error` : `nft delete table inet levoile`, ignorer erreur "No such file or directory"
+  - [x] `(f *nftFirewall) IsActive() (bool, error)` : `nft list table inet levoile` ; exit 0 → true ; stderr contient "No such file" → false, nil ; autre erreur → false, err
+  - [x] Tests unitaires : Deactivate × 2 appels (second = no-op), IsActive true/false/error
 
-- [ ] **Task 7 : Test d'intégration (integration tag)** (AC: 1-6)
-  - [ ] `firewall_linux_test.go` avec build tag `//go:build linux && integration` : teste contre un vrai `nft` (skip si CI sans nftables ou sans root)
-  - [ ] Scénario : Activate → vérifier `nft list ruleset` contient `inet levoile` → Deactivate → vérifier absence
-  - [ ] Scénario orphelin : Activate → simuler crash (ne pas Deactivate) → Activate à nouveau → vérifier log WARN + règles correctes
-  - [ ] Scénario absence `nft` : mock `$PATH` sans nft → Activate retourne `ErrNftablesUnavailable`
+- [x] **Task 7 : Test d'intégration (integration tag)** (AC: 1-6)
+  - [x] `firewall_linux_test.go` avec build tag `//go:build linux && integration` : teste contre un vrai `nft` (skip si CI sans nftables ou sans root)
+  - [x] Scénario : Activate → vérifier `nft list ruleset` contient `inet levoile` → Deactivate → vérifier absence
+  - [x] Scénario orphelin : Activate → simuler crash (ne pas Deactivate) → Activate à nouveau → vérifier log WARN + règles correctes
+  - [x] Scénario absence `nft` : mock `$PATH` sans nft → Activate retourne `ErrNftablesUnavailable`
 
-- [ ] **Task 8 : Documentation package** (AC: 7)
-  - [ ] `doc.go` avec description du package, de l'interface, et de l'ordre strict Activate/Deactivate (après TUN + routing, avant tunnel.Connect)
-  - [ ] Mention explicite : **cette story N'intègre PAS firewall dans `internal/service/`** — l'orchestration est à la charge d'une story ultérieure dans Epic 2 (ordre Connect complet quand tun + routing + firewall sont tous prêts)
+- [x] **Task 8 : Documentation package** (AC: 7)
+  - [x] `doc.go` avec description du package, de l'interface, et de l'ordre strict Activate/Deactivate (après TUN + routing, avant tunnel.Connect)
+  - [x] Mention explicite : **cette story N'intègre PAS firewall dans `internal/service/`** — l'orchestration est à la charge d'une story ultérieure dans Epic 2 (ordre Connect complet quand tun + routing + firewall sont tous prêts)
 
 ## Dev Notes
 
@@ -214,10 +214,49 @@ Disconnect: tunnel.Disconnect() → firewall.Deactivate() → routing.Teardown()
 
 ### Agent Model Used
 
-_(to be filled by dev agent)_
+Claude Opus 4.6 (1M context)
 
 ### Debug Log References
 
+- Aucune — implémentation straightforward, pas de debug nécessaire.
+
 ### Completion Notes List
 
+- Package `internal/firewall/` créé avec interface cross-platform `Firewall` (Activate/Deactivate/IsActive)
+- Implémentation Linux via nftables shellout (`nft -f -` stdin pipe), atomique (flush+apply dans un seul script)
+- Template `ruleset.nft.tmpl` embarqué via `//go:embed`, rendu via `text/template` avec validation (nil IP, IPv6 rejeté, tunName vide)
+- Détection `nft` binary + `nf_tables` kernel module avec erreur typée `ErrNftablesUnavailable`
+- Détection orphelin via `IsActive()` pré-appel avec log WARN
+- `Deactivate` idempotent (ignore "No such file or directory")
+- `IsActive` interroge le kernel réel (pas de cache applicatif)
+- Windows stub retourne `ErrNotImplemented` (Story 2.7)
+- Logger optionnel (interface `Logger` — nil = silencieux), aligné sur le pattern watchdog du repo
+- Tests unitaires Linux via injection de `commandRunner`/`stdinRunner`/`lookPathFunc`
+- Tests d'intégration Linux avec build tag `//go:build linux && integration`
+- Pattern `commandRunner` aligné sur `internal/dns/` existant
+- Aucune modification de `internal/service/` (hors scope)
+- Build complet Windows OK, `GOOS=linux go vet` OK, aucune régression
+
 ### File List
+
+- `internal/firewall/doc.go` — NEW — Documentation package
+- `internal/firewall/firewall.go` — NEW — Interface Firewall, erreurs sentinelles, Logger interface
+- `internal/firewall/firewall_linux.go` — NEW — Implémentation nftFirewall (Activate/Deactivate/IsActive + logging helpers)
+- `internal/firewall/firewall_windows.go` — NEW — Stub Windows (ErrNotImplemented)
+- `internal/firewall/firewall_test.go` — NEW — Tests cross-platform (New, sentinel errors)
+- `internal/firewall/exec_linux.go` — NEW — commandRunner type + defaultRunner
+- `internal/firewall/detect_linux.go` — NEW — detectNft (binary + kernel module probe)
+- `internal/firewall/detect_linux_test.go` — NEW — Tests detectNft (binary missing, module unavailable, success)
+- `internal/firewall/ruleset.nft.tmpl` — NEW — Template nftables (flush + table inet levoile)
+- `internal/firewall/ruleset_linux.go` — NEW — renderRuleset (template embed + render + validation)
+- `internal/firewall/ruleset_linux_test.go` — NEW — Tests renderRuleset (nominal, private IP, nil, IPv6, empty tun)
+- `internal/firewall/apply_linux.go` — NEW — stdinRunner type + applyRuleset (nft -f - stdin pipe)
+- `internal/firewall/apply_linux_test.go` — NEW — Tests applyRuleset (success, stdin content, nft error)
+- `internal/firewall/activate_linux_test.go` — NEW — Tests Activate (nominal, detectNft fail, orphan, shellout fail)
+- `internal/firewall/deactivate_linux_test.go` — NEW — Tests Deactivate (success, idempotent, double-call) + IsActive (true/false/error)
+- `internal/firewall/firewall_integration_test.go` — NEW — Tests intégration Linux (activate/deactivate, orphan, nft absent)
+
+## Change Log
+
+- 2026-04-16: Story 2.6 implémentée — package `internal/firewall/` complet avec kill switch nftables Linux, interface cross-platform, tests unitaires et d'intégration
+- 2026-04-16: Code review — 7 findings corrigés (2H/3M/2L) : fix template nftables first-run, timing complet Activate, validation tunName anti-injection, init stdinRun dans New(), test intégration via New(), dead code supprimé, doc.go complété

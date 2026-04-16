@@ -53,6 +53,11 @@ type resolvedConfig struct {
 	tunEnabled bool
 	tunName    string
 	tunMTU     int
+
+	firewallEnabled bool
+
+	captiveEnabled   bool
+	captiveProbeURLs []string
 }
 
 // resolveConfig loads config from file and applies CLI flag overrides.
@@ -145,15 +150,22 @@ func resolveConfig(cfgPath, flagDomain, flagPubKey string, flagInsecure bool) (r
 	// Resolve preferred country.
 	rc.preferredCountry = cfg.Client.PreferredCountry
 
-	// Resolve TUN config (Epic 2). Gardé opt-in tant que routing/firewall
-	// stories 2.4/2.6/2.7 ne sont pas livrés.
+	// Resolve TUN config (Epic 2). Activation primaire via TOML ; env
+	// LEVOILE_TUN_ENABLED=1 en override pour tests/CI sans toucher au
+	// fichier config.
+	rc.tunEnabled = cfg.TUN.Enabled
 	rc.tunName = cfg.TUN.Name
 	rc.tunMTU = cfg.TUN.MTU
-	// tunEnabled n'est pas encore dans le schéma TOML — activation via env
-	// LEVOILE_TUN_ENABLED=1 pour les tests pendant la transition Epic 2.
 	if os.Getenv("LEVOILE_TUN_ENABLED") == "1" {
 		rc.tunEnabled = true
 	}
+
+	// Resolve firewall config (Story 2.7).
+	rc.firewallEnabled = cfg.Firewall.EnableKillSwitch
+
+	// Resolve captive portal config (Story 2.8).
+	rc.captiveEnabled = cfg.Captive.Enabled
+	rc.captiveProbeURLs = cfg.Captive.ProbeURLs
 
 	return rc, nil
 }
@@ -261,6 +273,10 @@ func main() {
 		TUNEnabled: rc.tunEnabled,
 		TUNName:    rc.tunName,
 		TUNMTU:     rc.tunMTU,
+
+		FirewallEnabled:  rc.firewallEnabled,
+		CaptiveEnabled:   rc.captiveEnabled,
+		CaptiveProbeURLs: rc.captiveProbeURLs,
 	})
 
 	// Set up IPC server with handler that bridges to the service.

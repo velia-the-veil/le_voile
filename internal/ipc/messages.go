@@ -23,9 +23,13 @@ const (
 	ActionNotifyUpdate = "notify_update"
 	ActionSetBlocklist  = "set_blocklist"
 	ActionSetHTTPProxy  = "set_http_proxy"
-	ActionGetRegistry   = "get_registry"
-	ActionSelectCountry = "select_country"
+	ActionGetRegistry      = "get_registry"
+	ActionSelectCountry    = "select_country"
+	ActionRetryCaptive     = "retry_captive"
 )
+
+// Status constant for captive portal mode.
+const StatusCaptive = "captive"
 
 // Status constants for IPC responses.
 const (
@@ -91,6 +95,22 @@ type Response struct {
 	// user-facing message suitable for a UI banner.
 	CircuitBreakerTripped bool   `json:"circuit_breaker_tripped,omitempty"`
 	CircuitBreakerMessage string `json:"circuit_breaker_message,omitempty"`
+
+	// ConcurrentVPN is true when the preflight scan (story 2.3) detected an
+	// active third-party VPN on the machine and refused to start the tunnel.
+	// When true, Error carries the French user-facing message from
+	// preflight.ErrConcurrentVPN.
+	ConcurrentVPN bool `json:"concurrent_vpn,omitempty"`
+
+	// FirewallAltered is true when the WFP/nftables watchdog (Story 2.7) has
+	// detected external tampering with kill-switch rules.
+	FirewallAltered bool `json:"firewall_altered,omitempty"`
+
+	// CaptivePortal is true when the service is in captive portal mode
+	// (firewall lockdown relaxed, waiting for portal authentication).
+	CaptivePortal bool   `json:"captive_portal,omitempty"`
+	// CaptiveProbeURL is the URL that triggered captive detection.
+	CaptiveProbeURL string `json:"captive_probe_url,omitempty"`
 }
 
 // RegistryCountry holds country info for the registry response.

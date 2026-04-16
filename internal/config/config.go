@@ -23,12 +23,38 @@ type Config struct {
 	HTTPProxy       HTTPProxyConfig       `toml:"http_proxy"`
 	BrowserPolicies BrowserPoliciesConfig `toml:"browser_policies"`
 	TUN             TUNConfig             `toml:"tun"`
+	Firewall        FirewallConfig        `toml:"firewall"`
+	Captive         CaptiveConfig         `toml:"captive"`
+}
+
+// FirewallConfig holds OS-level kill-switch settings (WFP on Windows,
+// nftables on Linux). See Story 2.6/2.7.
+type FirewallConfig struct {
+	// EnableKillSwitch activates the kernel-level kill switch on connect.
+	// When false, Activate() is a no-op (degraded mode, see Story 5.9).
+	EnableKillSwitch bool `toml:"enable_killswitch"`
+}
+
+// CaptiveConfig holds captive portal detection settings (Story 2.8).
+type CaptiveConfig struct {
+	// Enabled activates captive portal detection before tunnel connect.
+	// When false, the probe is skipped and Connect proceeds directly.
+	Enabled bool `toml:"enabled"`
+	// ProbeURLs overrides the default probe endpoints. If empty, the built-in
+	// Apple + Google URLs are used. Intentionally plain HTTP (not HTTPS) because
+	// captive portals intercept HTTP redirects.
+	ProbeURLs []string `toml:"probe_urls,omitempty"`
 }
 
 // TUNConfig holds TUN/Wintun interface settings (Epic 2 — capture L3).
 type TUNConfig struct {
-	Name string `toml:"name"` // ex: "levoile0" — regex ^[a-z][a-z0-9]{0,14}$
-	MTU  int    `toml:"mtu"`  // bornes [576, 9000], défaut 1420
+	// Enabled active la création de l'interface TUN/Wintun au démarrage.
+	// Défaut false tant que les stories routing (2.4), firewall (2.6/2.7) et
+	// pump tunnel (1.1 étendue) ne sont pas livrées. Quand enabled=true sans
+	// ces dépendances, l'interface est créée mais inutile.
+	Enabled bool   `toml:"enabled"`
+	Name    string `toml:"name"` // ex: "levoile0" — regex ^[a-z][a-z0-9]{0,14}$
+	MTU     int    `toml:"mtu"`  // bornes [576, 9000], défaut 1420
 }
 
 // BrowserPoliciesConfig holds browser WebRTC policy settings.
@@ -121,6 +147,12 @@ func Load(path string) (*Config, error) {
 			Name: "levoile0",
 			MTU:  1420,
 		},
+		Firewall: FirewallConfig{
+			EnableKillSwitch: true,
+		},
+		Captive: CaptiveConfig{
+			Enabled: true,
+		},
 	}
 
 	if _, err := toml.DecodeFile(path, cfg); err != nil {
@@ -135,12 +167,20 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("config: relay.public_key_ed25519 is required when relay.domain is set")
 	}
 
-	// Validate TUN bounds (MTU may be 0 in legacy configs → normalize to defaults).
-	if cfg.TUN.Name == "" {
+	// Validate TUN bounds. MTU=0 n'est plus normalisé silencieusement : on
+	// distingue "section absente" (MTU reste à 0 donc on applique le défaut
+	// seulement si Name est aussi vide, signe que la section entière n'a pas
+	// été décodée) et "mtu=0 explicite dans le TOML" (on refuse).
+	legacyMissing := cfg.TUN.Name == "" && cfg.TUN.MTU == 0
+	if legacyMissing {
 		cfg.TUN.Name = "levoile0"
+		cfg.TUN.MTU = 1420
+	}
+	if cfg.TUN.Name == "" {
+		return nil, fmt.Errorf("config: tun.name requis (ex: \"levoile0\")")
 	}
 	if cfg.TUN.MTU == 0 {
-		cfg.TUN.MTU = 1420
+		return nil, fmt.Errorf("config: tun.mtu requis (ex: 1420) — 0 explicite interdit")
 	}
 	if cfg.TUN.MTU < 576 || cfg.TUN.MTU > 9000 {
 		return nil, fmt.Errorf("config: tun.mtu=%d hors bornes [576,9000]", cfg.TUN.MTU)

@@ -19,6 +19,46 @@ func TestConfig_TUNDefaults(t *testing.T) {
 	if cfg.TUN.MTU != 1420 {
 		t.Errorf("TUN.MTU = %d, want 1420", cfg.TUN.MTU)
 	}
+	if cfg.TUN.Enabled {
+		t.Error("TUN.Enabled doit être false par défaut")
+	}
+}
+
+func TestConfig_TUNExplicitMTU0Rejected(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "bad.toml")
+	if err := os.WriteFile(path, []byte(`[tun]
+name = "levoile0"
+mtu = 0
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("mtu=0 explicite doit être refusé")
+	}
+	if !strings.Contains(err.Error(), "mtu requis") {
+		t.Errorf("erreur inattendue: %v", err)
+	}
+}
+
+func TestConfig_TUNEnabledFromTOML(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "on.toml")
+	if err := os.WriteFile(path, []byte(`[tun]
+enabled = true
+name = "levoile0"
+mtu = 1420
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !cfg.TUN.Enabled {
+		t.Error("TUN.Enabled = false, attendu true")
+	}
 }
 
 func TestConfig_TUNLegacyConfigNormalized(t *testing.T) {

@@ -14,24 +14,26 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-// embeddedWintunDLL contient la DLL Wintun signée Microsoft. Fournie par
-// l'installeur / script build (placer wintun.dll 0.14.1 signée dans
-// internal/tun/wintun/wintun.dll avant `go build`). Si vide, l'extraction
-// échoue et New() retourne ErrUnavailable — cohérent avec dev local sans
-// Wintun installé.
+// ensureWintunDLL extrait wintun.dll vers %ProgramData%/LeVoile/ si absent
+// ou si son SHA-256 diffère de la version embarquée, puis la pré-charge
+// dans le processus via LoadLibraryEx(LOAD_WITH_ALTERED_SEARCH_PATH). Cette
+// approche évite de modifier le DLL search path global du processus (ce que
+// SetDllDirectory ferait — incompatible avec d'autres LoadLibrary indirects
+// comme kardianos/service, go-winio, quic-go).
 //
-// La directive //go:embed est placée dans un fichier distinct pour rester
-// optionnelle (cf. wintun_embed_windows.go).
+// Une fois la DLL préchargée, wireguard/tun l'utilisera directement par nom
+// sans relancer de résolution.
 
 var (
 	extractOnce sync.Once
 	extractErr  error
 )
 
-// ensureWintunDLL extrait wintun.dll vers %ProgramData%/LeVoile/ si absent
-// ou si son SHA-256 diffère de la version embarquée, puis ajoute ce dossier
-// au DLL search path via SetDllDirectory pour que wgtun.CreateTUN puisse la
-// charger.
+// LOAD_WITH_ALTERED_SEARCH_PATH : constante Windows pour LoadLibraryEx —
+// interprète lpFileName comme un chemin absolu et utilise son dossier
+// comme début du search path, sans toucher au search path global.
+const loadWithAlteredSearchPath = 0x00000008
+
 func ensureWintunDLL() error {
 	extractOnce.Do(func() {
 		extractErr = doEnsureWintunDLL()
@@ -41,7 +43,7 @@ func ensureWintunDLL() error {
 
 func doEnsureWintunDLL() error {
 	if len(embeddedWintunDLL) == 0 {
-		return errors.New("wintun.dll non embarquée — placer la DLL signée dans internal/tun/wintun/wintun.dll avant build")
+		return errors.New("tun: wintun.dll not embedded — place the signed DLL at internal/tun/wintun/wintun.dll before build (see README)")
 	}
 	programData := os.Getenv("PROGRAMDATA")
 	if programData == "" {
@@ -49,7 +51,7 @@ func doEnsureWintunDLL() error {
 	}
 	dir := filepath.Join(programData, "LeVoile")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return fmt.Errorf("mkdir %s: %w", dir, err)
+		return fmt.Errorf("tun: mkdir %s: %w", dir, err)
 	}
 	dst := filepath.Join(dir, "wintun.dll")
 
@@ -69,19 +71,19 @@ func doEnsureWintunDLL() error {
 	if need {
 		tmp := dst + ".tmp"
 		if err := os.WriteFile(tmp, embeddedWintunDLL, 0o644); err != nil {
-			return fmt.Errorf("write %s: %w", tmp, err)
+			return fmt.Errorf("tun: write %s: %w", tmp, err)
 		}
 		if err := os.Rename(tmp, dst); err != nil {
 			os.Remove(tmp)
-			return fmt.Errorf("rename %s → %s: %w", tmp, dst, err)
+			return fmt.Errorf("tun: rename %s → %s: %w", tmp, dst, err)
 		}
 	}
 
-	// Ajoute %ProgramData%/LeVoile/ au DLL search path pour que
-	// LoadLibrary("wintun.dll") résolve ce chemin, y compris en dev local
-	// (hors installation NSIS qui copierait wintun.dll dans Program Files).
-	if err := windows.SetDllDirectory(dir); err != nil {
-		return fmt.Errorf("SetDllDirectory %s: %w", dir, err)
+	// Pré-charge wintun.dll sans modifier le DLL search path global. Le
+	// handle est intentionnellement non libéré — la DLL doit rester résidente
+	// pour la vie du processus (wireguard/tun la réutilisera par nom).
+	if _, err := windows.LoadLibraryEx(dst, 0, loadWithAlteredSearchPath); err != nil {
+		return fmt.Errorf("tun: LoadLibraryEx %s: %w", dst, err)
 	}
 	return nil
 }

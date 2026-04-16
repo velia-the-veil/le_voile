@@ -27,6 +27,7 @@ type APIStatusResponse struct {
 	HTTPProxyActive  bool   `json:"http_proxy_active"`
 	BlocklistEnabled bool   `json:"blocklist_enabled"`
 	AutoStart        bool   `json:"auto_start"`
+	CaptivePortal    bool   `json:"captive_portal,omitempty"`
 }
 
 // HTTPServer serves frontend assets and exposes a REST JSON API that proxies to the service via IPC.
@@ -59,6 +60,7 @@ s.mux.HandleFunc("/api/registry", s.handleRegistry)
 	s.mux.HandleFunc("/api/settings/autostart", s.handleSetAutoStart)
 	s.mux.HandleFunc("/api/settings/blocklist", s.handleSetBlocklist)
 	s.mux.HandleFunc("/api/settings/httpproxy", s.handleSetHTTPProxy)
+	s.mux.HandleFunc("/api/captive/retry", s.handleCaptiveRetry)
 
 	return s
 }
@@ -116,6 +118,10 @@ func (s *HTTPServer) handleStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp := s.sendIPC(r.Context(), ipc.ActionGetStatus, "")
+	msg := statusMessage(resp.Status, resp.Country)
+	if resp.CaptivePortal {
+		msg = "Portail Wi-Fi détecté — authentifiez-vous"
+	}
 	api := APIStatusResponse{
 		Status:           resp.Status,
 		IP:               resp.IP,
@@ -125,9 +131,10 @@ func (s *HTTPServer) handleStatus(w http.ResponseWriter, r *http.Request) {
 		RelayID:          resp.RelayID,
 		RelayLatency:     resp.RelayLatency,
 		Uptime:           resp.Uptime,
-		Message:          statusMessage(resp.Status, resp.Country),
+		Message:          msg,
 		HTTPProxyActive:  resp.HTTPProxyActive,
 		BlocklistEnabled: resp.BlocklistEnabled,
+		CaptivePortal:    resp.CaptivePortal,
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -250,6 +257,16 @@ func (s *HTTPServer) handleBoolSetting(w http.ResponseWriter, r *http.Request, a
 		value = "true"
 	}
 	resp := s.sendIPC(r.Context(), action, value)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(actionResponse(resp))
+}
+
+func (s *HTTPServer) handleCaptiveRetry(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	resp := s.sendIPC(r.Context(), ipc.ActionRetryCaptive, "")
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(actionResponse(resp))
 }

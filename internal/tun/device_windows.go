@@ -42,11 +42,12 @@ func New(name string, mtu int) (Device, error) {
 }
 
 type wgDevice struct {
-	inner  wgtun.Device
-	name   string
-	mtu    int
-	closed bool
-	mu     sync.Mutex
+	inner    wgtun.Device
+	name     string
+	mtu      int
+	closed   bool
+	closeErr error
+	mu       sync.Mutex
 }
 
 func (d *wgDevice) Read(buf []byte) (int, error) {
@@ -77,12 +78,16 @@ func (d *wgDevice) Write(pkt []byte) (int, error) {
 func (d *wgDevice) Name() string { return d.name }
 func (d *wgDevice) MTU() int     { return d.mtu }
 
+// Close est idempotent : retourne l'erreur du premier appel à chaque appel
+// suivant (sans relancer inner.Close), pour éviter de masquer un échec de
+// cleanup que l'appelant n'aurait vu qu'au premier Close.
 func (d *wgDevice) Close() error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if d.closed {
-		return nil
+		return d.closeErr
 	}
 	d.closed = true
-	return d.inner.Close()
+	d.closeErr = d.inner.Close()
+	return d.closeErr
 }

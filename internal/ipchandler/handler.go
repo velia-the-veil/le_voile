@@ -62,12 +62,38 @@ func Handle(prg *svc.Program, req ipc.Request, opts Options) ipc.Response {
 		return handleGetRegistry(prg)
 	case ipc.ActionSelectCountry:
 		return handleSelectCountry(prg, req, opts)
+	case ipc.ActionRetryCaptive:
+		return handleRetryCaptive(prg)
 	default:
 		return ipc.Response{Status: ipc.StatusError, Error: "unknown_action"}
 	}
 }
 
 func handleGetStatus(prg *svc.Program) ipc.Response {
+	// Story 2.3 : si le scan preflight au démarrage a détecté un VPN
+	// concurrent, court-circuite tout le reste et retourne un statut explicite.
+	// La propriété tunnel/IP/uptime n'a pas de sens tant que le tunnel n'a
+	// pas été monté.
+	if e := prg.ConcurrentVPNError(); e != nil {
+		resp := ipc.Response{
+			Status:        ipc.StatusError,
+			Error:         e.Error(),
+			ConcurrentVPN: true,
+			RealIP:        prg.RealIP(),
+		}
+		// Inclure rollback/update/blocklist même en mode ConcurrentVPN pour
+		// que l'UI ne perde pas ces informations (fix M2).
+		if prg.RollbackOccurred() {
+			resp.UpdateStatus = ipc.StatusRollback
+			resp.RollbackVersion = prg.RollbackVersion()
+			resp.RollbackReason = prg.RollbackReason()
+		}
+		resp.BlocklistEnabled = prg.BlocklistActive()
+		resp.HTTPProxyActive = prg.HTTPProxyActive()
+		resp.HTTPProxyAddr = prg.HTTPProxyAddr()
+		resp.HTTPProxySeq = prg.HTTPProxySeq()
+		return resp
+	}
 	tc := prg.TunnelClient()
 	if tc == nil {
 		// Tunnel not yet started, but rollback may have occurred before the first connect.
@@ -86,6 +112,8 @@ func handleGetStatus(prg *svc.Program) ipc.Response {
 		resp.BrowserPoliciesFailed = prg.BrowserPolicyFailed()
 		resp.CircuitBreakerTripped = prg.CircuitBreakerTripped()
 		resp.CircuitBreakerMessage = prg.CircuitBreakerMessage()
+		resp.CaptivePortal = prg.CaptivePortal()
+		resp.CaptiveProbeURL = prg.CaptiveProbeURL()
 		return resp
 	}
 	state := tc.State().Get()
@@ -140,6 +168,9 @@ func handleGetStatus(prg *svc.Program) ipc.Response {
 	resp.BrowserPoliciesFailed = prg.BrowserPolicyFailed()
 	resp.CircuitBreakerTripped = prg.CircuitBreakerTripped()
 	resp.CircuitBreakerMessage = prg.CircuitBreakerMessage()
+	resp.FirewallAltered = prg.FirewallAltered()
+	resp.CaptivePortal = prg.CaptivePortal()
+	resp.CaptiveProbeURL = prg.CaptiveProbeURL()
 	return resp
 }
 
@@ -159,6 +190,16 @@ func fillLeakStatus(prg *svc.Program, resp *ipc.Response) {
 }
 
 func handleConnect(prg *svc.Program) ipc.Response {
+	// Story 2.3 : avant tout (y compris service_not_ready), re-scanner. Si
+	// l'utilisateur a démarré un VPN tiers après le lancement du service,
+	// on doit refuser le Connect IPC sans toucher au tunnel.
+	if e := prg.DetectConcurrentVPN(); e != nil {
+		return ipc.Response{
+			Status:        ipc.StatusError,
+			Error:         e.Error(),
+			ConcurrentVPN: true,
+		}
+	}
 	tc := prg.TunnelClient()
 	if tc == nil {
 		return ipc.Response{Status: ipc.StatusError, Error: "service_not_ready"}
@@ -567,6 +608,11 @@ func handleSelectCountry(prg *svc.Program, req ipc.Request, opts Options) ipc.Re
 	go prg.DetectVisibleIP(prg.Context())
 
 	return ipc.Response{Status: ipc.StatusConnected}
+}
+
+func handleRetryCaptive(prg *svc.Program) ipc.Response {
+	prg.RetryCaptiveCheck()
+	return ipc.Response{Status: ipc.StatusOK}
 }
 
 // FormatUptime formats a duration as "Xh Ym" or "Xm Ys".

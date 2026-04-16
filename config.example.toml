@@ -8,9 +8,23 @@ public_key_ed25519 = "YOUR_ED25519_PUBLIC_KEY_BASE64"
 auto_start = true
 
 [tun]
+# Active la création de l'interface TUN/Wintun au démarrage (Epic 2 —
+# capture L3). Laisser à false tant que routing/firewall/pump ne sont pas
+# livrés. Override en dev : LEVOILE_TUN_ENABLED=1.
+enabled = false
 # Nom de l'interface TUN/Wintun créée par le service. Ne modifier que si
 # conflit d'interface (regex autorisée : ^[a-z][a-z0-9]{0,14}$).
 name = "levoile0"
 # MTU en octets — bornes [576, 9000]. 1420 = défaut compatible QUIC/HTTP3
 # (laisse 80 octets pour l'encapsulation IP + tunnel).
 mtu = 1420
+
+[firewall]
+# Active le kill switch kernel-level (WFP sur Windows, nftables sur Linux).
+# Bloque tout trafic sortant sauf TUN + relais. Si false, mode dégradé
+# explicite — aucune protection anti-fuite réseau (cf Story 5.9).
+enable_killswitch = true
+
+# Watchdog TUN : détecte la disparition/altération de levoile0 toutes les
+# 3s (NFR16 < 5s). Non configurable pour l'instant — DefaultInterval codé
+# dans internal/tun/watchdog/watchdog.go. Sera exposé via TOML si besoin.

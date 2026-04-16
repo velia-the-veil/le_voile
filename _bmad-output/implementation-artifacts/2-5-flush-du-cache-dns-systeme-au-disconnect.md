@@ -1,6 +1,6 @@
 # Story 2.5: Flush du cache DNS système au disconnect
 
-Status: ready-for-dev
+Status: done
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -30,44 +30,44 @@ so that aucune entrée résolue via le tunnel ne subsiste après désactivation 
 
 ## Tasks / Subtasks
 
-- [ ] **Task 1 — Créer module `internal/dns/flush.go`** (AC: 1, 2, 3, 4, 5, 6, 7, 8)
-  - [ ] Déclarer signature portable : `func Flush(ctx context.Context) error`
-  - [ ] Dispatch via build tags vers `flush_linux.go` / `flush_windows.go`
-  - [ ] Déclarer helper `type flushResult struct { name string; err error }` pour cumuler résultats (Linux)
-  - [ ] Journaliser chaque tentative via `log.Printf` / `fmt.Fprintln(os.Stderr, ...)` préfixé `dns: flush:`
+- [x] **Task 1 — Créer module `internal/dns/flush.go`** (AC: 1, 2, 3, 4, 5, 6, 7, 8)
+  - [x] Déclarer signature portable : `func Flush(ctx context.Context) error`
+  - [x] Dispatch via build tags vers `flush_linux.go` / `flush_windows.go`
+  - [x] Déclarer helper `type flushResult struct { name string; err error }` pour cumuler résultats (Linux)
+  - [x] Journaliser chaque tentative via `log.Printf` / `fmt.Fprintln(os.Stderr, ...)` préfixé `dns: flush:`
 
-- [ ] **Task 2 — Implémenter `flush_windows.go`** (AC: 1, 8)
-  - [ ] `//go:build windows`
-  - [ ] Réutiliser le pattern `hiddenRunner(ctx, "ipconfig", "/flushdns")` déjà exporté dans [`internal/dns/cmd_windows.go`](internal/dns/cmd_windows.go) (exporter en package-local `defaultRunner`)
-  - [ ] Logger la sortie combinée (ipconfig affiche "Successfully flushed the DNS Resolver Cache")
-  - [ ] Retourner `nil` même si non-admin (ipconfig /flushdns fonctionne sans élévation sur Windows 10/11)
+- [x] **Task 2 — Implémenter `flush_windows.go`** (AC: 1, 8)
+  - [x] `//go:build windows`
+  - [x] Réutiliser le pattern `hiddenRunner(ctx, "ipconfig", "/flushdns")` déjà exporté dans [`internal/dns/cmd_windows.go`](internal/dns/cmd_windows.go) (exporter en package-local `defaultRunner`)
+  - [x] Logger la sortie combinée (ipconfig affiche "Successfully flushed the DNS Resolver Cache")
+  - [x] Retourner `nil` même si non-admin (ipconfig /flushdns fonctionne sans élévation sur Windows 10/11)
 
-- [ ] **Task 3 — Implémenter `flush_linux.go`** (AC: 2, 3, 4, 5, 6, 8)
-  - [ ] `//go:build linux`
-  - [ ] Fonction `detectResolvers(ctx) []string` qui retourne la liste des resolvers actifs (`"systemd-resolved"`, `"nscd"`, `"dnsmasq"`)
-    - [ ] `systemd-resolved` : `exec.CommandContext(ctx, "systemctl", "is-active", "--quiet", "systemd-resolved").Run()` exit 0
-    - [ ] `nscd` : `exec.LookPath("nscd")` OU fichier `/var/run/nscd/nscd.pid` lisible
-    - [ ] `dnsmasq` : PID lisible dans `/var/run/dnsmasq/dnsmasq.pid` OU `/run/dnsmasq/dnsmasq.pid`
-  - [ ] Pour chaque resolver détecté, appeler sa fonction de flush (ne pas court-circuiter en cas d'erreur)
-  - [ ] `flushSystemd(ctx)` : `exec.CommandContext(ctx, "resolvectl", "flush-caches").Run()`
-  - [ ] `flushNscd(ctx)` : `exec.CommandContext(ctx, "nscd", "-i", "hosts").Run()`
-  - [ ] `flushDnsmasq(ctx)` : lire PID depuis pidfile, `syscall.Kill(pid, syscall.SIGHUP)` ; en cas d'échec (permission, PID disparu) logger warning et retourner nil
-  - [ ] Aucun resolver détecté → log debug `"no DNS resolver detected"`, retourner `nil`
+- [x] **Task 3 — Implémenter `flush_linux.go`** (AC: 2, 3, 4, 5, 6, 8)
+  - [x] `//go:build linux`
+  - [x] Fonction `detectResolvers(ctx) []string` qui retourne la liste des resolvers actifs (`"systemd-resolved"`, `"nscd"`, `"dnsmasq"`)
+    - [x] `systemd-resolved` : `exec.CommandContext(ctx, "systemctl", "is-active", "--quiet", "systemd-resolved").Run()` exit 0
+    - [x] `nscd` : `exec.LookPath("nscd")` OU fichier `/var/run/nscd/nscd.pid` lisible
+    - [x] `dnsmasq` : PID lisible dans `/var/run/dnsmasq/dnsmasq.pid` OU `/run/dnsmasq/dnsmasq.pid`
+  - [x] Pour chaque resolver détecté, appeler sa fonction de flush (ne pas court-circuiter en cas d'erreur)
+  - [x] `flushSystemd(ctx)` : `exec.CommandContext(ctx, "resolvectl", "flush-caches").Run()`
+  - [x] `flushNscd(ctx)` : `exec.CommandContext(ctx, "nscd", "-i", "hosts").Run()`
+  - [x] `flushDnsmasq(ctx)` : lire PID depuis pidfile, `syscall.Kill(pid, syscall.SIGHUP)` ; en cas d'échec (permission, PID disparu) logger warning et retourner nil
+  - [x] Aucun resolver détecté → log debug `"no DNS resolver detected"`, retourner `nil`
 
-- [ ] **Task 4 — Implémenter stub cross-platform `flush_other.go`** (AC: 5)
-  - [ ] `//go:build !linux && !windows`
-  - [ ] `func Flush(ctx context.Context) error { return nil }`
+- [x] **Task 4 — Implémenter stub cross-platform `flush_other.go`** (AC: 5)
+  - [x] `//go:build !linux && !windows`
+  - [x] `func Flush(ctx context.Context) error { return nil }`
 
-- [ ] **Task 5 — Tests unitaires `flush_test.go`** (AC: 1, 5, 6)
-  - [ ] Mock du runner (`defaultRunner`) avec variable injectable pour tests
-  - [ ] Table-driven tests : Windows path produit bien l'invocation `ipconfig /flushdns`
-  - [ ] Linux path : stubber les fonctions de détection, vérifier cumul multi-resolver
-  - [ ] Cas "aucun resolver" retourne nil sans erreur
-  - [ ] Cas context annulé propage via sous-commandes (test avec `context.WithCancel` immédiatement annulé)
-  - [ ] Cas dnsmasq pidfile absent → warning mais nil
+- [x] **Task 5 — Tests unitaires `flush_test.go`** (AC: 1, 5, 6)
+  - [x] Mock du runner (`defaultRunner`) avec variable injectable pour tests
+  - [x] Table-driven tests : Windows path produit bien l'invocation `ipconfig /flushdns`
+  - [x] Linux path : stubber les fonctions de détection, vérifier cumul multi-resolver
+  - [x] Cas "aucun resolver" retourne nil sans erreur
+  - [x] Cas context annulé propage via sous-commandes (test avec `context.WithCancel` immédiatement annulé)
+  - [x] Cas dnsmasq pidfile absent → warning mais nil
 
-- [ ] **Task 6 — Intégration dans `internal/service/service.go`** (AC: 7)
-  - [ ] Dans la fonction `Disconnect()` (ou équivalent orchestrateur disconnect), APRÈS `tun.Close()`, invoquer :
+- [x] **Task 6 — Intégration dans `internal/service/service.go`** (AC: 7)
+  - [x] Dans la fonction `Disconnect()` (ou équivalent orchestrateur disconnect), APRÈS `tun.Close()`, invoquer :
     ```go
     flushCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
     defer cancel()
@@ -75,12 +75,12 @@ so that aucune entrée résolue via le tunnel ne subsiste après désactivation 
         fmt.Fprintf(serviceStderr, "service: dns flush: %v\n", err)
     }
     ```
-  - [ ] Même pattern dans la branche emergency/defer si le service crash pendant disconnect
-  - [ ] Vérifier que `dns.RestartDnscache()` (Windows, existant ligne 668/916/1094) reste appelé avant le flush (ordre : restart service Dnscache → flush cache)
+  - [x] Même pattern dans la branche emergency/defer si le service crash pendant disconnect
+  - [x] Vérifier que `dns.RestartDnscache()` (Windows, existant ligne 668/916/1094) reste appelé avant le flush (ordre : restart service Dnscache → flush cache)
 
-- [ ] **Task 7 — Test E2E opt-in** (AC: 1, 2)
-  - [ ] Ajouter test `//go:build e2e && windows` dans `internal/dns/e2e_flush_windows_test.go` qui invoque `Flush(ctx)` et vérifie exit 0 (skip si non-admin non requis)
-  - [ ] Ajouter test `//go:build e2e && linux` dans `internal/dns/e2e_flush_linux_test.go` qui vérifie `Flush(ctx)` ne panic pas sur une machine sans aucun resolver
+- [x] **Task 7 — Test E2E opt-in** (AC: 1, 2)
+  - [x] Ajouter test `//go:build e2e && windows` dans `internal/dns/e2e_flush_windows_test.go` qui invoque `Flush(ctx)` et vérifie exit 0 (skip si non-admin non requis)
+  - [x] Ajouter test `//go:build e2e && linux` dans `internal/dns/e2e_flush_linux_test.go` qui vérifie `Flush(ctx)` ne panic pas sur une machine sans aucun resolver
 
 ## Dev Notes
 
@@ -186,10 +186,58 @@ claude-opus-4-6[1m]
 
 ### Debug Log References
 
+### Implementation Plan
+
+- `flush.go` : types partagés (`flushResult`), `flushRunner` injectable, helpers `logFlush`/`combineFlushErrors`
+- `flush_windows.go` : `Flush(ctx)` via `flushRunner("ipconfig", "/flushdns")` — délègue à `defaultRunner` → `hiddenRunner` (HideWindow)
+- `flush_linux.go` : `detectResolvers()` (systemd-resolved, nscd, dnsmasq) + `flushSystemd`/`flushNscd`/`flushDnsmasq` — cumul AC6
+- `flush_other.go` : no-op stub `!linux && !windows`
+- Tests : `flush_windows_test.go` (table-driven + context cancel), `flush_linux_test.go` (multi-resolver, no-resolver, dnsmasq kill fail, nscd pidfile)
+- Intégration service.go : étape 8c shutdown (après tun.Close) + defer emergency (après RestartDnscache) — 5s timeout
+
 ### Completion Notes List
 
 - Ultimate context engine analysis completed — comprehensive developer guide created
 - Architecture compliance verified : placement `internal/dns/flush*.go`, ordre orchestration post-`tun.Close()`
 - Previous-story caveat flagged : les anciens fichiers `2-*.md` appartiennent à l'Epic 2 obsolète (pre-2026-04-15) — ne PAS les utiliser comme source
+- Implémentation complète — 7 tâches / 7 complétées
+- `flushRunner` injecté comme indirection sur `defaultRunner` pour isolation des tests sans affecter le reste du package dns
+- Ordre shutdown respecté : RestartDnscache (étape 7a) → dns.Flush (étape 8c) — conforme architecture
+- Tests Windows : 3 tests (success, fail, context cancel) — PASS avec `-race`
+- Tests Linux : 7 tests (no-resolver, systemd-only, multi-resolver cumul AC6, dnsmasq pidfile absent, dnsmasq kill fail, context cancel, nscd via pidfile)
+- E2E tests : opt-in via `//go:build e2e && windows` / `//go:build e2e && linux`
+- Race conditions pré-existantes dans `service_53_edge_test.go` (STUN) — non liées à cette story
+- Aucune nouvelle dépendance ajoutée dans go.mod
+
+**Code Review Fixes (2026-04-16) :**
+- H1 : Ajout `scanProcCommFunc` — scan `/proc/*/comm` pour détection dnsmasq sans pidfile (AC4 complet)
+- H1/L1 : `flushDnsmasq` utilise proc scan en fallback (élimine double lecture pidfile)
+- M1 : `logFlush` utilise `flushLogWriter` (io.Writer injectable) au lieu de os.Stderr brut
+- M2 : `TestFlush_Linux_ContextCancelled` assert désormais erreur non-nil
+- M3 : `TestFlush_Linux_DnsmasqPidfileAbsent` renommé `DnsmasqTOCTOU` — couvre le vrai scénario (pidfile présent puis disparu)
+- L3 : Commentaire `flush_other.go` corrigé (pas AC5 mais "unsupported platforms")
+- 3 nouveaux tests : `DnsmasqViaProcScan`, `FlushDnsmasq_ProcScanFallback`, `DnsmasqTOCTOU`
 
 ### File List
+
+**Fichiers créés :**
+- internal/dns/flush.go
+- internal/dns/flush_windows.go
+- internal/dns/flush_linux.go
+- internal/dns/flush_other.go
+- internal/dns/flush_windows_test.go
+- internal/dns/flush_linux_test.go
+- internal/dns/e2e_flush_windows_test.go
+- internal/dns/e2e_flush_linux_test.go
+
+**Fichiers modifiés :**
+- internal/service/service.go (ajout dns.Flush dans shutdown étape 8c + defer emergency)
+
+**Fichiers de suivi modifiés :**
+- _bmad-output/implementation-artifacts/sprint-status.yaml (2-5 → in-progress → review)
+- _bmad-output/implementation-artifacts/2-5-flush-du-cache-dns-systeme-au-disconnect.md (status, tasks, record)
+
+## Change Log
+
+- 2026-04-16 : Implémentation complète de dns.Flush — flush DNS cache système au disconnect (AC1-AC8). Module `internal/dns/flush*.go` avec séparation build tags Windows/Linux/other, détection multi-resolver Linux (systemd-resolved, nscd, dnsmasq), intégration dans `service.go` shutdown et emergency defer.
+- 2026-04-16 : Code review — 7 findings (1H, 3M, 3L) corrigés : scan `/proc/*/comm` pour AC4, writer injectable, tests TOCTOU et assertions renforcées.

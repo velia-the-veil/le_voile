@@ -54,14 +54,14 @@ development_status:
   # Epic 2: Capture L3 Machine-Wide & Kill Switch Firewall
   # CHEMIN CRITIQUE — entierement nouveau (refactor majeur TUN/Wintun + nftables/WFP).
   epic-2: in-progress
-  2-1-creation-et-destruction-de-l-interface-tun-wintun-levoile0: review
-  2-2-watchdog-tun-detection-d-alteration-externe: ready-for-dev
-  2-3-detection-de-vpn-concurrent-au-demarrage: ready-for-dev
-  2-4-routage-systeme-route-par-defaut-via-tun-route-specifique-relais: ready-for-dev
-  2-5-flush-du-cache-dns-systeme-au-disconnect: ready-for-dev
-  2-6-kill-switch-firewall-os-level-via-nftables-linux: ready-for-dev
-  2-7-kill-switch-firewall-os-level-via-wfp-windows: ready-for-dev
-  2-8-detection-captive-portal-wifi-lockdown-firewall-relaxe: ready-for-dev
+  2-1-creation-et-destruction-de-l-interface-tun-wintun-levoile0: done
+  2-2-watchdog-tun-detection-d-alteration-externe: done
+  2-3-detection-de-vpn-concurrent-au-demarrage: done
+  2-4-routage-systeme-route-par-defaut-via-tun-route-specifique-relais: done
+  2-5-flush-du-cache-dns-systeme-au-disconnect: done
+  2-6-kill-switch-firewall-os-level-via-nftables-linux: done
+  2-7-kill-switch-firewall-os-level-via-wfp-windows: done
+  2-8-detection-captive-portal-wifi-lockdown-firewall-relaxe: done
   2-9-option-ipv6-hors-tunnel-avec-avertissement-explicite: ready-for-dev
   epic-2-retrospective: optional
 

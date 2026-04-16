@@ -1,6 +1,6 @@
 # Story 2.1 : Création et destruction de l'interface TUN/Wintun `levoile0`
 
-Status: review
+Status: done
 
 ## Story
 
@@ -162,6 +162,10 @@ Pré-existants non liés (confirmés indépendants des changements 2.1) :
 
 ### File List
 
+**Créés (code review) :**
+- [scripts/fetch-wintun.sh](scripts/fetch-wintun.sh) — téléchargement automatisé + vérification SHA-256 + génération `wintun_dll_windows.go`
+- [Makefile](Makefile) — targets `wintun`, `build`, `test`, `tun-test`, `clean`
+
 **Créés :**
 - [internal/tun/device.go](internal/tun/device.go) — interface `Device` + constantes + validation
 - [internal/tun/device_linux.go](internal/tun/device_linux.go) — backend Linux `/dev/net/tun`
@@ -191,3 +195,4 @@ Pré-existants non liés (confirmés indépendants des changements 2.1) :
 | Date | Changement | Auteur |
 |------|-----------|--------|
 | 2026-04-15 | Story 2.1 — T1-T6 implémentés. Package `internal/tun/` cross-platform, crash-recovery netlink/wintun < 5s, config TOML `[tun]`, intégration opt-in service via `TUNEnabled`. Build Windows + cross-Linux OK, tests race-safe OK. | dev-agent (Opus 4.6) |
+| 2026-04-15 | Code review — 2 High + 4 Medium + 4 Low corrigés. **H1** : defer `tunCleanup` armé après `ensureTUN`, désarmé avant ctx.Done — plus de fuite TUN sur erreur tunnel/proxy/DNS. **H2** : `SetDllDirectory` (global process) remplacé par `LoadLibraryEx(LOAD_WITH_ALTERED_SEARCH_PATH)` — n'affecte plus les autres chargements DLL. **M1** : test loopback ICMP `TestNew_ReadWriteLoopback` ajouté (Linux). **M2** : script `scripts/fetch-wintun.sh` + `Makefile` target `make wintun` + génération auto `wintun_dll_windows.go`. **M3** : `wgDevice.Close` mémorise `closeErr` et le retourne identiquement aux appels suivants. **M4** : champ `TUNConfig.Enabled` en TOML + ligne dans `config.example.toml` ; env var reste en override. **L1** : erreurs `SetsockoptTimeval` propagées. **L2** : `mtu=0` explicite refusé loud (distingué de section absente). **L3** : `TestEnsureTUN_DisabledByDefault` teste maintenant que `tunFactory` n'est pas invoqué. **L4** : message d'erreur Wintun anglicisé pour cohérence. Tests race-safe OK. | code-review (Opus 4.6) |

@@ -59,8 +59,14 @@ func deleteLinkByName(name string, deadline time.Time) error {
 		timeoutMs = 100
 	}
 	tv := unix.Timeval{Sec: timeoutMs / 1000, Usec: (timeoutMs % 1000) * 1000}
-	_ = unix.SetsockoptTimeval(fd, unix.SOL_SOCKET, unix.SO_RCVTIMEO, &tv)
-	_ = unix.SetsockoptTimeval(fd, unix.SOL_SOCKET, unix.SO_SNDTIMEO, &tv)
+	// Propager les erreurs setsockopt : sans timeout, Read peut bloquer et
+	// dépasser NFR17 < 5s.
+	if err := unix.SetsockoptTimeval(fd, unix.SOL_SOCKET, unix.SO_RCVTIMEO, &tv); err != nil {
+		return fmt.Errorf("netlink SO_RCVTIMEO: %w", err)
+	}
+	if err := unix.SetsockoptTimeval(fd, unix.SOL_SOCKET, unix.SO_SNDTIMEO, &tv); err != nil {
+		return fmt.Errorf("netlink SO_SNDTIMEO: %w", err)
+	}
 
 	// Construit le message : nlmsghdr + ifinfomsg + IFLA_IFNAME attr.
 	nameBytes := append([]byte(name), 0) // null-terminated

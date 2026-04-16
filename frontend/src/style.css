@@ -43,6 +43,7 @@ html, body {
 .titlebar-v.connected { color: var(--status-secure); text-shadow: 0 0 8px rgba(74, 222, 128, 0.4); }
 .titlebar-v.connecting { color: var(--status-warning); text-shadow: 0 0 8px rgba(251, 146, 60, 0.4); animation: pulse-text 1.5s infinite; }
 .titlebar-v.disconnected { color: var(--status-risk); text-shadow: 0 0 8px rgba(255, 60, 60, 0.4); }
+.titlebar-v.captive { color: #f59e0b; text-shadow: 0 0 8px rgba(245, 158, 11, 0.4); animation: pulse-text 2s infinite; }
 @keyframes pulse-text { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
 .titlebar-name { font-family: 'Rajdhani', sans-serif; font-size: 13px; color: var(--text-secondary); }
 .titlebar-controls { display: flex; align-items: center; gap: 2px; }
@@ -114,6 +115,11 @@ html, body {
 .status-dot.connected { background: var(--status-secure); box-shadow: 0 0 8px var(--status-secure); }
 .status-dot.connecting { background: var(--status-warning); box-shadow: 0 0 8px var(--status-warning); animation: pulse-dot 1.5s infinite; }
 .status-dot.disconnected { background: var(--status-risk); box-shadow: 0 0 8px var(--status-risk); }
+.status-dot.captive { background: #f59e0b; box-shadow: 0 0 8px #f59e0b; animation: pulse-dot-captive 2s infinite; }
+@keyframes pulse-dot-captive {
+    0%, 100% { opacity: 1; box-shadow: 0 0 8px #f59e0b; }
+    50% { opacity: 0.5; box-shadow: 0 0 16px #f59e0b; }
+}
 @keyframes pulse-dot {
     0%, 100% { opacity: 1; box-shadow: 0 0 8px var(--status-warning); }
     50% { opacity: 0.4; box-shadow: 0 0 20px var(--status-warning); }
@@ -148,8 +154,28 @@ html, body {
 }
 .btn-connect { background: var(--status-secure); color: var(--bg-primary); }
 .btn-connect:hover { box-shadow: 0 0 16px rgba(74, 222, 128, 0.3); filter: brightness(1.1); }
+.btn-captive-retry { background: #f59e0b; color: var(--bg-primary); margin-top: 6px; width: auto; padding: 6px 16px; font-size: 12px; }
+.btn-captive-retry:hover { box-shadow: 0 0 12px rgba(245, 158, 11, 0.3); filter: brightness(1.1); }
 .btn:disabled { opacity: 0.5; cursor: not-allowed; pointer-events: none; }
 .btn.hidden { display: none; }
+
+/* Captive portal banner */
+.captive-banner {
+    background: rgba(245, 158, 11, 0.12);
+    border: 1px solid rgba(245, 158, 11, 0.3);
+    border-radius: 6px;
+    padding: 10px 12px;
+    margin: 0 0 8px 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    font-family: 'Rajdhani', sans-serif;
+    font-size: 12px;
+    color: #f59e0b;
+    text-align: center;
+}
+.captive-icon { font-size: 18px; }
 
 .link {
     font-family: 'Rajdhani', sans-serif; font-weight: 600; font-size: 14px;

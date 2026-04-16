@@ -18,12 +18,17 @@ import (
 
 	"github.com/velia-the-veil/le_voile/internal/blocklist"
 	"github.com/velia-the-veil/le_voile/internal/browser"
+	"github.com/velia-the-veil/le_voile/internal/captive"
 	"github.com/velia-the-veil/le_voile/internal/dns"
+	"github.com/velia-the-veil/le_voile/internal/firewall"
 	"github.com/velia-the-veil/le_voile/internal/httpproxy"
 	"github.com/velia-the-veil/le_voile/internal/leakcheck"
+	"github.com/velia-the-veil/le_voile/internal/preflight"
 	"github.com/velia-the-veil/le_voile/internal/registry"
+	"github.com/velia-the-veil/le_voile/internal/routing"
 	"github.com/velia-the-veil/le_voile/internal/stun"
 	"github.com/velia-the-veil/le_voile/internal/tun"
+	tunwatchdog "github.com/velia-the-veil/le_voile/internal/tun/watchdog"
 	"github.com/velia-the-veil/le_voile/internal/tunnel"
 	"github.com/velia-the-veil/le_voile/internal/updater"
 	"github.com/velia-the-veil/le_voile/internal/watchdog"
@@ -81,13 +86,25 @@ type Config struct {
 	TUNEnabled bool
 	TUNName    string // défaut "levoile0" si vide
 	TUNMTU     int    // défaut 1420 si 0
+
+	// FirewallEnabled active le kill switch kernel-level (WFP Windows,
+	// nftables Linux). Si false, Activate est no-op (mode dégradé).
+	FirewallEnabled bool
+
+	// CaptiveEnabled active la détection de portail captif Wi-Fi avant
+	// l'établissement du tunnel (Story 2.8). Si false, skip du probe.
+	CaptiveEnabled  bool
+	CaptiveProbeURLs []string // overrides captive.DefaultProbeURLs if non-empty
 }
 
 // Program implements kardianos/service.Interface for lifecycle management.
 type Program struct {
 	config Config
 
-	tunDev          tun.Device // interface TUN/Wintun (Epic 2), nil si TUNEnabled=false
+	tunDev          tun.Device         // interface TUN/Wintun (Epic 2), nil si TUNEnabled=false
+	tunWatchdog     *tunwatchdog.Watchdog // watchdog TUN (story 2.2), nil si TUNEnabled=false
+	routeMgr        routing.RouteManager // routage système (Epic 2 — story 2.4), nil si TUNEnabled=false
+	firewallMgr     firewall.Firewall    // kill switch kernel-level (Epic 2 — stories 2.6/2.7), nil si FirewallEnabled=false
 	tunnelClient    *tunnel.Client
 	dnsManager      dns.DNSManager
 	killSwitch      *dns.KillSwitch
@@ -162,6 +179,33 @@ type Program struct {
 	// persistent banner until the user triggers a manual reconnect.
 	circuitBreakerTripped atomic.Bool
 	circuitBreakerMessage atomic.Value // string
+
+	// firewallAltered is set when the firewall watchdog (Story 2.7) detects
+	// third-party rule tampering. Surfaced via IPC GetStatus.
+	firewallAltered atomic.Bool
+
+	// firewallRelayIP stores the relay IPv4 used for firewall Activate, so
+	// the watchdog re-activate path can access it without re-resolving DNS.
+	firewallRelayIP atomic.Value // net.IP
+
+	// concurrentVPNErr stocke la dernière *preflight.ErrConcurrentVPN (story
+	// 2.3) détectée au démarrage ou par un appel Connect IPC. Surfacée via
+	// GetStatus (ConcurrentVPN bool + Error string FR). Nil = aucune détection.
+	concurrentVPNErr atomic.Value // *preflight.ErrConcurrentVPN
+
+	// captivePortal is true when the service is in captive portal mode
+	// (firewall lockdown relaxed to LAN gateway only, waiting for user
+	// to authenticate on Wi-Fi portal). Story 2.8.
+	captivePortal    atomic.Bool
+	captiveProbeURL  atomic.Value // string — URL that triggered captive detection
+	captiveCancel    context.CancelFunc // cancels the captiveWatcher goroutine
+	captiveMu        sync.Mutex // protects captiveCancel
+
+	// preflightDetector, si non-nil, remplace preflightFactory() (tests).
+	preflightDetector preflight.VPNDetector
+	// preflightLastScan horodate le dernier scan pour throttler handleConnect
+	// (fix M3 — éviter un shell-out PowerShell à chaque clic rapide).
+	preflightLastScan time.Time
 }
 
 // NewProgram creates a Program with the given configuration.
@@ -169,6 +213,21 @@ func NewProgram(cfg Config) *Program {
 	return &Program{
 		config: cfg,
 	}
+}
+
+// serviceLogger adapts fmt.Fprintf(serviceStderr, ...) to the firewall.Logger
+// interface so the firewall package can log through the service's output.
+type serviceLogger struct{}
+
+func (l *serviceLogger) Infof(format string, args ...any)  { fmt.Fprintf(serviceStderr, "service: firewall: "+format+"\n", args...) }
+func (l *serviceLogger) Warnf(format string, args ...any)  { fmt.Fprintf(serviceStderr, "service: firewall: WARN "+format+"\n", args...) }
+func (l *serviceLogger) Errorf(format string, args ...any) { fmt.Fprintf(serviceStderr, "service: firewall: ERROR "+format+"\n", args...) }
+func (l *serviceLogger) Debugf(format string, args ...any) { fmt.Fprintf(serviceStderr, "service: firewall: DEBUG "+format+"\n", args...) }
+
+// firewallFactory permet d'injecter un Firewall mocké dans les tests.
+// Défaut : firewall.New.
+var firewallFactory = func(log firewall.Logger, opts firewall.Options) firewall.Firewall {
+	return firewall.New(log, opts)
 }
 
 // tunFactory permet d'injecter un Device mocké dans les tests sans
@@ -199,6 +258,92 @@ func (p *Program) ensureTUN() error {
 	}
 	p.tunDev = dev
 	return nil
+}
+
+// routingFactory permet d'injecter un RouteManager mocké dans les tests
+// sans dépendre de privilèges OS. Défaut : routing.New().
+var routingFactory = func() routing.RouteManager {
+	return routing.New()
+}
+
+// captureOriginalRouteFunc permet d'injecter un stub dans les tests (recoverTUN
+// appelle cette variable au lieu de routing.CaptureOriginalRoute directement).
+var captureOriginalRouteFunc = routing.CaptureOriginalRoute
+
+// preflightFactory permet d'injecter un VPNDetector mocké dans les tests
+// sans dépendre de l'état réseau réel. Défaut : preflight.New (OS-spécifique
+// via build tags).
+var preflightFactory = func() preflight.VPNDetector {
+	return preflight.New(func(level, msg string) {
+		fmt.Fprintf(serviceStderr, "service: [%s] %s\n", level, msg)
+	})
+}
+
+// SetPreflightDetector injecte un VPNDetector (tests). nil revient au factory
+// par défaut. Substitue aussi la détection pour les futurs appels.
+func (p *Program) SetPreflightDetector(d preflight.VPNDetector) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.preflightDetector = d
+	p.preflightLastScan = time.Time{} // reset throttle cache
+}
+
+// preflightThrottle est le délai minimum entre deux scans preflight. Évite
+// de spawner un processus PowerShell à chaque clic rapide sur Connect (fix M3).
+const preflightThrottle = 3 * time.Second
+
+// detectConcurrentVPN exécute le scan preflight (story 2.3) et stocke le
+// résultat. Retourne *preflight.ErrConcurrentVPN si détection positive, nil
+// sinon. L'erreur est aussi conservée sur p.concurrentVPNErr pour exposition
+// IPC (GetStatus). Une détection négative réinitialise l'état.
+// Si appelé dans les preflightThrottle secondes suivant le dernier scan,
+// retourne le résultat en cache sans re-scanner.
+func (p *Program) detectConcurrentVPN() *preflight.ErrConcurrentVPN {
+	p.mu.Lock()
+	detector := p.preflightDetector
+	if !p.preflightLastScan.IsZero() && time.Since(p.preflightLastScan) < preflightThrottle {
+		p.mu.Unlock()
+		return p.ConcurrentVPNError()
+	}
+	p.mu.Unlock()
+	if detector == nil {
+		detector = preflightFactory()
+	}
+	if detector == nil {
+		p.concurrentVPNErr.Store((*preflight.ErrConcurrentVPN)(nil))
+		return nil
+	}
+	err := detector.DetectConcurrentVPN()
+	p.mu.Lock()
+	p.preflightLastScan = time.Now()
+	p.mu.Unlock()
+	if err == nil {
+		p.concurrentVPNErr.Store((*preflight.ErrConcurrentVPN)(nil))
+		return nil
+	}
+	var e *preflight.ErrConcurrentVPN
+	if asErr, ok := err.(*preflight.ErrConcurrentVPN); ok {
+		e = asErr
+	}
+	p.concurrentVPNErr.Store(e)
+	return e
+}
+
+// DetectConcurrentVPN expose detectConcurrentVPN pour les handlers IPC qui
+// réévaluent l'état avant un Connect manuel.
+func (p *Program) DetectConcurrentVPN() *preflight.ErrConcurrentVPN {
+	return p.detectConcurrentVPN()
+}
+
+// ConcurrentVPNError retourne la dernière erreur ErrConcurrentVPN stockée.
+// Nil si aucun VPN concurrent n'est actuellement détecté.
+func (p *Program) ConcurrentVPNError() *preflight.ErrConcurrentVPN {
+	v := p.concurrentVPNErr.Load()
+	if v == nil {
+		return nil
+	}
+	e, _ := v.(*preflight.ErrConcurrentVPN)
+	return e
 }
 
 // SetIPCServer registers IPC start/stop callbacks to be called during lifecycle.
@@ -630,15 +775,175 @@ func (p *Program) run() {
 	// --- 0e. Detect real IP before tunnel connect ---
 	p.detectRealIP(ctx)
 
+	// --- 0e-bis. Preflight : détection d'un VPN concurrent (story 2.3) ---
+	// Scan purement read-only : aucune interface, règle firewall, ni route
+	// n'est modifiée. En cas de détection, on boucle toutes les 5s jusqu'à
+	// ce que le VPN tiers soit déconnecté ou que ctx soit annulé. IPC reste
+	// actif et GetStatus/handleConnect surfacent l'état ConcurrentVPN à l'UI.
+	if e := p.detectConcurrentVPN(); e != nil {
+		fmt.Fprintf(serviceStderr, "service: preflight: %v\n", e)
+		ticker := time.NewTicker(5 * time.Second)
+		cleared := false
+		for !cleared {
+			select {
+			case <-ctx.Done():
+				ticker.Stop()
+				return
+			case <-ticker.C:
+				if re := p.detectConcurrentVPN(); re == nil {
+					fmt.Fprintf(serviceStderr, "service: preflight: VPN concurrent disparu, reprise de la séquence\n")
+					cleared = true
+				}
+			}
+		}
+		ticker.Stop()
+	}
+
+	// --- 0e-bis. Captive portal detection (Story 2.8) ---
+	// Runs BEFORE TUN/firewall setup so the probe uses the normal network
+	// stack. If a captive portal is detected, we activate firewall in
+	// Captive mode (gateway-only) and wait for user authentication.
+	if p.config.CaptiveEnabled && p.config.TUNEnabled && p.config.FirewallEnabled {
+		probeDetail := captive.Probe(ctx, p.config.CaptiveProbeURLs)
+		switch probeDetail.Result {
+		case captive.PortalDetected:
+			fmt.Fprintf(serviceStderr, "service: captive portal detected url=%s status=%d\n",
+				probeDetail.URL, probeDetail.StatusCode)
+			p.captivePortal.Store(true)
+			p.captiveProbeURL.Store(probeDetail.URL)
+
+			// Activate firewall in captive mode (gateway-only + loopback).
+			origGW, _, gwErr := routing.CaptureOriginalRoute()
+			if gwErr != nil {
+				fmt.Fprintf(serviceStderr, "service: captive: cannot detect LAN gateway: %v\n", gwErr)
+				// Fall through — skip captive mode, proceed to normal connect.
+			} else {
+				fwLog := &serviceLogger{}
+				fw := firewallFactory(fwLog, firewall.Options{})
+				if err := fw.Activate(ctx, firewall.ActivateParams{
+					Mode:       firewall.ModeCaptive,
+					LanGateway: origGW,
+				}); err != nil {
+					fmt.Fprintf(serviceStderr, "service: captive firewall activate: %v\n", err)
+				} else {
+					p.firewallMgr = fw
+					// Block here until captive is cleared (user clicks retry
+					// which cancels captiveCancel, or periodic re-probe succeeds).
+					p.waitForCaptiveClear(ctx, origGW)
+					// After captive clear, firewallMgr is deactivated in
+					// waitForCaptiveClear. Fall through to normal TUN/routing/firewall.
+				}
+			}
+		case captive.ProbeError:
+			fmt.Fprintf(serviceStderr, "service: captive probe error (fail-open): %v\n", probeDetail.Err)
+			// Fail-open: continue to normal connect.
+		default:
+			// NoPortal — continue normally.
+		}
+	}
+
 	// --- 0f. TUN/Wintun interface (Epic 2 — capture L3) ---
 	// Opt-in via TUNEnabled : tant que routing (story 2.4) et firewall
 	// (stories 2.6/2.7) ne sont pas livrés, créer l'interface sans router le
 	// trafic est inutile. Échec non fatal — log + continue (le tunnel QUIC
 	// fonctionne indépendamment). Architecture ordre : elevation → tun.New →
 	// routing → firewall → tunnel.Connect.
+	//
+	// tunCleanup ferme l'interface TUN sur les chemins d'erreur anticipés de
+	// run() avant que shutdown() ne prenne le relais au ctx.Done normal. Armé
+	// après ensureTUN, désarmé juste avant l'attente ctx.Done (à ce moment,
+	// shutdown() fermera proprement tunDev).
+	tunCleanup := func() {}
+	var resolvedRelayIP net.IP // relay IPv4 resolved for routing/firewall
 	if p.config.TUNEnabled {
 		if err := p.ensureTUN(); err != nil {
 			fmt.Fprintf(serviceStderr, "service: tun setup: %v\n", err)
+		} else {
+			tunCleanup = func() {
+				// Ordre strict shutdown erreur : firewall → routing → tun.
+				if p.firewallMgr != nil {
+					if derr := p.firewallMgr.Deactivate(context.Background()); derr != nil {
+						fmt.Fprintf(serviceStderr, "service: firewall deactivate (error path): %v\n", derr)
+					}
+					p.firewallMgr = nil
+				}
+				if p.routeMgr != nil {
+					if terr := p.routeMgr.Teardown(); terr != nil {
+						fmt.Fprintf(serviceStderr, "service: routing teardown (error path): %v\n", terr)
+					}
+					p.routeMgr = nil
+				}
+				if p.tunDev != nil {
+					if cerr := p.tunDev.Close(); cerr != nil {
+						fmt.Fprintf(serviceStderr, "service: tun close (error path): %v\n", cerr)
+					}
+					p.tunDev = nil
+				}
+			}
+
+			// --- 0g. Routing cleanup (NFR17 < 5s) puis setup ---
+			// Ordre : tun.New → routing.Cleanup → routing.Setup → firewall
+			rm := routingFactory()
+			if err := rm.Cleanup(); err != nil {
+				fmt.Fprintf(serviceStderr, "service: routing cleanup: %v\n", err)
+			}
+
+			// Résoudre l'IP du relais pour la route /32 anti-loop.
+			relayIPs, err := net.LookupIP(relayDomain)
+			if err != nil || len(relayIPs) == 0 {
+				fmt.Fprintf(serviceStderr, "service: routing: cannot resolve relay %s: %v\n", relayDomain, err)
+			} else {
+				// Prendre la première IPv4.
+				for _, ip := range relayIPs {
+					if ip4 := ip.To4(); ip4 != nil {
+						resolvedRelayIP = ip4
+						break
+					}
+				}
+				if resolvedRelayIP == nil {
+					fmt.Fprintf(serviceStderr, "service: routing: no IPv4 for relay %s\n", relayDomain)
+				} else {
+					// Capturer gateway + interface par défaut en un seul
+					// appel atomique (AC3 — pas de TOCTOU).
+					origGW, origIface, gwErr := routing.CaptureOriginalRoute()
+					if gwErr != nil {
+						fmt.Fprintf(serviceStderr, "service: routing: %v\n", gwErr)
+					} else {
+						if err := rm.Setup(p.tunDev.Name(), resolvedRelayIP, origGW, origIface); err != nil {
+							fmt.Fprintf(serviceStderr, "service: routing setup: %v\n", err)
+							// Non fatal — continue sans routage L3.
+						} else {
+							p.routeMgr = rm
+						}
+					}
+				}
+			}
+
+			// --- 0h. Firewall kill switch (Stories 2.6/2.7) ---
+			// Ordre strict : tun.New → routing.Setup → firewall.Activate → tunnel.Connect
+			// Ne pas activer si FirewallEnabled=false (mode dégradé) ou si
+			// TUN/routing ont échoué (pas de LUID, pas de relay IP).
+			if p.config.FirewallEnabled && resolvedRelayIP != nil && p.tunDev != nil {
+				p.firewallRelayIP.Store(resolvedRelayIP)
+				fwLog := &serviceLogger{}
+				fw := firewallFactory(fwLog, firewall.Options{})
+				// Crash-recovery: nettoyer d'éventuels orphelins d'un crash précédent.
+				if n, err := fw.CleanupOrphans(ctx); err != nil {
+					fmt.Fprintf(serviceStderr, "service: firewall cleanup orphans: %v\n", err)
+				} else if n > 0 {
+					fmt.Fprintf(serviceStderr, "service: firewall orphans cleaned: %d\n", n)
+				}
+				if err := fw.Activate(ctx, firewall.ActivateParams{Mode: firewall.ModeFull, RelayIP: resolvedRelayIP, TunName: p.tunDev.Name()}); err != nil {
+					fmt.Fprintf(serviceStderr, "service: firewall activate: %v\n", err)
+					// Non fatal — continue sans kill switch réseau.
+				} else {
+					p.firewallMgr = fw
+					// Observer le channel d'altération tiers (watchdog).
+					if ch := fw.AlteredCh(); ch != nil {
+						go p.watchFirewallAltered(ctx, ch)
+					}
+				}
+			}
 		}
 	}
 
@@ -646,6 +951,7 @@ func (p *Program) run() {
 	client, err := tunnel.NewClient(relayDomain, relayPubKey, tunnel.WithInsecure(p.config.Insecure))
 	if err != nil {
 		fmt.Fprintf(serviceStderr, "service: %v\n", err)
+		tunCleanup()
 		return
 	}
 	p.tunnelClient = client
@@ -674,12 +980,20 @@ func (p *Program) run() {
 		}
 		// Clean up tunnel client that never connected to avoid leaking resources.
 		p.tunnelClient = nil
+		tunCleanup()
 		return
 	} else if connectCancel != nil {
 		connectCancel()
 	}
 
-	// --- 1a. Detect visible exit IP (best-effort, non-blocking) ---
+	// --- 1a. TUN watchdog start (Story 2.2 — NFR16 < 5s) ---
+	// Lancé après tunnel.Connect réussi. Surveille la disparition/altération de
+	// levoile0 et déclenche un reconnect complet si détecté.
+	if p.tunDev != nil {
+		p.startTUNWatchdog(ctx)
+	}
+
+	// --- 1b. Detect visible exit IP (best-effort, non-blocking) ---
 	go p.DetectVisibleIP(ctx)
 
 	// --- 1b. Confirm new version works / Cleanup backup after successful tunnel connect ---
@@ -716,6 +1030,7 @@ func (p *Program) run() {
 			p.discoverer.Stop()
 		}
 		client.Disconnect()
+		tunCleanup()
 		return
 	}
 
@@ -755,6 +1070,7 @@ func (p *Program) run() {
 			p.discoverer.Stop()
 		}
 		client.Disconnect()
+		tunCleanup()
 		return
 	}
 	// Safety net: if run() exits for ANY reason after DNS was redirected,
@@ -782,6 +1098,12 @@ func (p *Program) run() {
 		// Always restart Dnscache on exit (normal or crash).
 		if err := dns.RestartDnscache(); err != nil {
 			fmt.Fprintf(serviceStderr, "service: emergency dnscache restart: %v\n", err)
+		}
+		// Flush DNS cache after Dnscache restart (Story 2.5 — emergency path).
+		flushCtx, flushCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer flushCancel()
+		if err := dns.Flush(flushCtx); err != nil {
+			fmt.Fprintf(serviceStderr, "service: emergency dns flush: %v\n", err)
 		}
 	}()
 
@@ -940,6 +1262,10 @@ func (p *Program) run() {
 	}
 
 	// --- Wait for shutdown ---
+	// À partir d'ici, shutdown() prend la responsabilité de fermer tunDev.
+	// Le désarmement de tunCleanup évite un double-close si shutdown se
+	// déclenche alors que run() est encore dans la séquence de setup.
+	tunCleanup = func() {}
 	<-ctx.Done()
 
 	// --- Shutdown sequence (reverse order) ---
@@ -957,6 +1283,16 @@ func (p *Program) run() {
 // confirmation that shutdown is complete. Browser policies and DNS are
 // restored BEFORE IPC close.
 func (p *Program) shutdown() {
+	// 0. Clear captive portal state (Story 2.8).
+	p.captivePortal.Store(false)
+	p.captiveProbeURL.Store("")
+	p.captiveMu.Lock()
+	if p.captiveCancel != nil {
+		p.captiveCancel()
+		p.captiveCancel = nil
+	}
+	p.captiveMu.Unlock()
+
 	// 1. Stop leak scheduler (before reconnector)
 	if p.leakScheduler != nil {
 		p.leakScheduler.Stop()
@@ -1035,6 +1371,13 @@ func (p *Program) shutdown() {
 		fmt.Fprintf(serviceStderr, "service: %v\n", err)
 	}
 
+	// 7b. Stop TUN watchdog BEFORE tunnel disconnect (Story 2.2 — évite
+	// de triggerer un faux recovery pendant le shutdown propre).
+	if p.tunWatchdog != nil {
+		p.tunWatchdog.Stop()
+		p.tunWatchdog = nil
+	}
+
 	// 8. Close state channel and disconnect tunnel
 	if p.tunnelClient != nil {
 		p.tunnelClient.State().Close()
@@ -1043,13 +1386,40 @@ func (p *Program) shutdown() {
 		}
 	}
 
-	// 8a. Close TUN/Wintun interface LAST (Epic 2 — architecture ordre strict
+	// 8a. Deactivate firewall kill switch (après tunnel disconnect, avant routing teardown).
+	// Ordre strict : tunnel → firewall → routing → tun.Close.
+	if p.firewallMgr != nil {
+		if err := p.firewallMgr.Deactivate(context.Background()); err != nil {
+			fmt.Fprintf(serviceStderr, "service: firewall deactivate: %v\n", err)
+		}
+		p.firewallMgr = nil
+	}
+
+	// 8b. Teardown routing (après firewall, avant tun.Close).
+	if p.routeMgr != nil {
+		if err := p.routeMgr.Teardown(); err != nil {
+			fmt.Fprintf(serviceStderr, "service: routing teardown: %v\n", err)
+		}
+		p.routeMgr = nil
+	}
+
+	// 8b. Close TUN/Wintun interface LAST (Epic 2 — architecture ordre strict
 	// de shutdown : tunnel → firewall → routing → tun.Close).
 	if p.tunDev != nil {
 		if err := p.tunDev.Close(); err != nil {
 			fmt.Fprintf(serviceStderr, "service: tun close: %v\n", err)
 		}
 		p.tunDev = nil
+	}
+
+	// 8c. Flush DNS cache (Story 2.5 — après tun.Close, best-effort).
+	// Ordre : RestartDnscache (étape 7a) → Flush cache résiduel.
+	{
+		flushCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := dns.Flush(flushCtx); err != nil {
+			fmt.Fprintf(serviceStderr, "service: dns flush: %v\n", err)
+		}
 	}
 
 	// 9. Stop IPC server LAST — tray waits for shutdown confirmation (AC8)
@@ -1464,6 +1834,288 @@ func (p *Program) stopSTUN() {
 	}
 	if errCh != nil {
 		<-errCh
+	}
+}
+
+// startTUNWatchdog crée et démarre le watchdog TUN (Story 2.2 — NFR16).
+// Surveille levoile0 toutes les 3s. Sur disparition/altération, exécute
+// recoverTUN (sequence : recreate TUN → routing → firewall → tunnel reconnect).
+func (p *Program) startTUNWatchdog(ctx context.Context) {
+	chk, err := tunwatchdog.NewNetChecker(tunwatchdog.CheckerConfig{
+		Name:        p.tunDev.Name(),
+		ExpectedMTU: p.tunDev.MTU(),
+	})
+	if err != nil {
+		fmt.Fprintf(serviceStderr, "service: tun watchdog checker: %v\n", err)
+		return
+	}
+	wd, err := tunwatchdog.NewWatchdog(tunwatchdog.Config{
+		Checker: chk,
+		OnLost:  p.recoverTUN,
+		Logger:  &serviceLogger{},
+	})
+	if err != nil {
+		fmt.Fprintf(serviceStderr, "service: tun watchdog: %v\n", err)
+		return
+	}
+	p.tunWatchdog = wd
+	go func() {
+		if err := wd.Start(ctx); err != nil {
+			fmt.Fprintf(serviceStderr, "service: tun watchdog exit: %v\n", err)
+		}
+	}()
+}
+
+// recoverTUN est le callback du watchdog TUN (Story 2.2 — AC2/AC3).
+// Séquence stricte : recreate TUN → routing.Setup → firewall.Activate →
+// tunnel.Connect. Le firewall n'est PAS désactivé durant la procédure (AC3).
+func (p *Program) recoverTUN(ctx context.Context) error {
+	// Vérifier que le service n'est pas en cours de shutdown (fix H1 — si
+	// le service ctx est annulé, ne rien faire).
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+
+	fmt.Fprintf(serviceStderr, "service: tun recovery: starting sequence\n")
+
+	// Sérialiser l'accès aux champs partagés avec shutdown() (fix H1).
+	p.mu.Lock()
+
+	// 1. Recreate TUN interface.
+	tunName := tun.DefaultName
+	tunMTU := tun.DefaultMTU
+	if p.tunDev != nil {
+		tunName = p.tunDev.Name()
+		tunMTU = p.tunDev.MTU()
+	}
+	// Close old device best-effort (may already be gone).
+	if p.tunDev != nil {
+		_ = p.tunDev.Close()
+		p.tunDev = nil
+	}
+	p.mu.Unlock()
+
+	dev, err := tunFactory(tunName, tunMTU)
+	if err != nil {
+		return fmt.Errorf("tun recovery: tun.New: %w", err)
+	}
+
+	p.mu.Lock()
+	// Re-check shutdown après l'appel bloquant tun.New.
+	if ctx.Err() != nil {
+		p.mu.Unlock()
+		_ = dev.Close()
+		return ctx.Err()
+	}
+	p.tunDev = dev
+	p.mu.Unlock()
+	fmt.Fprintf(serviceStderr, "service: tun recovery: interface %s recreated\n", dev.Name())
+
+	// 2. Routing re-setup.
+	p.mu.Lock()
+	if p.routeMgr != nil {
+		_ = p.routeMgr.Teardown() // idempotent
+		p.routeMgr = nil
+	}
+	p.mu.Unlock()
+
+	relayIP := p.resolvedRelayIP()
+	if relayIP != nil {
+		rm := routingFactory()
+		_ = rm.Cleanup()
+		origGW, origIface, err := captureOriginalRouteFunc()
+		if err != nil {
+			fmt.Fprintf(serviceStderr, "service: tun recovery: routing gateway: %v\n", err)
+		} else if err := rm.Setup(dev.Name(), relayIP, origGW, origIface); err != nil {
+			fmt.Fprintf(serviceStderr, "service: tun recovery: routing setup: %v\n", err)
+		} else {
+			p.mu.Lock()
+			p.routeMgr = rm
+			p.mu.Unlock()
+			fmt.Fprintf(serviceStderr, "service: tun recovery: routing restored\n")
+		}
+	}
+
+	// 3. Firewall re-activate (SANS Deactivate préalable — AC3).
+	// Réutilise l'instance existante si possible (évite fuite goroutine
+	// AlteredCh watcher — fix H2). Activate est idempotent (flush+replace
+	// atomique côté nftables/WFP).
+	if p.config.FirewallEnabled && relayIP != nil {
+		p.mu.Lock()
+		fw := p.firewallMgr
+		p.mu.Unlock()
+		if fw == nil {
+			fwLog := &serviceLogger{}
+			fw = firewallFactory(fwLog, firewall.Options{})
+		}
+		if err := fw.Activate(ctx, firewall.ActivateParams{
+			Mode:    firewall.ModeFull,
+			RelayIP: relayIP,
+			TunName: dev.Name(),
+		}); err != nil {
+			fmt.Fprintf(serviceStderr, "service: tun recovery: firewall activate: %v\n", err)
+		} else {
+			p.mu.Lock()
+			p.firewallMgr = fw
+			p.mu.Unlock()
+			fmt.Fprintf(serviceStderr, "service: tun recovery: firewall restored\n")
+		}
+	}
+
+	// 4. Tunnel reconnect.
+	if p.tunnelClient != nil {
+		p.tunnelClient.ResetTransport()
+		if err := p.tunnelClient.Connect(ctx); err != nil {
+			return fmt.Errorf("tun recovery: tunnel.Connect: %w", err)
+		}
+		fmt.Fprintf(serviceStderr, "service: tun recovery: tunnel reconnected\n")
+	}
+
+	fmt.Fprintf(serviceStderr, "service: tun recovery: sequence complete\n")
+	return nil
+}
+
+// watchFirewallAltered listens on the firewall's AlteredCh and reacts by
+// logging a warning, surfacing an IPC alert, and re-activating the firewall.
+// Runs until ctx is cancelled (service shutdown).
+func (p *Program) watchFirewallAltered(ctx context.Context, ch <-chan struct{}) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ch:
+			fmt.Fprintf(serviceStderr, "service: firewall rules altered by third party — restoring\n")
+			p.firewallAltered.Store(true)
+			// Re-activate: Deactivate (cleanup tampered state) → Activate (restore).
+			p.mu.Lock()
+			fw := p.firewallMgr
+			tunName := ""
+			if p.tunDev != nil {
+				tunName = p.tunDev.Name()
+			}
+			p.mu.Unlock()
+			if fw == nil {
+				continue
+			}
+			if err := fw.Deactivate(ctx); err != nil {
+				fmt.Fprintf(serviceStderr, "service: firewall deactivate (restore): %v\n", err)
+			}
+			relayIP := p.resolvedRelayIP()
+			if relayIP != nil && tunName != "" {
+				if err := fw.Activate(ctx, firewall.ActivateParams{Mode: firewall.ModeFull, RelayIP: relayIP, TunName: tunName}); err != nil {
+					fmt.Fprintf(serviceStderr, "service: firewall re-activate: %v\n", err)
+				} else {
+					fmt.Fprintf(serviceStderr, "service: firewall rules restored\n")
+					p.firewallAltered.Store(false)
+				}
+			}
+		}
+	}
+}
+
+// FirewallAltered reports whether the firewall watchdog has detected third-party
+// rule tampering. Surfaced to the UI via IPC GetStatus.
+func (p *Program) FirewallAltered() bool {
+	return p.firewallAltered.Load()
+}
+
+// CaptivePortal reports whether the service is in captive portal mode
+// (firewall lockdown relaxed, waiting for portal auth). Story 2.8.
+func (p *Program) CaptivePortal() bool {
+	return p.captivePortal.Load()
+}
+
+// CaptiveProbeURL returns the URL that triggered captive detection, or "".
+func (p *Program) CaptiveProbeURL() string {
+	v := p.captiveProbeURL.Load()
+	if v == nil {
+		return ""
+	}
+	s, _ := v.(string)
+	return s
+}
+
+// RetryCaptiveCheck triggers an immediate captive portal re-probe.
+// Called from IPC handler when the user clicks "Activer la protection".
+func (p *Program) RetryCaptiveCheck() {
+	p.captiveMu.Lock()
+	cancelFn := p.captiveCancel
+	p.captiveMu.Unlock()
+	if cancelFn != nil {
+		// Cancelling the captive watcher triggers an immediate re-probe
+		// cycle in the orchestrator, which will either clear captive or
+		// restart the watcher.
+		cancelFn()
+	}
+}
+
+// resolvedRelayIP returns the relay IPv4 stored during startup for firewall
+// re-activation. Returns nil if not set.
+func (p *Program) resolvedRelayIP() net.IP {
+	v := p.firewallRelayIP.Load()
+	if v == nil {
+		return nil
+	}
+	ip, _ := v.(net.IP)
+	return ip
+}
+
+// waitForCaptiveClear blocks until the captive portal is cleared. It runs a
+// periodic re-probe (15s) and also listens for a manual retry (RetryCaptiveCheck
+// cancels captiveCancel). When the portal is cleared, it deactivates the captive
+// firewall and resets the captive state so the normal Connect flow can proceed.
+func (p *Program) waitForCaptiveClear(ctx context.Context, lanGW net.IP) {
+	const reprobeInterval = 15 * time.Second
+
+	for {
+		// Create a child context that RetryCaptiveCheck can cancel.
+		watchCtx, watchCancel := context.WithCancel(ctx)
+		p.captiveMu.Lock()
+		p.captiveCancel = watchCancel
+		p.captiveMu.Unlock()
+
+		// Wait for either timer, manual retry (cancel), or service shutdown.
+		select {
+		case <-ctx.Done():
+			watchCancel()
+			return
+		case <-time.After(reprobeInterval):
+			// periodic re-probe
+		case <-watchCtx.Done():
+			// manual retry (RetryCaptiveCheck cancelled us) or service shutdown
+			if ctx.Err() != nil {
+				return
+			}
+			// manual retry — fall through to immediate re-probe
+		}
+		watchCancel()
+
+		// Check service shutdown before probing (avoid wasted probe cycle).
+		if ctx.Err() != nil {
+			return
+		}
+
+		// Re-probe using background context so a service shutdown race
+		// doesn't silently skip the result.
+		probeDetail := captive.Probe(context.Background(), p.config.CaptiveProbeURLs)
+		if probeDetail.Result == captive.NoPortal {
+			fmt.Fprintf(serviceStderr, "service: captive portal cleared\n")
+			// Do NOT Deactivate the captive firewall here. Leave it active
+			// so there is zero gap between captive rules and full rules.
+			// The normal Connect flow's Activate(ModeFull) atomically
+			// replaces the captive ruleset (nftables flush+add in one
+			// transaction; WFP begin+commit transaction). This eliminates
+			// the traffic leak window that would occur if we Deactivated
+			// first and then Activated later.
+			p.captivePortal.Store(false)
+			p.captiveProbeURL.Store("")
+			p.captiveMu.Lock()
+			p.captiveCancel = nil
+			p.captiveMu.Unlock()
+			return
+		}
+		// Still captive — loop.
+		fmt.Fprintf(serviceStderr, "service: captive re-probe: still portal (result=%s)\n", probeDetail.Result)
 	}
 }
 

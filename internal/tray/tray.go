@@ -849,6 +849,16 @@ func (t *Tray) updateTrayState(resp ipc.Response) {
 		}
 	}
 
+	// Captive portal overrides normal status display.
+	if resp.CaptivePortal {
+		t.api.SetIcon(IconCaptive)
+		t.api.SetTooltip("Portail Wi-Fi détecté — authentifiez-vous")
+		if t.menuToggle != nil {
+			t.menuToggle.SetTitle("Activer Le Voile")
+		}
+		return
+	}
+
 	switch resp.Status {
 	case ipc.StatusConnected:
 		t.api.SetIcon(IconConnected)

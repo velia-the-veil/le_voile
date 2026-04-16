@@ -18,6 +18,19 @@ Get-AuthenticodeSignature .\wintun.dll
 # Status doit être Valid et SignerCertificate émis par Microsoft
 ```
 
+## Récupération automatisée
+
+Depuis la racine du repo :
+
+```bash
+make wintun        # télécharge, vérifie SHA-256, extrait, génère wintun_dll_windows.go
+# ou directement :
+bash scripts/fetch-wintun.sh
+```
+
+Le script est idempotent : si `wintun.dll` existe déjà, il régénère juste
+le fichier Go `wintun_dll_windows.go` contenant la directive `//go:embed`.
+
 ## Mise à jour
 
 Lors d'un upgrade :

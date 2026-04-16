@@ -20,6 +20,8 @@ function init() {
     dom.relayInfo = document.getElementById('relay-info');
     dom.testLink = document.getElementById('test-link');
     dom.btnConnect = document.getElementById('btn-connect');
+    dom.captiveBanner = document.getElementById('captive-banner');
+    dom.btnCaptiveRetry = document.getElementById('btn-captive-retry');
 
     startPolling();
     startRegistryPolling();
@@ -97,9 +99,20 @@ function updateUI(s) {
         dom.relayInfo.textContent = '';
     }
 
-    // Connect button (visible only when disconnected)
+    // Captive portal banner
+    if (dom.captiveBanner) {
+        if (s.captive_portal) {
+            dom.captiveBanner.style.display = '';
+            dom.dot.className = 'status-dot captive';
+            dom.titlebarV.className = 'titlebar-v captive';
+        } else {
+            dom.captiveBanner.style.display = 'none';
+        }
+    }
+
+    // Connect button (visible only when disconnected and not captive)
     if (dom.btnConnect) {
-        if (st === 'disconnected') {
+        if (st === 'disconnected' && !s.captive_portal) {
             dom.btnConnect.className = 'btn btn-connect';
             dom.btnConnect.textContent = 'Connecter';
             dom.btnConnect.disabled = false;
@@ -182,6 +195,16 @@ async function toggleConnect() {
         var data = await resp.json();
         if (data.error) dom.text.textContent = data.error;
     } catch (e) {}
+}
+
+// === Captive Portal ===
+async function retryCaptive() {
+    if (dom.btnCaptiveRetry) dom.btnCaptiveRetry.disabled = true;
+    try {
+        await fetch('/api/captive/retry', { method: 'POST' });
+    } catch (e) {}
+    // Re-enable after a delay to prevent spam clicks.
+    setTimeout(function() { if (dom.btnCaptiveRetry) dom.btnCaptiveRetry.disabled = false; }, 3000);
 }
 
 // === Settings ===
