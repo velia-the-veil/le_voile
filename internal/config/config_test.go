@@ -190,6 +190,67 @@ func TestConfig_SkipQuitModalDefaultFalse(t *testing.T) {
 	}
 }
 
+func TestConfig_AllowIPv6LeakDefaultFalse(t *testing.T) {
+	cfg, err := Load(filepath.Join(t.TempDir(), "nonexistent.toml"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.Firewall.AllowIPv6Leak {
+		t.Error("expected AllowIPv6Leak to default to false")
+	}
+}
+
+func TestConfig_AllowIPv6LeakRoundtrip(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+
+	original := &Config{
+		Firewall: FirewallConfig{
+			EnableKillSwitch: true,
+			AllowIPv6Leak:    true,
+		},
+		TUN: TUNConfig{Name: "levoile0", MTU: 1420},
+	}
+
+	if err := original.Save(path); err != nil {
+		t.Fatalf("save error: %v", err)
+	}
+
+	loaded, err := Load(path)
+	if err != nil {
+		t.Fatalf("load error: %v", err)
+	}
+
+	if !loaded.Firewall.AllowIPv6Leak {
+		t.Error("expected AllowIPv6Leak = true after roundtrip")
+	}
+}
+
+func TestConfig_AllowIPv6LeakFromTOML(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	content := `[tun]
+name = "levoile0"
+mtu = 1420
+
+[firewall]
+enable_killswitch = true
+allow_ipv6_leak = true
+`
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("load error: %v", err)
+	}
+	if !cfg.Firewall.AllowIPv6Leak {
+		t.Error("expected AllowIPv6Leak = true from TOML")
+	}
+	if !cfg.Firewall.EnableKillSwitch {
+		t.Error("expected EnableKillSwitch = true from TOML")
+	}
+}
+
 func TestStagingDir(t *testing.T) {
 	dir, err := StagingDir()
 	if err != nil {

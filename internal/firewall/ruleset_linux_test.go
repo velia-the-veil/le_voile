@@ -9,7 +9,7 @@ import (
 )
 
 func TestRenderRuleset_Nominal(t *testing.T) {
-	got, err := renderRuleset(net.ParseIP("198.51.100.42"), "levoile0")
+	got, err := renderRuleset(net.ParseIP("198.51.100.42"), "levoile0", false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -35,7 +35,7 @@ func TestRenderRuleset_Nominal(t *testing.T) {
 }
 
 func TestRenderRuleset_PrivateIP(t *testing.T) {
-	got, err := renderRuleset(net.ParseIP("10.0.0.1"), "tun0")
+	got, err := renderRuleset(net.ParseIP("10.0.0.1"), "tun0", false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -45,21 +45,21 @@ func TestRenderRuleset_PrivateIP(t *testing.T) {
 }
 
 func TestRenderRuleset_NilIP(t *testing.T) {
-	_, err := renderRuleset(nil, "levoile0")
+	_, err := renderRuleset(nil, "levoile0", false)
 	if err == nil {
 		t.Fatal("expected error for nil IP")
 	}
 }
 
 func TestRenderRuleset_IPv6Rejected(t *testing.T) {
-	_, err := renderRuleset(net.ParseIP("2001:db8::1"), "levoile0")
+	_, err := renderRuleset(net.ParseIP("2001:db8::1"), "levoile0", false)
 	if err == nil {
 		t.Fatal("expected error for IPv6")
 	}
 }
 
 func TestRenderRuleset_EmptyTunName(t *testing.T) {
-	_, err := renderRuleset(net.ParseIP("1.2.3.4"), "")
+	_, err := renderRuleset(net.ParseIP("1.2.3.4"), "", false)
 	if err == nil {
 		t.Fatal("expected error for empty tun name")
 	}
@@ -73,17 +73,38 @@ func TestRenderRuleset_InvalidTunName(t *testing.T) {
 		"aaaaaaaaaaaaaaaa", // 16 chars, exceeds IFNAMSIZ-1
 	}
 	for _, name := range bad {
-		_, err := renderRuleset(net.ParseIP("1.2.3.4"), name)
+		_, err := renderRuleset(net.ParseIP("1.2.3.4"), name, false)
 		if err == nil {
 			t.Errorf("expected error for invalid tun name %q", name)
 		}
 	}
 }
 
+func TestRenderRuleset_IPv6BlockedByDefault(t *testing.T) {
+	got, err := renderRuleset(net.ParseIP("1.2.3.4"), "levoile0", false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if strings.Contains(got, "meta nfproto ipv6 accept") {
+		t.Error("AllowIPv6Leak=false should NOT contain IPv6 accept rule")
+	}
+}
+
+func TestRenderRuleset_IPv6AllowedWhenLeakEnabled(t *testing.T) {
+	got, err := renderRuleset(net.ParseIP("1.2.3.4"), "levoile0", true)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	count := strings.Count(got, "meta nfproto ipv6 accept")
+	if count != 2 {
+		t.Errorf("AllowIPv6Leak=true should have 2 'meta nfproto ipv6 accept' rules (input+output), got %d\nRuleset:\n%s", count, got)
+	}
+}
+
 func TestRenderRuleset_ValidTunNames(t *testing.T) {
 	valid := []string{"levoile0", "tun0", "wg0", "eth0.1", "my-tun_0"}
 	for _, name := range valid {
-		_, err := renderRuleset(net.ParseIP("1.2.3.4"), name)
+		_, err := renderRuleset(net.ParseIP("1.2.3.4"), name, false)
 		if err != nil {
 			t.Errorf("valid name %q rejected: %v", name, err)
 		}

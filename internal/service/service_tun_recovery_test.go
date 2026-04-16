@@ -48,9 +48,10 @@ func (f *stubFirewall) Deactivate(_ context.Context) error {
 	f.activated = false
 	return nil
 }
-func (f *stubFirewall) IsActive(_ context.Context) (bool, error) { return f.activated, nil }
+func (f *stubFirewall) IsActive(_ context.Context) (bool, error)      { return f.activated, nil }
+func (f *stubFirewall) SetIPv6Policy(_ context.Context, _ bool) error { return nil }
 func (f *stubFirewall) CleanupOrphans(_ context.Context) (int, error) { return 0, nil }
-func (f *stubFirewall) AlteredCh() <-chan struct{} { return nil }
+func (f *stubFirewall) AlteredCh() <-chan struct{}                    { return nil }
 
 // stubRouteManager implémente routing.RouteManager avec enregistrement.
 type stubRouteManager struct {

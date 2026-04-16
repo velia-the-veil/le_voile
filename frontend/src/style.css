@@ -209,6 +209,58 @@ html, body {
 .toggle.on .toggle-knob { left: 20px; background: var(--status-secure); }
 
 
+/* Settings section divider + title */
+.setting-divider { height: 1px; background: rgba(42, 141, 255, 0.12); margin: 4px 0; }
+.setting-section-title {
+    font-family: 'Bebas Neue', sans-serif; font-size: 16px;
+    letter-spacing: 1px; color: var(--text-secondary); margin-bottom: -4px;
+}
+.setting-warn {
+    font-family: 'Rajdhani', sans-serif; font-size: 12px; font-weight: 600;
+    color: #e89332; padding: 4px 0;
+}
+
+/* IPv6 badge in titlebar */
+.ipv6-badge {
+    font-family: 'Rajdhani', sans-serif; font-weight: 700; font-size: 10px;
+    background: #e89332; color: var(--bg-primary); padding: 1px 5px;
+    border-radius: 3px; margin-left: 6px; vertical-align: middle;
+}
+
+/* Warning modal overlay */
+.modal-overlay {
+    position: fixed; inset: 0;
+    background: rgba(0, 0, 0, 0.65);
+    display: flex; align-items: center; justify-content: center;
+    z-index: 100;
+}
+.modal {
+    background: var(--bg-secondary); border: 1px solid rgba(42, 141, 255, 0.15);
+    border-radius: 10px; padding: 24px; max-width: 320px; width: 90%;
+    display: flex; flex-direction: column; gap: 14px; align-items: center;
+    text-align: center;
+}
+.modal-icon { font-size: 32px; color: #e89332; }
+.modal-text {
+    font-family: 'Inter', sans-serif; font-size: 13px; line-height: 1.6;
+    color: var(--text-primary);
+}
+.modal-actions { display: flex; gap: 12px; width: 100%; }
+.btn-modal-cancel {
+    flex: 1; background: var(--bg-tertiary); color: var(--text-primary);
+    font-family: 'Rajdhani', sans-serif; font-weight: 600; font-size: 14px;
+    border: 1px solid rgba(42, 141, 255, 0.15); border-radius: 6px;
+    padding: 8px; cursor: pointer; transition: background 150ms;
+}
+.btn-modal-cancel:hover { background: rgba(42, 141, 255, 0.1); }
+.btn-modal-danger {
+    flex: 1; background: #d42b2b; color: var(--text-primary);
+    font-family: 'Rajdhani', sans-serif; font-weight: 600; font-size: 14px;
+    border: none; border-radius: 6px; padding: 8px; cursor: pointer;
+    transition: background 150ms;
+}
+.btn-modal-danger:hover { background: #b91c1c; }
+
 /* Notifications panel */
 #panel-notifications { align-items: stretch; padding: 24px; gap: 16px; }
 #panel-notifications h3 { font-family: 'Bebas Neue', sans-serif; font-size: 24px; letter-spacing: 1px; }

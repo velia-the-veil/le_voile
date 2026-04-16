@@ -22,6 +22,8 @@ function init() {
     dom.btnConnect = document.getElementById('btn-connect');
     dom.captiveBanner = document.getElementById('captive-banner');
     dom.btnCaptiveRetry = document.getElementById('btn-captive-retry');
+    dom.ipv6Badge = document.getElementById('ipv6-badge');
+    dom.ipv6Warn = document.getElementById('ipv6-warn');
 
     startPolling();
     startRegistryPolling();
@@ -80,12 +82,12 @@ function updateUI(s) {
 
     // IPs
     if (s.real_ip) {
-        dom.ipReal.innerHTML = '<span class="label">IP reelle : </span><span class="value">' + s.real_ip + '</span>';
+        dom.ipReal.textContent = 'IP réelle : ' + s.real_ip;
     } else {
         dom.ipReal.textContent = '';
     }
     if (st === 'connected' && s.ip) {
-        dom.ipVisible.innerHTML = '<span class="label">IP devoilee : </span><span class="value">' + s.ip + '</span>';
+        dom.ipVisible.textContent = 'IP dévoilée : ' + s.ip;
     } else {
         dom.ipVisible.textContent = '';
     }
@@ -119,6 +121,14 @@ function updateUI(s) {
         } else {
             dom.btnConnect.className = 'btn hidden';
         }
+    }
+
+    // IPv6 leak badge (permanent when allow_ipv6_leak is true)
+    if (dom.ipv6Badge) {
+        dom.ipv6Badge.style.display = s.allow_ipv6_leak ? '' : 'none';
+    }
+    if (dom.ipv6Warn) {
+        dom.ipv6Warn.style.display = s.allow_ipv6_leak ? '' : 'none';
     }
 
     // Test link
@@ -215,6 +225,7 @@ async function loadSettings() {
         setToggle('toggle-autostart', s.auto_start);
         setToggle('toggle-blocklist', s.blocklist);
         setToggle('toggle-httpproxy', s.http_proxy);
+        setToggle('toggle-ipv6leak', s.allow_ipv6_leak);
     } catch (e) {}
 }
 
@@ -236,6 +247,44 @@ async function toggleSetting(name) {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ enabled: nowOn })
         });
+    } catch (e) {}
+}
+
+// === IPv6 Leak Toggle ===
+function toggleIPv6Leak() {
+    var el = document.getElementById('toggle-ipv6leak');
+    if (!el) return;
+    var isOn = el.classList.contains('on');
+    if (isOn) {
+        // Disabling (returning to safe state) — no confirmation needed (AC4).
+        applyIPv6Leak(false);
+    } else {
+        // Enabling — show warning modal (AC2).
+        document.getElementById('modal-ipv6').style.display = 'flex';
+        document.getElementById('btn-ipv6-cancel').focus();
+    }
+}
+
+function cancelIPv6Modal() {
+    document.getElementById('modal-ipv6').style.display = 'none';
+}
+
+async function confirmIPv6Leak() {
+    document.getElementById('modal-ipv6').style.display = 'none';
+    await applyIPv6Leak(true);
+}
+
+async function applyIPv6Leak(enable) {
+    try {
+        var resp = await fetch('/api/settings/ipv6leak', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ enabled: enable })
+        });
+        var data = await resp.json();
+        if (data.status === 'ok') {
+            setToggle('toggle-ipv6leak', enable);
+        }
     } catch (e) {}
 }
 

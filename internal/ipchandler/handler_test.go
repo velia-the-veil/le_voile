@@ -441,3 +441,97 @@ func TestGetStatus_MissingIP(t *testing.T) {
 		t.Errorf("expected HTTPProxySeq=0 with fresh program, got %d", resp.HTTPProxySeq)
 	}
 }
+
+func TestHandle_GetAllowIPv6Leak_DefaultFalse(t *testing.T) {
+	resp := Handle(newTestProgram(), ipc.Request{Action: ipc.ActionGetAllowIPv6Leak}, Options{})
+	if resp.Status != ipc.StatusOK {
+		t.Errorf("expected ok, got %q", resp.Status)
+	}
+	if resp.AllowIPv6Leak {
+		t.Error("expected AllowIPv6Leak = false by default")
+	}
+}
+
+func TestHandle_SetAllowIPv6Leak_InvalidValue(t *testing.T) {
+	resp := Handle(newTestProgram(), ipc.Request{Action: ipc.ActionSetAllowIPv6Leak, Value: "maybe"}, Options{})
+	if resp.Status != ipc.StatusError {
+		t.Errorf("expected error for invalid value, got %q", resp.Status)
+	}
+}
+
+func TestHandle_SetAllowIPv6Leak_True(t *testing.T) {
+	prg := newTestProgram()
+	cfgPath := filepath.Join(t.TempDir(), "config.toml")
+	// Write initial config so Load succeeds.
+	initial := &config.Config{TUN: config.TUNConfig{Name: "levoile0", MTU: 1420}}
+	if err := initial.Save(cfgPath); err != nil {
+		t.Fatal(err)
+	}
+	opts := Options{ConfigPathFn: func() string { return cfgPath }}
+
+	resp := Handle(prg, ipc.Request{Action: ipc.ActionSetAllowIPv6Leak, Value: "true"}, opts)
+	if resp.Status != ipc.StatusOK {
+		t.Errorf("expected ok, got %q (error: %s)", resp.Status, resp.Error)
+	}
+	if !resp.AllowIPv6Leak {
+		t.Error("expected AllowIPv6Leak = true in response")
+	}
+
+	// Verify config was persisted.
+	cfg, err := config.Load(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.Firewall.AllowIPv6Leak {
+		t.Error("expected AllowIPv6Leak = true persisted in TOML")
+	}
+
+	// Verify program state was updated.
+	if !prg.AllowIPv6Leak() {
+		t.Error("expected program AllowIPv6Leak() = true")
+	}
+}
+
+func TestHandle_SetAllowIPv6Leak_Roundtrip(t *testing.T) {
+	prg := newTestProgram()
+	cfgPath := filepath.Join(t.TempDir(), "config.toml")
+	initial := &config.Config{TUN: config.TUNConfig{Name: "levoile0", MTU: 1420}}
+	if err := initial.Save(cfgPath); err != nil {
+		t.Fatal(err)
+	}
+	opts := Options{ConfigPathFn: func() string { return cfgPath }}
+
+	// Enable
+	Handle(prg, ipc.Request{Action: ipc.ActionSetAllowIPv6Leak, Value: "true"}, opts)
+	if !prg.AllowIPv6Leak() {
+		t.Error("expected true after enable")
+	}
+
+	// Disable
+	resp := Handle(prg, ipc.Request{Action: ipc.ActionSetAllowIPv6Leak, Value: "false"}, opts)
+	if resp.Status != ipc.StatusOK {
+		t.Errorf("expected ok, got %q", resp.Status)
+	}
+	if prg.AllowIPv6Leak() {
+		t.Error("expected false after disable")
+	}
+
+	// Verify persisted
+	cfg, _ := config.Load(cfgPath)
+	if cfg.Firewall.AllowIPv6Leak {
+		t.Error("expected AllowIPv6Leak = false persisted after disable")
+	}
+}
+
+func TestHandle_GetStatus_IncludesAllowIPv6Leak(t *testing.T) {
+	prg := svc.NewProgram(svc.Config{
+		RelayDomain:   "test.dev",
+		RelayPubKey:   "dGVzdA==",
+		AllowIPv6Leak: true,
+	})
+
+	resp := Handle(prg, ipc.Request{Action: ipc.ActionGetStatus}, Options{})
+	if !resp.AllowIPv6Leak {
+		t.Error("expected AllowIPv6Leak = true in status response when config is true")
+	}
+}

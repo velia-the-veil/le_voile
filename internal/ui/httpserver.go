@@ -28,6 +28,7 @@ type APIStatusResponse struct {
 	BlocklistEnabled bool   `json:"blocklist_enabled"`
 	AutoStart        bool   `json:"auto_start"`
 	CaptivePortal    bool   `json:"captive_portal,omitempty"`
+	AllowIPv6Leak    bool   `json:"allow_ipv6_leak,omitempty"`
 }
 
 // HTTPServer serves frontend assets and exposes a REST JSON API that proxies to the service via IPC.
@@ -60,6 +61,7 @@ s.mux.HandleFunc("/api/registry", s.handleRegistry)
 	s.mux.HandleFunc("/api/settings/autostart", s.handleSetAutoStart)
 	s.mux.HandleFunc("/api/settings/blocklist", s.handleSetBlocklist)
 	s.mux.HandleFunc("/api/settings/httpproxy", s.handleSetHTTPProxy)
+	s.mux.HandleFunc("/api/settings/ipv6leak", s.handleSetIPv6Leak)
 	s.mux.HandleFunc("/api/captive/retry", s.handleCaptiveRetry)
 
 	return s
@@ -135,6 +137,7 @@ func (s *HTTPServer) handleStatus(w http.ResponseWriter, r *http.Request) {
 		HTTPProxyActive:  resp.HTTPProxyActive,
 		BlocklistEnabled: resp.BlocklistEnabled,
 		CaptivePortal:    resp.CaptivePortal,
+		AllowIPv6Leak:    resp.AllowIPv6Leak,
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -219,9 +222,10 @@ func (s *HTTPServer) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 	}
 
 	settings := map[string]bool{
-		"auto_start": autoStart,
-		"blocklist":  resp.BlocklistEnabled,
-		"http_proxy": resp.HTTPProxyActive,
+		"auto_start":      autoStart,
+		"blocklist":       resp.BlocklistEnabled,
+		"http_proxy":      resp.HTTPProxyActive,
+		"allow_ipv6_leak": resp.AllowIPv6Leak,
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(settings)
@@ -259,6 +263,10 @@ func (s *HTTPServer) handleBoolSetting(w http.ResponseWriter, r *http.Request, a
 	resp := s.sendIPC(r.Context(), action, value)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(actionResponse(resp))
+}
+
+func (s *HTTPServer) handleSetIPv6Leak(w http.ResponseWriter, r *http.Request) {
+	s.handleBoolSetting(w, r, ipc.ActionSetAllowIPv6Leak)
 }
 
 func (s *HTTPServer) handleCaptiveRetry(w http.ResponseWriter, r *http.Request) {

@@ -90,6 +90,9 @@ type Config struct {
 	// FirewallEnabled active le kill switch kernel-level (WFP Windows,
 	// nftables Linux). Si false, Activate est no-op (mode dégradé).
 	FirewallEnabled bool
+	// AllowIPv6Leak when true skips IPv6 block rules in the kill switch,
+	// letting native IPv6 bypass the tunnel (Story 2.9).
+	AllowIPv6Leak bool
 
 	// CaptiveEnabled active la détection de portail captif Wi-Fi avant
 	// l'établissement du tunnel (Story 2.8). Si false, skip du probe.
@@ -819,7 +822,7 @@ func (p *Program) run() {
 				// Fall through — skip captive mode, proceed to normal connect.
 			} else {
 				fwLog := &serviceLogger{}
-				fw := firewallFactory(fwLog, firewall.Options{})
+				fw := firewallFactory(fwLog, firewall.Options{AllowIPv6Leak: p.config.AllowIPv6Leak})
 				if err := fw.Activate(ctx, firewall.ActivateParams{
 					Mode:       firewall.ModeCaptive,
 					LanGateway: origGW,
@@ -926,7 +929,7 @@ func (p *Program) run() {
 			if p.config.FirewallEnabled && resolvedRelayIP != nil && p.tunDev != nil {
 				p.firewallRelayIP.Store(resolvedRelayIP)
 				fwLog := &serviceLogger{}
-				fw := firewallFactory(fwLog, firewall.Options{})
+				fw := firewallFactory(fwLog, firewall.Options{AllowIPv6Leak: p.config.AllowIPv6Leak})
 				// Crash-recovery: nettoyer d'éventuels orphelins d'un crash précédent.
 				if n, err := fw.CleanupOrphans(ctx); err != nil {
 					fmt.Fprintf(serviceStderr, "service: firewall cleanup orphans: %v\n", err)
@@ -1946,7 +1949,7 @@ func (p *Program) recoverTUN(ctx context.Context) error {
 		p.mu.Unlock()
 		if fw == nil {
 			fwLog := &serviceLogger{}
-			fw = firewallFactory(fwLog, firewall.Options{})
+			fw = firewallFactory(fwLog, firewall.Options{AllowIPv6Leak: p.config.AllowIPv6Leak})
 		}
 		if err := fw.Activate(ctx, firewall.ActivateParams{
 			Mode:    firewall.ModeFull,
@@ -2017,6 +2020,31 @@ func (p *Program) watchFirewallAltered(ctx context.Context, ch <-chan struct{}) 
 // rule tampering. Surfaced to the UI via IPC GetStatus.
 func (p *Program) FirewallAltered() bool {
 	return p.firewallAltered.Load()
+}
+
+// AllowIPv6Leak returns the current IPv6 leak policy setting.
+func (p *Program) AllowIPv6Leak() bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.config.AllowIPv6Leak
+}
+
+// SetAllowIPv6Leak updates the IPv6 leak policy at runtime.
+// It updates the firewall rules and the in-memory config atomically.
+// Returns an error if the firewall update fails (config unchanged).
+func (p *Program) SetAllowIPv6Leak(allow bool) error {
+	p.mu.Lock()
+	fw := p.firewallMgr
+	// Hold lock across the entire operation to prevent concurrent reads
+	// of p.config.AllowIPv6Leak from seeing inconsistent state.
+	defer p.mu.Unlock()
+	if fw != nil {
+		if err := fw.SetIPv6Policy(context.Background(), allow); err != nil {
+			return err
+		}
+	}
+	p.config.AllowIPv6Leak = allow
+	return nil
 }
 
 // CaptivePortal reports whether the service is in captive portal mode

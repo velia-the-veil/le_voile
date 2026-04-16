@@ -26,6 +26,8 @@ const (
 	ActionGetRegistry      = "get_registry"
 	ActionSelectCountry    = "select_country"
 	ActionRetryCaptive     = "retry_captive"
+	ActionGetAllowIPv6Leak = "get_allow_ipv6_leak"
+	ActionSetAllowIPv6Leak = "set_allow_ipv6_leak"
 )
 
 // Status constant for captive portal mode.
@@ -105,6 +107,10 @@ type Response struct {
 	// FirewallAltered is true when the WFP/nftables watchdog (Story 2.7) has
 	// detected external tampering with kill-switch rules.
 	FirewallAltered bool `json:"firewall_altered,omitempty"`
+
+	// AllowIPv6Leak is true when IPv6 traffic is allowed to bypass the kill
+	// switch (Story 2.9). The UI uses this to show a permanent warning indicator.
+	AllowIPv6Leak bool `json:"allow_ipv6_leak,omitempty"`
 
 	// CaptivePortal is true when the service is in captive portal mode
 	// (firewall lockdown relaxed, waiting for portal authentication).

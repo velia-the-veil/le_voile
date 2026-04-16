@@ -33,6 +33,9 @@ type FirewallConfig struct {
 	// EnableKillSwitch activates the kernel-level kill switch on connect.
 	// When false, Activate() is a no-op (degraded mode, see Story 5.9).
 	EnableKillSwitch bool `toml:"enable_killswitch"`
+	// AllowIPv6Leak when true skips IPv6 BLOCK filters, letting native IPv6
+	// bypass the kill switch. Default false (IPv6 blocked). See Story 2.9.
+	AllowIPv6Leak bool `toml:"allow_ipv6_leak"`
 }
 
 // CaptiveConfig holds captive portal detection settings (Story 2.8).

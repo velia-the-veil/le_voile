@@ -23,6 +23,7 @@ type wfpFirewall struct {
 	expectedFilterCount int
 	alteredCh           chan struct{}
 	watchdogCancel      context.CancelFunc
+	lastParams          *ActivateParams // stored for SetIPv6Policy re-apply
 }
 
 // New creates a WFP-backed Firewall on Windows.
@@ -436,6 +437,8 @@ func (f *wfpFirewall) Activate(ctx context.Context, params ActivateParams) error
 	runtime.KeepAlive(relayAddrMask)
 
 	f.expectedFilterCount = filterCount
+	paramsCopy := params
+	f.lastParams = &paramsCopy
 
 	dur := time.Since(start)
 	// NFR22a: no user data (relayIP, tunName) in Event Log messages.
@@ -450,6 +453,16 @@ func (f *wfpFirewall) Activate(ctx context.Context, params ActivateParams) error
 	go f.watchdog(wdCtx)
 
 	return nil
+}
+
+// SetIPv6Policy updates AllowIPv6Leak and re-applies all WFP filters.
+// The firewall must have been activated at least once.
+func (f *wfpFirewall) SetIPv6Policy(ctx context.Context, allow bool) error {
+	if f.lastParams == nil {
+		return fmt.Errorf("firewall: SetIPv6Policy called before Activate")
+	}
+	f.opts.AllowIPv6Leak = allow
+	return f.Activate(ctx, *f.lastParams)
 }
 
 func (f *wfpFirewall) Deactivate(_ context.Context) error {

@@ -6,6 +6,9 @@ table inet levoile {
     iifname "lo" accept
     ct state established,related accept
     iifname "{{.TunName}}" accept
+{{- if .AllowIPv6Leak}}
+    meta nfproto ipv6 accept
+{{- end}}
   }
   chain output {
     type filter hook output priority 0; policy drop;
@@ -14,5 +17,8 @@ table inet levoile {
     oifname "{{.TunName}}" accept
     ip daddr {{.RelayIP}} udp dport 443 accept
     ip daddr {{.RelayIP}} tcp dport 443 accept
+{{- if .AllowIPv6Leak}}
+    meta nfproto ipv6 accept
+{{- end}}
   }
 }

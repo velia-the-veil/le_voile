@@ -17,6 +17,15 @@ SERVICE_USER="levoile"
 SERVICE_NAME="levoile-relay"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
+# Verifier la presence des fichiers requis (AC6)
+for f in relay cert.pem key.pem; do
+    if [ ! -f "${SCRIPT_DIR}/${f}" ]; then
+        echo "ERREUR: fichier requis manquant: ${SCRIPT_DIR}/${f}" >&2
+        echo "Prerequis: placer relay, cert.pem et key.pem dans le meme repertoire que install.sh" >&2
+        exit 1
+    fi
+done
+
 # Creer utilisateur systeme levoile (sans shell, sans home)
 if ! id -u "${SERVICE_USER}" >/dev/null 2>&1; then
     useradd --system --no-create-home --shell /usr/sbin/nologin "${SERVICE_USER}"

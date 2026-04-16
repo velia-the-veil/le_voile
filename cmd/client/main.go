@@ -55,6 +55,7 @@ type resolvedConfig struct {
 	tunMTU     int
 
 	firewallEnabled bool
+	allowIPv6Leak   bool
 
 	captiveEnabled   bool
 	captiveProbeURLs []string
@@ -160,8 +161,9 @@ func resolveConfig(cfgPath, flagDomain, flagPubKey string, flagInsecure bool) (r
 		rc.tunEnabled = true
 	}
 
-	// Resolve firewall config (Story 2.7).
+	// Resolve firewall config (Story 2.7 + 2.9).
 	rc.firewallEnabled = cfg.Firewall.EnableKillSwitch
+	rc.allowIPv6Leak = cfg.Firewall.AllowIPv6Leak
 
 	// Resolve captive portal config (Story 2.8).
 	rc.captiveEnabled = cfg.Captive.Enabled
@@ -275,6 +277,7 @@ func main() {
 		TUNMTU:     rc.tunMTU,
 
 		FirewallEnabled:  rc.firewallEnabled,
+		AllowIPv6Leak:    rc.allowIPv6Leak,
 		CaptiveEnabled:   rc.captiveEnabled,
 		CaptiveProbeURLs: rc.captiveProbeURLs,
 	})

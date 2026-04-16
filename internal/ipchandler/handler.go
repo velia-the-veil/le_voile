@@ -64,6 +64,10 @@ func Handle(prg *svc.Program, req ipc.Request, opts Options) ipc.Response {
 		return handleSelectCountry(prg, req, opts)
 	case ipc.ActionRetryCaptive:
 		return handleRetryCaptive(prg)
+	case ipc.ActionGetAllowIPv6Leak:
+		return handleGetAllowIPv6Leak(prg)
+	case ipc.ActionSetAllowIPv6Leak:
+		return handleSetAllowIPv6Leak(prg, req, opts)
 	default:
 		return ipc.Response{Status: ipc.StatusError, Error: "unknown_action"}
 	}
@@ -92,6 +96,7 @@ func handleGetStatus(prg *svc.Program) ipc.Response {
 		resp.HTTPProxyActive = prg.HTTPProxyActive()
 		resp.HTTPProxyAddr = prg.HTTPProxyAddr()
 		resp.HTTPProxySeq = prg.HTTPProxySeq()
+		resp.AllowIPv6Leak = prg.AllowIPv6Leak()
 		return resp
 	}
 	tc := prg.TunnelClient()
@@ -112,6 +117,7 @@ func handleGetStatus(prg *svc.Program) ipc.Response {
 		resp.BrowserPoliciesFailed = prg.BrowserPolicyFailed()
 		resp.CircuitBreakerTripped = prg.CircuitBreakerTripped()
 		resp.CircuitBreakerMessage = prg.CircuitBreakerMessage()
+		resp.AllowIPv6Leak = prg.AllowIPv6Leak()
 		resp.CaptivePortal = prg.CaptivePortal()
 		resp.CaptiveProbeURL = prg.CaptiveProbeURL()
 		return resp
@@ -169,6 +175,7 @@ func handleGetStatus(prg *svc.Program) ipc.Response {
 	resp.CircuitBreakerTripped = prg.CircuitBreakerTripped()
 	resp.CircuitBreakerMessage = prg.CircuitBreakerMessage()
 	resp.FirewallAltered = prg.FirewallAltered()
+	resp.AllowIPv6Leak = prg.AllowIPv6Leak()
 	resp.CaptivePortal = prg.CaptivePortal()
 	resp.CaptiveProbeURL = prg.CaptiveProbeURL()
 	return resp
@@ -613,6 +620,54 @@ func handleSelectCountry(prg *svc.Program, req ipc.Request, opts Options) ipc.Re
 func handleRetryCaptive(prg *svc.Program) ipc.Response {
 	prg.RetryCaptiveCheck()
 	return ipc.Response{Status: ipc.StatusOK}
+}
+
+func handleGetAllowIPv6Leak(prg *svc.Program) ipc.Response {
+	return ipc.Response{
+		Status:        ipc.StatusOK,
+		AllowIPv6Leak: prg.AllowIPv6Leak(),
+	}
+}
+
+func handleSetAllowIPv6Leak(prg *svc.Program, req ipc.Request, opts Options) ipc.Response {
+	if req.Value != "true" && req.Value != "false" {
+		return ipc.Response{Status: ipc.StatusError, Error: "invalid_value: must be \"true\" or \"false\""}
+	}
+	allow := req.Value == "true"
+
+	// Persist to TOML first (inside configMu), then update firewall.
+	// If config fails, no firewall change. If firewall fails, rollback
+	// config inside the same configMu scope to prevent concurrent divergence.
+	cfgPath := opts.ConfigPathFn()
+	if cfgPath != "" {
+		configMu.Lock()
+		cfg, err := config.Load(cfgPath)
+		if err != nil {
+			configMu.Unlock()
+			return ipc.Response{Status: ipc.StatusError, Error: err.Error()}
+		}
+		oldAllow := cfg.Firewall.AllowIPv6Leak
+		cfg.Firewall.AllowIPv6Leak = allow
+		if err := cfg.Save(cfgPath); err != nil {
+			configMu.Unlock()
+			return ipc.Response{Status: ipc.StatusError, Error: err.Error()}
+		}
+		// Config saved — now update firewall. On failure, rollback config.
+		if err := prg.SetAllowIPv6Leak(allow); err != nil {
+			cfg.Firewall.AllowIPv6Leak = oldAllow
+			_ = cfg.Save(cfgPath)
+			configMu.Unlock()
+			return ipc.Response{Status: ipc.StatusError, Error: err.Error()}
+		}
+		configMu.Unlock()
+	} else {
+		// No config file — just update firewall.
+		if err := prg.SetAllowIPv6Leak(allow); err != nil {
+			return ipc.Response{Status: ipc.StatusError, Error: err.Error()}
+		}
+	}
+
+	return ipc.Response{Status: ipc.StatusOK, AllowIPv6Leak: allow}
 }
 
 // FormatUptime formats a duration as "Xh Ym" or "Xm Ys".

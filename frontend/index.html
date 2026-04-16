@@ -11,6 +11,7 @@
         <div class="titlebar-left">
             <span class="titlebar-v" id="titlebar-v">V</span>
             <span class="titlebar-name">Le Voile</span>
+            <span class="ipv6-badge" id="ipv6-badge" style="display:none;" title="Votre IP IPv6 réelle est visible pour les services IPv6">IPv6</span>
         </div>
         <div class="titlebar-controls">
             <button class="titlebar-btn bell-btn" id="bell-btn" onclick="showPanel('notifications')" title="Alertes">
@@ -82,6 +83,27 @@
                         <div class="toggle" id="toggle-httpproxy" onclick="toggleSetting('httpproxy')"><div class="toggle-knob"></div></div>
                     </div>
                     <div class="setting-desc">Proxy CONNECT local pour les navigateurs.</div>
+                </div>
+                <div class="setting-divider"></div>
+                <h4 class="setting-section-title">AVANCE</h4>
+                <div class="setting-group">
+                    <div class="toggle-row">
+                        <span class="setting-label">Autoriser IPv6 hors tunnel</span>
+                        <div class="toggle" id="toggle-ipv6leak" onclick="toggleIPv6Leak()"><div class="toggle-knob"></div></div>
+                    </div>
+                    <div class="setting-desc">Laisser passer le trafic IPv6 natif sans protection.</div>
+                    <div class="setting-warn" id="ipv6-warn" style="display:none;">&#9888; IPv6 expose hors tunnel</div>
+                </div>
+            </div>
+            <!-- IPv6 WARNING MODAL -->
+            <div class="modal-overlay" id="modal-ipv6" style="display:none;">
+                <div class="modal">
+                    <div class="modal-icon">&#9888;</div>
+                    <div class="modal-text">L'IPv6 ne sera PAS protégé par Le Voile et exposera votre IP réelle sur les services IPv6. Continuer ?</div>
+                    <div class="modal-actions">
+                        <button class="btn btn-modal-cancel" id="btn-ipv6-cancel" onclick="cancelIPv6Modal()">Annuler</button>
+                        <button class="btn btn-modal-danger" id="btn-ipv6-confirm" onclick="confirmIPv6Leak()">Continuer</button>
+                    </div>
                 </div>
             </div>
         </div>

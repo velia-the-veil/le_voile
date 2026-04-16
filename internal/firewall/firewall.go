@@ -90,6 +90,13 @@ type Firewall interface {
 	// nftables Activate replaces atomically.
 	CleanupOrphans(ctx context.Context) (int, error)
 
+	// SetIPv6Policy updates the IPv6 leak setting at runtime.
+	// When allow is true, IPv6 traffic bypasses the kill switch.
+	// When allow is false, IPv6 is blocked (safe default).
+	// Returns ErrNotImplemented on platforms without support.
+	// The firewall must be active (Activate called) before calling this.
+	SetIPv6Policy(ctx context.Context, allow bool) error
+
 	// AlteredCh returns a channel that receives a value when the firewall
 	// watchdog detects external tampering (e.g. third-party AV removing
 	// rules). Returns nil on platforms without a watchdog.

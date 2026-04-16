@@ -25,6 +25,11 @@ mtu = 1420
 # explicite — aucune protection anti-fuite réseau (cf Story 5.9).
 enable_killswitch = true
 
+# ⚠ ATTENTION : autoriser IPv6 hors tunnel expose votre IPv6 réelle sur
+# les services IPv6. Le trafic IPv6 NE passe PAS par le tunnel Le Voile.
+# Défaut false = IPv6 bloqué par le kill switch (comportement sûr).
+allow_ipv6_leak = false
+
 # Watchdog TUN : détecte la disparition/altération de levoile0 toutes les
 # 3s (NFR16 < 5s). Non configurable pour l'instant — DefaultInterval codé
 # dans internal/tun/watchdog/watchdog.go. Sera exposé via TOML si besoin.

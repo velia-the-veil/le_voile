@@ -21,14 +21,15 @@ var parsedTemplate = template.Must(template.New("ruleset").Parse(rulesetTemplate
 
 // rulesetParams holds the values injected into the nftables template.
 type rulesetParams struct {
-	RelayIP string
-	TunName string
+	RelayIP        string
+	TunName        string
+	AllowIPv6Leak  bool
 }
 
 // renderRuleset generates the complete nftables script from the embedded
-// template. It rejects nil IP, empty tunName, and IPv6 addresses (out of
-// scope — Story 2.9).
-func renderRuleset(relayIP net.IP, tunName string) (string, error) {
+// template. It rejects nil IP, empty tunName, and IPv6 addresses.
+// When allowIPv6Leak is true, IPv6 traffic bypasses the kill switch.
+func renderRuleset(relayIP net.IP, tunName string, allowIPv6Leak bool) (string, error) {
 	if relayIP == nil {
 		return "", fmt.Errorf("firewall: relay IP is nil")
 	}
@@ -45,8 +46,9 @@ func renderRuleset(relayIP net.IP, tunName string) (string, error) {
 
 	var buf bytes.Buffer
 	if err := parsedTemplate.Execute(&buf, rulesetParams{
-		RelayIP: ip4.String(),
-		TunName: tunName,
+		RelayIP:       ip4.String(),
+		TunName:       tunName,
+		AllowIPv6Leak: allowIPv6Leak,
 	}); err != nil {
 		return "", fmt.Errorf("firewall: template render: %w", err)
 	}

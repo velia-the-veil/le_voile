@@ -62,14 +62,14 @@ development_status:
   2-6-kill-switch-firewall-os-level-via-nftables-linux: done
   2-7-kill-switch-firewall-os-level-via-wfp-windows: done
   2-8-detection-captive-portal-wifi-lockdown-firewall-relaxe: done
-  2-9-option-ipv6-hors-tunnel-avec-avertissement-explicite: ready-for-dev
+  2-9-option-ipv6-hors-tunnel-avec-avertissement-explicite: done
   epic-2-retrospective: optional
 
   # Epic 3: Relais Stateless Multi-VPS avec Tunnel IP & NAT
   # Mix : binaire relais + verify + rate limiting + organisation pays = existant ;
   # handler /tunnel + NAT + DNS interne + blocklist cote relais = NOUVEAU.
   epic-3: in-progress
-  3-1-binaire-relais-go-http3-stateless-deployable-via-systemd: ready-for-dev
+  3-1-binaire-relais-go-http3-stateless-deployable-via-systemd: in-progress
   3-2-endpoint-verify-avec-emission-session-tokens-ed25519: ready-for-dev
   3-3-handler-tunnel-avec-stream-bidirectionnel-paquets-ip: ready-for-dev
   3-4-nat-cote-relais-avec-table-en-ram-et-ttl-court: ready-for-dev
