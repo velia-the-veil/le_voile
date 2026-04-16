@@ -29,9 +29,10 @@ vendor/
 *.out
 coverage.html
 
-# IDE files
+# IDE / CLI config
 .idea/
 .vscode/
+.claude/
 *.swp
 *.swo
 *~

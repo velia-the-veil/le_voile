@@ -18,10 +18,10 @@ SERVICE_NAME="levoile-relay"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 # Verifier la presence des fichiers requis (AC6)
-for f in relay cert.pem key.pem; do
+for f in relay cert.pem key.pem "${SERVICE_NAME}.service"; do
     if [ ! -f "${SCRIPT_DIR}/${f}" ]; then
         echo "ERREUR: fichier requis manquant: ${SCRIPT_DIR}/${f}" >&2
-        echo "Prerequis: placer relay, cert.pem et key.pem dans le meme repertoire que install.sh" >&2
+        echo "Prerequis: placer relay, cert.pem, key.pem et ${SERVICE_NAME}.service dans le meme repertoire que install.sh" >&2
         exit 1
     fi
 done
@@ -49,9 +49,8 @@ chown -R "${SERVICE_USER}:${SERVICE_USER}" "${INSTALL_DIR}"
 cp "${SCRIPT_DIR}/${SERVICE_NAME}.service" "/etc/systemd/system/${SERVICE_NAME}.service"
 systemctl daemon-reload
 
-# Activer et demarrer le service
-systemctl enable "${SERVICE_NAME}"
-systemctl start "${SERVICE_NAME}"
+# Activer et demarrer le service (AC3: enable --now)
+systemctl enable --now "${SERVICE_NAME}"
 
 echo "Le Voile relay installed and started successfully."
 echo "Check status: systemctl status ${SERVICE_NAME}"
