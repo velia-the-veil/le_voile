@@ -16,6 +16,7 @@
 /tray
 /relay
 /portable
+/ui
 /levoile-*
 deploy/relay
 

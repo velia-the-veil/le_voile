@@ -5,8 +5,6 @@ package main
 import (
 	"fmt"
 	"os"
-	"os/exec"
-	"path/filepath"
 
 	"github.com/velia-the-veil/le_voile/frontend"
 	"github.com/velia-the-veil/le_voile/internal/config"
@@ -39,14 +37,4 @@ func main() {
 		FrontendFS:  frontend.Assets,
 	})
 	u.Run()
-}
-
-// ensureService starts the Windows service if not already running.
-func ensureService() {
-	self, err := os.Executable()
-	if err != nil {
-		return
-	}
-	servicePath := filepath.Join(filepath.Dir(self), "levoile-service.exe")
-	exec.Command(servicePath, "start").Run()
 }

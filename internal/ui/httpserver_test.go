@@ -276,6 +276,9 @@ func TestMethodNotAllowed(t *testing.T) {
 		{http.MethodGet, "/api/disconnect"},
 		{http.MethodPost, "/api/registry"},
 		{http.MethodGet, "/api/country"},
+		{http.MethodGet, "/api/quit"},
+		{http.MethodPost, "/api/leak-status"},
+		{http.MethodPost, "/api/update-status"},
 	}
 
 	for _, tt := range tests {
@@ -285,6 +288,158 @@ func TestMethodNotAllowed(t *testing.T) {
 		if w.Code != http.StatusMethodNotAllowed {
 			t.Errorf("%s %s: expected 405, got %d", tt.method, tt.path, w.Code)
 		}
+	}
+}
+
+func TestQuit(t *testing.T) {
+	mock := &mockIPCClient{
+		resp: ipc.Response{Status: ipc.StatusOK},
+	}
+	srv := NewHTTPServer(NewSafeIPCClient(mock), testFS())
+
+	req := httptest.NewRequest(http.MethodPost, "/api/quit", nil)
+	w := httptest.NewRecorder()
+	srv.mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	var resp map[string]string
+	json.NewDecoder(w.Body).Decode(&resp)
+	if resp["status"] != "ok" {
+		t.Errorf("status = %q, want ok", resp["status"])
+	}
+}
+
+func TestLeakStatus_Pass(t *testing.T) {
+	mock := &mockIPCClient{
+		resp: ipc.Response{LeakStatus: ipc.StatusLeakPass, LeakLastCheck: "2026-04-17T13:00:00Z"},
+	}
+	srv := NewHTTPServer(NewSafeIPCClient(mock), testFS())
+
+	req := httptest.NewRequest(http.MethodGet, "/api/leak-status", nil)
+	w := httptest.NewRecorder()
+	srv.mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	var resp APILeakStatusResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.Status != "pass" {
+		t.Errorf("status = %q, want pass", resp.Status)
+	}
+	if resp.LastCheck != "2026-04-17T13:00:00Z" {
+		t.Errorf("last_check = %q, want timestamp", resp.LastCheck)
+	}
+}
+
+func TestLeakStatus_Fail(t *testing.T) {
+	mock := &mockIPCClient{
+		resp: ipc.Response{LeakStatus: ipc.StatusLeakFail},
+	}
+	srv := NewHTTPServer(NewSafeIPCClient(mock), testFS())
+
+	req := httptest.NewRequest(http.MethodGet, "/api/leak-status", nil)
+	w := httptest.NewRecorder()
+	srv.mux.ServeHTTP(w, req)
+
+	var resp APILeakStatusResponse
+	json.NewDecoder(w.Body).Decode(&resp)
+	if resp.Status != "fail" {
+		t.Errorf("status = %q, want fail", resp.Status)
+	}
+}
+
+func TestLeakStatus_IPCError(t *testing.T) {
+	mock := &mockIPCClient{err: fmt.Errorf("pipe broken")}
+	srv := NewHTTPServer(NewSafeIPCClient(mock), testFS())
+
+	req := httptest.NewRequest(http.MethodGet, "/api/leak-status", nil)
+	w := httptest.NewRecorder()
+	srv.mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 even on IPC error, got %d", w.Code)
+	}
+	// Empty status is acceptable fallback — frontend treats it as pending/unknown.
+}
+
+func TestUpdateStatus_Ready(t *testing.T) {
+	mock := &mockIPCClient{
+		resp: ipc.Response{
+			UpdateStatus:     ipc.StatusUpdateReady,
+			UpdateVersion:    "1.2.0",
+			InstalledVersion: "1.1.0",
+		},
+	}
+	srv := NewHTTPServer(NewSafeIPCClient(mock), testFS())
+
+	req := httptest.NewRequest(http.MethodGet, "/api/update-status", nil)
+	w := httptest.NewRecorder()
+	srv.mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	var resp APIUpdateStatusResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.Status != "update_ready" {
+		t.Errorf("status = %q, want update_ready", resp.Status)
+	}
+	if resp.Version != "1.2.0" {
+		t.Errorf("version = %q, want 1.2.0", resp.Version)
+	}
+	if resp.InstalledVersion != "1.1.0" {
+		t.Errorf("installed_version = %q, want 1.1.0", resp.InstalledVersion)
+	}
+}
+
+func TestUpdateStatus_UpToDate(t *testing.T) {
+	mock := &mockIPCClient{
+		resp: ipc.Response{UpdateStatus: ipc.StatusUpToDate, InstalledVersion: "1.2.0"},
+	}
+	srv := NewHTTPServer(NewSafeIPCClient(mock), testFS())
+
+	req := httptest.NewRequest(http.MethodGet, "/api/update-status", nil)
+	w := httptest.NewRecorder()
+	srv.mux.ServeHTTP(w, req)
+
+	var resp APIUpdateStatusResponse
+	json.NewDecoder(w.Body).Decode(&resp)
+	if resp.Status != "up_to_date" {
+		t.Errorf("status = %q, want up_to_date", resp.Status)
+	}
+}
+
+func TestUpdateStatus_Rollback(t *testing.T) {
+	mock := &mockIPCClient{
+		resp: ipc.Response{
+			UpdateStatus:    ipc.StatusRollback,
+			RollbackVersion: "1.1.0",
+			RollbackReason:  "integrity check failed",
+		},
+	}
+	srv := NewHTTPServer(NewSafeIPCClient(mock), testFS())
+
+	req := httptest.NewRequest(http.MethodGet, "/api/update-status", nil)
+	w := httptest.NewRecorder()
+	srv.mux.ServeHTTP(w, req)
+
+	var resp APIUpdateStatusResponse
+	json.NewDecoder(w.Body).Decode(&resp)
+	if resp.Status != "rollback" {
+		t.Errorf("status = %q, want rollback", resp.Status)
+	}
+	if resp.RollbackVersion != "1.1.0" {
+		t.Errorf("rollback_version = %q, want 1.1.0", resp.RollbackVersion)
+	}
+	if resp.RollbackReason != "integrity check failed" {
+		t.Errorf("rollback_reason = %q, want 'integrity check failed'", resp.RollbackReason)
 	}
 }
 

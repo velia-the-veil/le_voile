@@ -145,65 +145,6 @@ func TestHandleIPCError_SetsDisconnected(t *testing.T) {
 	}
 }
 
-func TestHandleToggle_ConnectWhenDisconnected(t *testing.T) {
-	api := &mockSystrayAPI{}
-	mock := &mockIPCClient{
-		resp: ipc.Response{Status: ipc.StatusConnected, IP: "1.2.3.4"},
-	}
-	u := &UI{
-		api:       api,
-		client:    NewSafeIPCClient(mock),
-		connected: false,
-	}
-
-	ctx := context.Background()
-	u.handleToggle(ctx)
-
-	tooltip := api.getTooltip()
-	if tooltip != "Protégé — IP visible : 1.2.3.4" {
-		t.Errorf("tooltip = %q, want 'Protégé — IP visible : 1.2.3.4'", tooltip)
-	}
-}
-
-func TestHandleToggle_DisconnectWhenConnected(t *testing.T) {
-	api := &mockSystrayAPI{}
-	mock := &mockIPCClient{
-		resp: ipc.Response{Status: ipc.StatusDisconnected},
-	}
-	u := &UI{
-		api:       api,
-		client:    NewSafeIPCClient(mock),
-		connected: true,
-	}
-
-	ctx := context.Background()
-	u.handleToggle(ctx)
-
-	tooltip := api.getTooltip()
-	if tooltip != "Non protégé" {
-		t.Errorf("tooltip = %q, want 'Non protégé'", tooltip)
-	}
-}
-
-func TestHandleToggle_IPCError(t *testing.T) {
-	api := &mockSystrayAPI{}
-	mock := &mockIPCClient{
-		err: context.DeadlineExceeded,
-	}
-	u := &UI{
-		api:    api,
-		client: NewSafeIPCClient(mock),
-	}
-
-	ctx := context.Background()
-	u.handleToggle(ctx)
-
-	tooltip := api.getTooltip()
-	if tooltip == "" {
-		t.Error("expected error tooltip, got empty")
-	}
-}
-
 // TestGetStatus_MissingIP verifies that get_status returns "connected"
 // even when IP is empty (async detection not yet complete).
 func TestGetStatus_MissingIP(t *testing.T) {

@@ -23,6 +23,16 @@ builds:
     ldflags:
       - -s -w -X main.version={{.Version}} -H windowsgui
 
+  - id: ui-linux
+    main: ./cmd/ui
+    binary: levoile-ui
+    goos: [linux]
+    goarch: [amd64, arm64]
+    env:
+      - CGO_ENABLED=1
+    ldflags:
+      - -s -w -X main.version={{.Version}}
+
   - id: relay
     main: ./cmd/relay
     binary: levoile-relay
@@ -83,6 +93,14 @@ archives:
     files:
       - LICENSE
       - deploy/*
+
+  - id: ui-linux
+    builds: [ui-linux]
+    name_template: "LeVoile_{{.Version}}_linux_{{.Arch}}"
+    format: tar.gz
+    files:
+      - LICENSE
+      - installer/config-default.toml
 
   - id: portable-windows
     builds: [portable-windows]
