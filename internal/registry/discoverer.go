@@ -4,6 +4,7 @@ import (
 	"context"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -23,12 +24,56 @@ type Discoverer struct {
 	cache          *Cache
 	defaultRelay   RelayEntry
 	latencyChecker *LatencyChecker
+	selector       *countrySelector
 
-	mu             sync.RWMutex
-	relays         []RelayEntry
-	lastLatencies  map[string]time.Duration // relayID → last measured latency
-	stopCh         chan struct{}
-	once           sync.Once
+	mu            sync.RWMutex
+	relays        []RelayEntry
+	lastLatencies map[string]time.Duration // relayID → last measured latency
+	stopCh        chan struct{}
+	once          sync.Once
+
+	// bgDiscoverRunning deduplicates caller-triggered background Discover
+	// invocations (e.g. from SelectCountry on rapid UI clicks). Only one
+	// background pass runs at a time; additional triggers are no-ops.
+	bgDiscoverRunning atomic.Bool
+
+	// bgDiscoverFires counts how many times TriggerBackgroundDiscover
+	// successfully launched a background pass (after the CAS). Exposed to
+	// tests via BgDiscoverFiresForTest.
+	bgDiscoverFires atomic.Int64
+}
+
+// BgDiscoverFiresForTest returns the count of successful background Discover
+// triggers since the Discoverer was created. Intended for tests that assert
+// SelectCountry (or other hooks) invoked TriggerBackgroundDiscover. Do NOT
+// rely on this from production code.
+func (d *Discoverer) BgDiscoverFiresForTest() int64 {
+	return d.bgDiscoverFires.Load()
+}
+
+// TriggerBackgroundDiscover launches a single-flight Discover in the background.
+// Concurrent calls are deduplicated via an atomic flag — if a background pass
+// is already in flight, this call is a no-op. Used by SelectCountry to force
+// an immediate latency re-sort after a country change (AC Story 4.3) without
+// flooding the relay fleet on rapid user clicks.
+//
+// Safe to call on a discoverer with no HTTP client (as produced by
+// NewDiscovererForTest): the trigger still flips the single-flight flag so
+// tests can observe the call without driving a real network pass.
+func (d *Discoverer) TriggerBackgroundDiscover(ctx context.Context) {
+	if !d.bgDiscoverRunning.CompareAndSwap(false, true) {
+		return
+	}
+	d.bgDiscoverFires.Add(1)
+	go func() {
+		defer d.bgDiscoverRunning.Store(false)
+		if d.client == nil {
+			// Test-only path: no client means Discover can't run. Keep the
+			// flag-flip observable so unit tests can assert the trigger fired.
+			return
+		}
+		_, _ = d.Discover(ctx)
+	}()
 }
 
 // NewDiscoverer creates a discoverer with the given client, cache, and fallback relay.
@@ -37,6 +82,7 @@ func NewDiscoverer(client *Client, cache *Cache, defaultRelay RelayEntry, opts .
 		client:       client,
 		cache:        cache,
 		defaultRelay: defaultRelay,
+		selector:     newCountrySelector(),
 		relays:       []RelayEntry{defaultRelay},
 		stopCh:       make(chan struct{}),
 	}
@@ -225,6 +271,26 @@ func (d *Discoverer) setRelays(relays []RelayEntry) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.relays = relays
+}
+
+// SetRelaysForTest seeds the discoverer's relay list for tests and handler
+// integration scenarios that need a functional SelectRelay without running a
+// real Discover cycle. Do NOT call from production code.
+func (d *Discoverer) SetRelaysForTest(relays []RelayEntry) {
+	d.setRelays(relays)
+}
+
+// NewDiscovererForTest returns a Discoverer pre-populated with the given
+// relays. The returned discoverer has no HTTP client — calling Discover on it
+// will fail; it is intended exclusively for tests that exercise SelectRelay,
+// RelaysByCountry, or the round-robin cursor semantics.
+func NewDiscovererForTest(relays []RelayEntry) *Discoverer {
+	d := &Discoverer{
+		selector: newCountrySelector(),
+		relays:   relays,
+		stopCh:   make(chan struct{}),
+	}
+	return d
 }
 
 // LatencyFor returns the last measured latency for the given relay ID.

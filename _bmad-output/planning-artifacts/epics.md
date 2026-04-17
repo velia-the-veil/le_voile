@@ -798,7 +798,7 @@ So that le client puisse récupérer la liste complète depuis n'importe quel re
 
 **Acceptance Criteria:**
 
-**Given** le fichier `/etc/levoile/relay-registry.json` est déployé sur chaque relais
+**Given** le fichier `/opt/levoile/relay-registry.json` est déployé sur chaque relais
 **When** un client appelle `GET /.well-known/relay-registry.json`
 **Then** le fichier JSON complet est retourné contenant : `version`, `master_public_key`, `relays[]` avec `id`, `domain`, `public_key`, `signature`, `added`
 **And** chaque entry est signée par la master key Ed25519

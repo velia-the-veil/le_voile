@@ -3,6 +3,7 @@ package config
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -87,6 +88,13 @@ type RegistryConfig struct {
 	URL             string `toml:"url"`
 	MasterPublicKey string `toml:"master_public_key"`
 	RefreshInterval string `toml:"refresh_interval"`
+	// BootstrapDoHEnabled wraps the registry HTTP transport in a DoH resolver
+	// so the first lookup of the registry hostname never hits the system
+	// resolver (NFR9i). Default true when Registry is enabled.
+	BootstrapDoHEnabled bool `toml:"bootstrap_doh_enabled"`
+	// DoHUpstreams overrides the default Cloudflare+Quad9 endpoints.
+	// Each entry must be an HTTPS URL. Empty list = built-in defaults.
+	DoHUpstreams []string `toml:"doh_upstreams,omitempty"`
 }
 
 // UpdateConfig holds auto-update settings.
@@ -135,9 +143,10 @@ func Load(path string) (*Config, error) {
 			UpdateInterval: "24h",
 		},
 		Registry: RegistryConfig{
-			Enabled:         false,
-			URL:             "https://levoile.dev",
-			RefreshInterval: "1h",
+			Enabled:             false,
+			URL:                 "https://levoile.dev",
+			RefreshInterval:     "6h",
+			BootstrapDoHEnabled: true,
 		},
 		HTTPProxy: HTTPProxyConfig{
 			Enabled: false,
@@ -190,6 +199,16 @@ func Load(path string) (*Config, error) {
 	}
 	if !tunNameRe.MatchString(cfg.TUN.Name) {
 		return nil, fmt.Errorf("config: tun.name=%q invalide (regex ^[a-z][a-z0-9]{0,14}$)", cfg.TUN.Name)
+	}
+
+	// Validate DoH upstream URLs if the operator supplied a custom list.
+	// Same rules as registry.validateUpstreams: must parse, scheme=https,
+	// non-empty host.
+	for _, upstream := range cfg.Registry.DoHUpstreams {
+		parsed, perr := url.Parse(upstream)
+		if perr != nil || parsed.Scheme != "https" || parsed.Host == "" {
+			return nil, fmt.Errorf("config: registry.doh_upstreams[%q] must be a valid HTTPS URL", upstream)
+		}
 	}
 
 	return cfg, nil

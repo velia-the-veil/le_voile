@@ -3,10 +3,13 @@ package registry
 import (
 	"context"
 	"crypto/ed25519"
+	"crypto/tls"
 	"encoding/base64"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"sort"
 	"time"
@@ -21,17 +24,22 @@ type Client struct {
 	masterPubKey       ed25519.PublicKey
 	masterPubKeyBase64 string
 	httpClient         *http.Client
+	httpClientSet      bool // tracks WithHTTPClient explicit override
+	resolver           *DoHResolver
 	refreshInterval    time.Duration
+	rejectLogger       RejectLogger
 	allowHTTP          bool // test-only: bypass HTTPS enforcement
 }
 
 // ClientOption configures the Client.
 type ClientOption func(*Client)
 
-// WithHTTPClient sets a custom HTTP client.
+// WithHTTPClient sets a custom HTTP client. Incompatible with WithResolver:
+// NewClient returns an error if both are specified.
 func WithHTTPClient(c *http.Client) ClientOption {
 	return func(cl *Client) {
 		cl.httpClient = c
+		cl.httpClientSet = true
 	}
 }
 
@@ -39,6 +47,61 @@ func WithHTTPClient(c *http.Client) ClientOption {
 func WithRefreshInterval(d time.Duration) ClientOption {
 	return func(cl *Client) {
 		cl.refreshInterval = d
+	}
+}
+
+// WithRejectLogger installs a callback invoked for each registry entry that
+// fails verification. Useful for surfacing silent data corruption after a
+// master-key rotation (NFR22h transient window). The logger receives only
+// id/domain/reason — never binary content (NFR20/NFR22a).
+func WithRejectLogger(logger RejectLogger) ClientOption {
+	return func(cl *Client) {
+		cl.rejectLogger = logger
+	}
+}
+
+// WithResolver makes the Client dial the registry endpoint using IPs returned
+// by the provided DoHResolver instead of the system DNS resolver. This is the
+// bootstrap path guarded by NFR9i: the first resolution of the registry host
+// happens over HTTPS (Cloudflare/Quad9) before the tunnel is established, so
+// a compromised system resolver cannot redirect the client to a hostile relay.
+//
+// The TLS SNI remains the original hostname so certificate verification still
+// targets the legitimate relay. If resolver is nil the option is a no-op.
+// Incompatible with WithHTTPClient: NewClient errors if both are specified.
+func WithResolver(resolver *DoHResolver) ClientOption {
+	return func(cl *Client) {
+		cl.resolver = resolver
+	}
+}
+
+// dohDialContext returns a DialContext that resolves the host via resolver
+// and dials the resulting IP. IP literals are dialed directly. Multi-record
+// DNS round-robin: if resolver returns N addresses, dial is attempted against
+// all of them until one succeeds.
+func dohDialContext(resolver *DoHResolver, timeout time.Duration) func(ctx context.Context, network, addr string) (net.Conn, error) {
+	dialer := &net.Dialer{Timeout: timeout, KeepAlive: 30 * time.Second}
+	return func(ctx context.Context, network, addr string) (net.Conn, error) {
+		host, port, err := net.SplitHostPort(addr)
+		if err != nil {
+			return nil, err
+		}
+		if _, err := netip.ParseAddr(host); err == nil {
+			return dialer.DialContext(ctx, network, addr)
+		}
+		ips, err := resolver.ResolveAll(ctx, host)
+		if err != nil {
+			return nil, fmt.Errorf("registry: dial via doh: %w", err)
+		}
+		var lastErr error
+		for _, ip := range ips {
+			conn, derr := dialer.DialContext(ctx, network, net.JoinHostPort(ip.String(), port))
+			if derr == nil {
+				return conn, nil
+			}
+			lastErr = derr
+		}
+		return nil, fmt.Errorf("registry: dial via doh: all resolved addresses failed: %w", lastErr)
 	}
 }
 
@@ -71,7 +134,10 @@ func NewClient(registryURL string, masterPubKeyBase64 string, opts ...ClientOpti
 		httpClient: &http.Client{
 			Timeout: 10 * time.Second,
 		},
-		refreshInterval: 1 * time.Hour,
+		// 6h refresh cadence (AC Story 4.3) — the relay list is re-ordered
+		// every 6 hours; country changes trigger an immediate background
+		// re-discover without waiting for the next tick.
+		refreshInterval: 6 * time.Hour,
 	}
 	for _, opt := range opts {
 		opt(c)
@@ -80,6 +146,30 @@ func NewClient(registryURL string, masterPubKeyBase64 string, opts ...ClientOpti
 	// Enforce HTTPS in production. Tests can bypass via withAllowHTTP.
 	if parsedURL.Scheme != "https" && !c.allowHTTP {
 		return nil, fmt.Errorf("registry: client: registry URL must use HTTPS, got %q", parsedURL.Scheme)
+	}
+
+	// WithResolver and WithHTTPClient are mutually exclusive: combining them
+	// would silently drop one of the two configurations. Fail loudly.
+	if c.resolver != nil && c.httpClientSet {
+		return nil, fmt.Errorf("registry: client: WithResolver and WithHTTPClient are mutually exclusive")
+	}
+
+	// If a DoH resolver was supplied, compose the HTTP transport around it
+	// AFTER all options have run. Budget = per-upstream timeout × upstream
+	// count + 10 s for the actual registry HTTP round-trip, so the client
+	// never times out mid-failover (M1).
+	if c.resolver != nil {
+		budget := c.resolver.UpstreamTimeout()*time.Duration(c.resolver.UpstreamCount()) + 10*time.Second
+		c.httpClient = &http.Client{
+			Transport: &http.Transport{
+				ForceAttemptHTTP2: true,
+				TLSClientConfig: &tls.Config{
+					MinVersion: tls.VersionTLS13,
+				},
+				DialContext: dohDialContext(c.resolver, 10*time.Second),
+			},
+			Timeout: budget,
+		}
 	}
 
 	return c, nil
@@ -130,7 +220,7 @@ func (c *Client) Fetch(ctx context.Context) ([]RelayEntry, error) {
 	// supplying their own master key and signing malicious relays.
 	reg.MasterPublicKey = c.masterPubKeyBase64
 
-	verified, err := reg.VerifyAll()
+	verified, err := reg.VerifyAllWithLogger(c.rejectLogger)
 	if err != nil {
 		return nil, err
 	}

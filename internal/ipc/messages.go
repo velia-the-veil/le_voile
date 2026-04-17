@@ -98,6 +98,15 @@ type Response struct {
 	CircuitBreakerTripped bool   `json:"circuit_breaker_tripped,omitempty"`
 	CircuitBreakerMessage string `json:"circuit_breaker_message,omitempty"`
 
+	// FailoverAlert carries a French user-facing message set when the
+	// FailoverManager crosses a country boundary (Story 4.4). Cleared on
+	// manual Connect or SelectCountry.
+	FailoverAlert string `json:"failover_alert,omitempty"`
+	// CurrentCountryCode is the ISO2 code of the country hosting the active
+	// relay. May differ from the user's preferred country after an
+	// inter-country failover.
+	CurrentCountryCode string `json:"current_country_code,omitempty"`
+
 	// ConcurrentVPN is true when the preflight scan (story 2.3) detected an
 	// active third-party VPN on the machine and refused to start the tunnel.
 	// When true, Error carries the French user-facing message from

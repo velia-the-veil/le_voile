@@ -44,6 +44,10 @@
                     <span>Portail Wi-Fi detecte. Authentifiez-vous, puis cliquez ci-dessous.</span>
                     <button class="btn btn-captive-retry" id="btn-captive-retry" onclick="retryCaptive()">Activer la protection</button>
                 </div>
+                <div class="failover-banner" id="failover-banner" role="alert" style="display:none;">
+                    <span class="captive-icon">&#9888;</span>
+                    <span id="failover-banner-text"></span>
+                </div>
                 <div class="country-name-display" id="country-name"></div>
                 <div class="info-group">
                     <div class="ip-row" id="ip-real"></div>

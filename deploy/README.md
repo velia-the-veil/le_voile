@@ -83,6 +83,25 @@ DE, ES, GB, US require at least 2 relays each for intra-country failover. Use `-
 ]
 ```
 
+## Chemin canonique du registre
+
+Le registre est servi depuis **`/opt/levoile/relay-registry.json`** — **pas** `/etc/levoile/`. Raisons :
+
+- `/opt/` est la convention Linux pour les applications auto-contenues (binaire + config + assets ensemble).
+- `ProtectSystem=strict` + `WorkingDirectory=/opt/levoile` dans l'unit systemd : cohérent si tout est sous `/opt/`, nécessiterait un `ReadWritePaths=` supplémentaire si le registre était sous `/etc/`.
+- Tous les 8 relais de prod utilisent déjà ce chemin ; aucune migration prévue. Toute doc qui mentionne `/etc/levoile/` est obsolète — se référer à [`install.sh`](install.sh) et [`levoile-relay.service`](levoile-relay.service) comme sources de vérité.
+
+Permissions : `0644` owner `levoile:levoile` (lu par le handler HTTP, public-safe — le contenu signé est conçu pour être diffusé).
+
+## Bootstrap domain & DoH (Story 4.2 / NFR9i)
+
+Au premier lancement, le client résout `relay.levoile.dev` (hardcodé dans `installer/config-default.toml`) via **DoH** (Cloudflare puis Quad9) avant d'établir le tunnel — le resolver DNS système n'est jamais interrogé pour ce domaine. Conséquences opérationnelles :
+
+- `relay.levoile.dev` doit pointer (via DNS public) vers **au moins un** relais opérationnel. Round-robin DNS entre plusieurs relais est acceptable : chaque relais sert le registre complet via `/.well-known/relay-registry.json` (pas de single point of failure).
+- La rotation du domaine bootstrap n'est possible qu'en rebuild client (domaine embedded). Si rotation requise, publier une release dual-signée (clé courante + clé de rotation NFR22h) et attendre l'adoption par les clients.
+- Le filtre de défense en profondeur rejette toute réponse DoH privée (loopback, RFC1918, link-local). Si un upstream DoH retourne une IP interne, le client bascule sur l'autre upstream puis échoue proprement — aucun fallback silencieux vers le resolver système.
+- Test manuel de sanité : `curl -H "accept: application/dns-message" --data-binary @query.bin "https://cloudflare-dns.com/dns-query" -H "content-type: application/dns-message"` doit retourner une réponse DNS wireformat non-vide pour `relay.levoile.dev`.
+
 ## Files
 
 | File | Purpose |

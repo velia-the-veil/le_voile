@@ -11,11 +11,22 @@ import (
 )
 
 // Latency measurement constants.
+//
+// DefaultLatencyTimeout / MaxMeasureTimeout are tuned to 3s (AC Story 4.3 —
+// timeout /health 3s) so that a single slow relay cannot block the entire
+// sort cycle and so the UX-facing country switch stays responsive.
 const (
 	HealthEndpoint        = "/health"
-	DefaultLatencyTimeout = 5 * time.Second
-	MaxMeasureTimeout     = 5 * time.Second
+	DefaultLatencyTimeout = 3 * time.Second
+	MaxMeasureTimeout     = 3 * time.Second
 	maxHealthBodySize     = 1 << 20 // 1 MB limit for health response body
+
+	// DefaultMedianSamples is the number of /health probes aggregated for the
+	// median RTT (AC Story 4.3). Fewer than MinSuccessfulSamples out of these
+	// must succeed for a relay to be considered reachable.
+	DefaultMedianSamples   = 5
+	MinSuccessfulSamples   = 3
+	medianSampleGap        = 20 * time.Millisecond // pacing between samples
 )
 
 // LatencyResult holds the measurement outcome for a single relay.
@@ -83,9 +94,53 @@ func (lc *LatencyChecker) MeasureOne(ctx context.Context, relay RelayEntry) (tim
 	return elapsed, nil
 }
 
+// MeasureOneMedian probes /health `samples` times (default DefaultMedianSamples)
+// and returns the median RTT computed over the successful probes. Per-probe
+// timeout honours DefaultLatencyTimeout (AC Story 4.3 — 3s). The relay is
+// considered Reachable only if at least MinSuccessfulSamples probes succeed.
+//
+// Returns (median, successCount, err). On insufficient successes the error is
+// wrapped with the relay ID; callers should NOT log the relay domain or any
+// client IP to comply with NFR20.
+func (lc *LatencyChecker) MeasureOneMedian(ctx context.Context, relay RelayEntry, samples int) (time.Duration, int, error) {
+	if samples <= 0 {
+		samples = DefaultMedianSamples
+	}
+
+	rtts := make([]time.Duration, 0, samples)
+probeLoop:
+	for i := 0; i < samples; i++ {
+		if i > 0 {
+			// Small pacing between probes so transient blips don't all land in
+			// the same TCP congestion window. Bail out of the enclosing loop
+			// (not just the select) when the parent context is cancelled so
+			// we don't burn the remaining iterations on guaranteed failures.
+			select {
+			case <-ctx.Done():
+				break probeLoop
+			case <-time.After(medianSampleGap):
+			}
+		}
+		d, err := lc.MeasureOne(ctx, relay)
+		if err == nil {
+			rtts = append(rtts, d)
+		}
+	}
+
+	if len(rtts) < MinSuccessfulSamples {
+		return 0, len(rtts), fmt.Errorf("registry: latency: %s: insufficient successful samples (%d/%d)",
+			relay.ID, len(rtts), samples)
+	}
+
+	sort.Slice(rtts, func(i, j int) bool { return rtts[i] < rtts[j] })
+	return rtts[len(rtts)/2], len(rtts), nil
+}
+
 // MeasureAll measures latencies for all relays in parallel with a global timeout.
+// Each relay is probed DefaultMedianSamples times and the median RTT is retained
+// (AC Story 4.3). A relay is marked Reachable only if enough probes succeed.
 func (lc *LatencyChecker) MeasureAll(ctx context.Context, relays []RelayEntry) []LatencyResult {
-	ctx, cancel := context.WithTimeout(ctx, MaxMeasureTimeout)
+	ctx, cancel := context.WithTimeout(ctx, MaxMeasureTimeout*time.Duration(DefaultMedianSamples))
 	defer cancel()
 
 	results := make([]LatencyResult, len(relays))
@@ -94,10 +149,10 @@ func (lc *LatencyChecker) MeasureAll(ctx context.Context, relays []RelayEntry) [
 		wg.Add(1)
 		go func(idx int, r RelayEntry) {
 			defer wg.Done()
-			latency, err := lc.MeasureOne(ctx, r)
+			median, _, err := lc.MeasureOneMedian(ctx, r, DefaultMedianSamples)
 			results[idx] = LatencyResult{
 				Relay:     r,
-				Latency:   latency,
+				Latency:   median,
 				Reachable: err == nil,
 				Error:     err,
 			}

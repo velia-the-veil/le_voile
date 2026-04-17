@@ -4,8 +4,8 @@ package ipchandler
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"math/rand"
 	"net"
 	"sort"
 	"sync"
@@ -97,6 +97,11 @@ func handleGetStatus(prg *svc.Program) ipc.Response {
 		resp.HTTPProxyAddr = prg.HTTPProxyAddr()
 		resp.HTTPProxySeq = prg.HTTPProxySeq()
 		resp.AllowIPv6Leak = prg.AllowIPv6Leak()
+		// Story 4.4 — keep the failover banner + active country visible even
+		// when a concurrent VPN blocks the rest of the status payload, so the
+		// user sees the last meaningful state before the preflight rejection.
+		resp.FailoverAlert = prg.FailoverAlert()
+		resp.CurrentCountryCode = prg.CurrentCountryCode()
 		return resp
 	}
 	tc := prg.TunnelClient()
@@ -117,6 +122,8 @@ func handleGetStatus(prg *svc.Program) ipc.Response {
 		resp.BrowserPoliciesFailed = prg.BrowserPolicyFailed()
 		resp.CircuitBreakerTripped = prg.CircuitBreakerTripped()
 		resp.CircuitBreakerMessage = prg.CircuitBreakerMessage()
+		resp.FailoverAlert = prg.FailoverAlert()
+		resp.CurrentCountryCode = prg.CurrentCountryCode()
 		resp.AllowIPv6Leak = prg.AllowIPv6Leak()
 		resp.CaptivePortal = prg.CaptivePortal()
 		resp.CaptiveProbeURL = prg.CaptiveProbeURL()
@@ -174,6 +181,8 @@ func handleGetStatus(prg *svc.Program) ipc.Response {
 	resp.BrowserPoliciesFailed = prg.BrowserPolicyFailed()
 	resp.CircuitBreakerTripped = prg.CircuitBreakerTripped()
 	resp.CircuitBreakerMessage = prg.CircuitBreakerMessage()
+	resp.FailoverAlert = prg.FailoverAlert()
+	resp.CurrentCountryCode = prg.CurrentCountryCode()
 	resp.FirewallAltered = prg.FirewallAltered()
 	resp.AllowIPv6Leak = prg.AllowIPv6Leak()
 	resp.CaptivePortal = prg.CaptivePortal()
@@ -560,15 +569,26 @@ func handleSelectCountry(prg *svc.Program, req ipc.Request, opts Options) ipc.Re
 		return ipc.Response{Status: ipc.StatusError, Error: "service_not_ready"}
 	}
 
-	// Find a relay in the requested country.
-	byCountry := disc.RelaysByCountry()
-	countryRelays, ok := byCountry[countryCode]
-	if !ok || len(countryRelays) == 0 {
-		return ipc.Response{Status: ipc.StatusError, Error: "no_relays_for_country"}
+	// Strict round-robin across the country's relay pool (AC Story 4.3).
+	// The cursor is kept in RAM and resets when the pool composition changes
+	// (e.g. after a latency re-sort).
+	relay, err := disc.SelectRelay(countryCode)
+	if err != nil {
+		switch {
+		case errors.Is(err, registry.ErrUnknownCountry):
+			return ipc.Response{Status: ipc.StatusError, Error: "unknown_country_code"}
+		case errors.Is(err, registry.ErrNoRelaysForCountry):
+			return ipc.Response{Status: ipc.StatusError, Error: "no_relays_for_country"}
+		default:
+			return ipc.Response{Status: ipc.StatusError, Error: fmt.Sprintf("ipchandler: select relay: %v", err)}
+		}
 	}
 
-	// Pick a random relay for fair distribution across VPS in the same country.
-	relay := countryRelays[rand.Intn(len(countryRelays))]
+	// Fire a background latency re-sort as soon as the user's country intent
+	// is registered — independent of whether the downstream tunnel swap
+	// succeeds (AC Story 4.3 — re-tri à chaque changement de pays). The
+	// discoverer deduplicates concurrent triggers so rapid clicks stay cheap.
+	disc.TriggerBackgroundDiscover(prg.Context())
 
 	// Update the tunnel to use the new relay.
 	if err := tc.UpdateRelay(relay.Domain, relay.PublicKey); err != nil {
@@ -609,6 +629,16 @@ func handleSelectCountry(prg *svc.Program, req ipc.Request, opts Options) ipc.Re
 		}
 		configMu.Unlock()
 	}
+
+	// Story 4.4 — the user just took explicit control of the country, so
+	// drop any stale inter-country failover banner and sync the preferred
+	// country into the FailoverManager for the next automatic failover.
+	prg.ClearFailoverAlert()
+	if fm := prg.FailoverManager(); fm != nil {
+		fm.SetPreferredCountry(countryCode)
+		fm.SetCurrentRelay(relay.ID)
+	}
+	prg.SetCurrentCountry(countryCode)
 
 	// Clear stale IP before async detection.
 	prg.SetVisibleIP("")

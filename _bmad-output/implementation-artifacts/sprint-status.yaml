@@ -81,26 +81,26 @@ development_status:
 
   # Epic 4: Decouverte & Failover Multi-Pays
   # Largement existant (issu de l'ancien Epic 9). 4.2 a enrichir avec DoH bootstrap (NFR9i).
-  epic-4: backlog
-  4-1-endpoint-well-known-relay-registry-json-signe-ed25519: backlog
-  4-2-bootstrap-via-relais-hardcode-au-premier-lancement: backlog
-  4-3-selection-relais-par-pays-avec-round-robin-intra-pays: backlog
-  4-4-failover-automatique-avec-kill-switch-maintenu: backlog
+  epic-4: in-progress
+  4-1-endpoint-well-known-relay-registry-json-signe-ed25519: done
+  4-2-bootstrap-via-relais-hardcode-au-premier-lancement: done
+  4-3-selection-relais-par-pays-avec-round-robin-intra-pays: done
+  4-4-failover-automatique-avec-kill-switch-maintenu: done
   epic-4-retrospective: optional
 
   # Epic 5: Interface Desktop Cross-Platform (Tray + Webview)
   # Stories 5.1-5.5 et 5.8 substantiellement existantes (ancien Epic 10).
   # 5.6 (fallback service down), 5.7 (supervision UI Linux), 5.9 (mode degrade) = NOUVEAU.
-  epic-5: backlog
-  5-1-binaire-ui-unique-systray-webview-serveur-http-local-avec-affichage-de-statut: backlog
-  5-2-affichage-du-pays-selectionne-du-relais-actif-et-de-l-ip-visible: backlog
+  epic-5: in-progress
+  5-1-binaire-ui-unique-systray-webview-serveur-http-local-avec-affichage-de-statut: review
+  5-2-affichage-du-pays-selectionne-du-relais-actif-et-de-l-ip-visible: ready-for-dev
   5-3-selecteur-de-pays-avec-drapeaux-et-nombre-de-relais: backlog
-  5-4-bouton-connect-disconnect: backlog
-  5-5-toggle-fenetre-via-clic-gauche-tray-quitter-via-clic-droit: backlog
-  5-6-ecran-fallback-service-non-demarre-retry-ipc: backlog
-  5-7-supervision-ui-avec-auto-restart-en-cas-de-crash: backlog
-  5-8-quitter-ui-via-tray-sans-tuer-le-service: backlog
-  5-9-mode-degrade-kill-switch-indicateur-visuel-permanent: backlog
+  5-4-bouton-connect-disconnect: ready-for-dev
+  5-5-toggle-fenetre-via-clic-gauche-tray-quitter-via-clic-droit: ready-for-dev
+  5-6-ecran-fallback-service-non-demarre-retry-ipc: ready-for-dev
+  5-7-supervision-ui-avec-auto-restart-en-cas-de-crash: ready-for-dev
+  5-8-quitter-ui-via-tray-sans-tuer-le-service: ready-for-dev
+  5-9-mode-degrade-kill-switch-indicateur-visuel-permanent: ready-for-dev
   epic-5-retrospective: optional
 
   # Epic 6: Validation Anti-Fuite (STUN + Watchdog TUN)

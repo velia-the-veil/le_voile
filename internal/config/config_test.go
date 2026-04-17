@@ -85,8 +85,63 @@ func TestConfig_RegistryDefaults(t *testing.T) {
 	if want := "https://levoile.dev"; cfg.Registry.URL != want {
 		t.Errorf("Registry.URL: got %q, want %q", cfg.Registry.URL, want)
 	}
-	if want := "1h"; cfg.Registry.RefreshInterval != want {
+	// AC Story 4.3 — refresh par défaut à 6h (auparavant "1h").
+	if want := "6h"; cfg.Registry.RefreshInterval != want {
 		t.Errorf("Registry.RefreshInterval: got %q, want %q", cfg.Registry.RefreshInterval, want)
+	}
+	if !cfg.Registry.BootstrapDoHEnabled {
+		t.Error("expected Registry.BootstrapDoHEnabled to default to true (NFR9i)")
+	}
+	if len(cfg.Registry.DoHUpstreams) != 0 {
+		t.Errorf("expected Registry.DoHUpstreams to default empty (built-ins), got %v", cfg.Registry.DoHUpstreams)
+	}
+}
+
+func TestConfig_RegistryDoHUpstreams_RejectsHTTP(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	tomlBody := `
+[tun]
+name = "levoile0"
+mtu = 1420
+
+[registry]
+enabled = true
+url = "https://relay.levoile.dev"
+master_public_key = "rjgDdexo2SOeNXhdy0fUKAONXeQGAyN2d3ixCeuXOpk="
+bootstrap_doh_enabled = true
+doh_upstreams = ["http://evil.example.com/dns-query"]
+`
+	if err := os.WriteFile(path, []byte(tomlBody), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("expected Load to reject HTTP DoH upstream")
+	}
+}
+
+func TestConfig_RegistryDoHUpstreams_AcceptsHTTPS(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	tomlBody := `
+[tun]
+name = "levoile0"
+mtu = 1420
+
+[registry]
+enabled = true
+url = "https://relay.levoile.dev"
+master_public_key = "rjgDdexo2SOeNXhdy0fUKAONXeQGAyN2d3ixCeuXOpk="
+doh_upstreams = ["https://cloudflare-dns.com/dns-query", "https://dns.quad9.net/dns-query"]
+`
+	if err := os.WriteFile(path, []byte(tomlBody), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got := len(cfg.Registry.DoHUpstreams); got != 2 {
+		t.Fatalf("DoHUpstreams count: got %d, want 2", got)
 	}
 }
 

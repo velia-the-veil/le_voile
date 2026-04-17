@@ -61,6 +61,57 @@ func TestProgram_CircuitBreakerHook(t *testing.T) {
 	}
 }
 
+// TestProgram_FailoverAlertLifecycle exercises the Story 4.4 contract on
+// Program state: the failover banner must be set via the wrapper, surfaced
+// through the public getter, and cleared both by ResetCircuitBreaker (AC6 —
+// manual reconnect path) and by an explicit SetCurrentCountry call
+// sequence-equivalent to SelectCountry.
+func TestProgram_FailoverAlertLifecycle(t *testing.T) {
+	prg := NewProgram(Config{RelayDomain: "test.example.com", RelayPubKey: "dGVzdA=="})
+
+	// Initial state: both getters return empty.
+	if got := prg.FailoverAlert(); got != "" {
+		t.Fatalf("FailoverAlert = %q before any set, want empty", got)
+	}
+	if got := prg.CurrentCountryCode(); got != "" {
+		t.Fatalf("CurrentCountryCode = %q before any set, want empty", got)
+	}
+
+	// Simulate an inter-country failover completing: the wrapper writes the
+	// message through setFailoverAlert and the country through SetCurrentCountry.
+	prg.setFailoverAlert("Tous les relais Allemagne indisponibles, basculement vers Royaume-Uni")
+	prg.SetCurrentCountry("gb")
+
+	if got := prg.FailoverAlert(); got != "Tous les relais Allemagne indisponibles, basculement vers Royaume-Uni" {
+		t.Errorf("FailoverAlert = %q, want the set message", got)
+	}
+	if got := prg.CurrentCountryCode(); got != "gb" {
+		t.Errorf("CurrentCountryCode = %q, want gb", got)
+	}
+
+	// AC6 — manual reconnect via ResetCircuitBreaker clears the banner.
+	prg.ResetCircuitBreaker()
+	if got := prg.FailoverAlert(); got != "" {
+		t.Errorf("FailoverAlert = %q after ResetCircuitBreaker, want empty (AC6)", got)
+	}
+	// CurrentCountryCode is NOT reset by ResetCircuitBreaker — the country
+	// remains the active one until a new failover or SelectCountry happens.
+	if got := prg.CurrentCountryCode(); got != "gb" {
+		t.Errorf("CurrentCountryCode = %q after ResetCircuitBreaker, want gb (not reset)", got)
+	}
+
+	// AC6 — SelectCountry sequence: ClearFailoverAlert + SetCurrentCountry.
+	prg.setFailoverAlert("stale banner")
+	prg.ClearFailoverAlert()
+	prg.SetCurrentCountry("fr")
+	if got := prg.FailoverAlert(); got != "" {
+		t.Errorf("FailoverAlert = %q after ClearFailoverAlert, want empty", got)
+	}
+	if got := prg.CurrentCountryCode(); got != "fr" {
+		t.Errorf("CurrentCountryCode = %q after SelectCountry sequence, want fr", got)
+	}
+}
+
 func TestNewProgram(t *testing.T) {
 	cfg := Config{RelayDomain: "test.example.com", RelayPubKey: "dGVzdA=="}
 	prg := NewProgram(cfg)

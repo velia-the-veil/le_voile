@@ -15,20 +15,22 @@ import (
 
 // APIStatusResponse is the JSON response for GET /api/status.
 type APIStatusResponse struct {
-	Status           string `json:"status"`
-	IP               string `json:"ip"`
-	RealIP           string `json:"real_ip"`
-	Country          string `json:"country"`
-	CountryFlag      string `json:"country_flag"`
-	RelayID          string `json:"relay_id"`
-	RelayLatency     string `json:"relay_latency"`
-	Uptime           string `json:"uptime"`
-	Message          string `json:"message"`
-	HTTPProxyActive  bool   `json:"http_proxy_active"`
-	BlocklistEnabled bool   `json:"blocklist_enabled"`
-	AutoStart        bool   `json:"auto_start"`
-	CaptivePortal    bool   `json:"captive_portal,omitempty"`
-	AllowIPv6Leak    bool   `json:"allow_ipv6_leak,omitempty"`
+	Status             string `json:"status"`
+	IP                 string `json:"ip"`
+	RealIP             string `json:"real_ip"`
+	Country            string `json:"country"`
+	CountryFlag        string `json:"country_flag"`
+	RelayID            string `json:"relay_id"`
+	RelayLatency       string `json:"relay_latency"`
+	Uptime             string `json:"uptime"`
+	Message            string `json:"message"`
+	HTTPProxyActive    bool   `json:"http_proxy_active"`
+	BlocklistEnabled   bool   `json:"blocklist_enabled"`
+	AutoStart          bool   `json:"auto_start"`
+	CaptivePortal      bool   `json:"captive_portal,omitempty"`
+	AllowIPv6Leak      bool   `json:"allow_ipv6_leak,omitempty"`
+	FailoverAlert      string `json:"failover_alert,omitempty"`
+	CurrentCountryCode string `json:"current_country_code,omitempty"`
 }
 
 // HTTPServer serves frontend assets and exposes a REST JSON API that proxies to the service via IPC.
@@ -55,7 +57,11 @@ func NewHTTPServer(ipcClient *SafeIPCClient, frontendFS fs.FS) *HTTPServer {
 	// API endpoints.
 	s.mux.HandleFunc("/api/status", s.handleStatus)
 	s.mux.HandleFunc("/api/connect", s.handleConnect)
-s.mux.HandleFunc("/api/registry", s.handleRegistry)
+	s.mux.HandleFunc("/api/disconnect", s.handleDisconnect)
+	s.mux.HandleFunc("/api/quit", s.handleQuit)
+	s.mux.HandleFunc("/api/leak-status", s.handleLeakStatus)
+	s.mux.HandleFunc("/api/update-status", s.handleUpdateStatus)
+	s.mux.HandleFunc("/api/registry", s.handleRegistry)
 	s.mux.HandleFunc("/api/country", s.handleCountry)
 	s.mux.HandleFunc("/api/settings", s.handleGetSettings)
 	s.mux.HandleFunc("/api/settings/autostart", s.handleSetAutoStart)
@@ -125,19 +131,21 @@ func (s *HTTPServer) handleStatus(w http.ResponseWriter, r *http.Request) {
 		msg = "Portail Wi-Fi détecté — authentifiez-vous"
 	}
 	api := APIStatusResponse{
-		Status:           resp.Status,
-		IP:               resp.IP,
-		RealIP:           resp.RealIP,
-		Country:          resp.Country,
-		CountryFlag:      resp.CountryFlag,
-		RelayID:          resp.RelayID,
-		RelayLatency:     resp.RelayLatency,
-		Uptime:           resp.Uptime,
-		Message:          msg,
-		HTTPProxyActive:  resp.HTTPProxyActive,
-		BlocklistEnabled: resp.BlocklistEnabled,
-		CaptivePortal:    resp.CaptivePortal,
-		AllowIPv6Leak:    resp.AllowIPv6Leak,
+		Status:             resp.Status,
+		IP:                 resp.IP,
+		RealIP:             resp.RealIP,
+		Country:            resp.Country,
+		CountryFlag:        resp.CountryFlag,
+		RelayID:            resp.RelayID,
+		RelayLatency:       resp.RelayLatency,
+		Uptime:             resp.Uptime,
+		Message:            msg,
+		HTTPProxyActive:    resp.HTTPProxyActive,
+		BlocklistEnabled:   resp.BlocklistEnabled,
+		CaptivePortal:      resp.CaptivePortal,
+		AllowIPv6Leak:      resp.AllowIPv6Leak,
+		FailoverAlert:      resp.FailoverAlert,
+		CurrentCountryCode: resp.CurrentCountryCode,
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -152,6 +160,72 @@ func (s *HTTPServer) handleConnect(w http.ResponseWriter, r *http.Request) {
 	resp := s.sendIPC(r.Context(), ipc.ActionConnect, "")
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(actionResponse(resp))
+}
+
+func (s *HTTPServer) handleDisconnect(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	resp := s.sendIPC(r.Context(), ipc.ActionDisconnect, "")
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(actionResponse(resp))
+}
+
+func (s *HTTPServer) handleQuit(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	resp := s.sendIPC(r.Context(), ipc.ActionQuit, "")
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(actionResponse(resp))
+}
+
+// APILeakStatusResponse is the JSON response for GET /api/leak-status.
+type APILeakStatusResponse struct {
+	Status    string `json:"status"` // pass / fail / pending
+	LastCheck string `json:"last_check,omitempty"`
+}
+
+func (s *HTTPServer) handleLeakStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	resp := s.sendIPC(r.Context(), ipc.ActionLeakCheck, "")
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(APILeakStatusResponse{
+		Status:    resp.LeakStatus,
+		LastCheck: resp.LeakLastCheck,
+	})
+}
+
+// APIUpdateStatusResponse is the JSON response for GET /api/update-status.
+type APIUpdateStatusResponse struct {
+	Status           string `json:"status"`
+	Version          string `json:"version,omitempty"`
+	InstalledVersion string `json:"installed_version,omitempty"`
+	InstallError     string `json:"install_error,omitempty"`
+	RollbackVersion  string `json:"rollback_version,omitempty"`
+	RollbackReason   string `json:"rollback_reason,omitempty"`
+}
+
+func (s *HTTPServer) handleUpdateStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	resp := s.sendIPC(r.Context(), ipc.ActionUpdateStatus, "")
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(APIUpdateStatusResponse{
+		Status:           resp.UpdateStatus,
+		Version:          resp.UpdateVersion,
+		InstalledVersion: resp.InstalledVersion,
+		InstallError:     resp.InstallError,
+		RollbackVersion:  resp.RollbackVersion,
+		RollbackReason:   resp.RollbackReason,
+	})
 }
 
 // actionResponse builds a JSON-friendly map from an IPC response for connect actions.

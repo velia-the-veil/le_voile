@@ -71,6 +71,12 @@ type Config struct {
 	RegistryURL             string
 	RegistryMasterPubKey    string
 	RegistryRefreshInterval time.Duration
+	// RegistryBootstrapDoHEnabled, when true, wraps the registry HTTP transport
+	// in a DoH resolver (Cloudflare + Quad9 by default) so the first lookup of
+	// the registry hostname never hits the system resolver. NFR9i.
+	RegistryBootstrapDoHEnabled bool
+	// RegistryDoHUpstreams overrides the default DoH endpoints. Empty = defaults.
+	RegistryDoHUpstreams []string
 
 	HTTPProxyEnabled bool
 	HTTPProxyPort    int
@@ -182,6 +188,15 @@ type Program struct {
 	// persistent banner until the user triggers a manual reconnect.
 	circuitBreakerTripped atomic.Bool
 	circuitBreakerMessage atomic.Value // string
+
+	// failoverAlert holds the French user-facing message shown when the
+	// FailoverManager crossed a country boundary (Story 4.4). Cleared on
+	// ResetCircuitBreaker and SelectCountry.
+	failoverAlert atomic.Value // string
+	// currentCountry is the ISO2 code of the country hosting the active relay.
+	// It may differ from config.PreferredCountry after an inter-country
+	// failover — the UI reads it via IPC to show the accurate active flag.
+	currentCountry atomic.Value // string
 
 	// firewallAltered is set when the firewall watchdog (Story 2.7) detects
 	// third-party rule tampering. Surfaced via IPC GetStatus.
@@ -428,12 +443,61 @@ func (p *Program) tripCircuitBreaker(message string) {
 	}
 }
 
+// FailoverAlert returns the French user-facing message set by an
+// inter-country failover. Empty when no cross-country switch is active.
+func (p *Program) FailoverAlert() string {
+	if v := p.failoverAlert.Load(); v != nil {
+		if s, ok := v.(string); ok {
+			return s
+		}
+	}
+	return ""
+}
+
+// CurrentCountryCode returns the ISO2 code of the country hosting the relay
+// the tunnel is currently targeting. May differ from config.PreferredCountry
+// after an inter-country failover.
+func (p *Program) CurrentCountryCode() string {
+	if v := p.currentCountry.Load(); v != nil {
+		if s, ok := v.(string); ok {
+			return s
+		}
+	}
+	return ""
+}
+
+// ClearFailoverAlert drops the current failover banner message. Called from
+// IPC handlers when the user takes action that supersedes the alert (manual
+// reconnect, explicit country selection).
+func (p *Program) ClearFailoverAlert() {
+	p.failoverAlert.Store("")
+}
+
+func (p *Program) setFailoverAlert(message string) {
+	p.failoverAlert.Store(message)
+}
+
+// SetCurrentCountry stores the ISO2 code of the active relay's country. Used
+// from IPC handlers when the user explicitly picks a country, at service
+// startup to record the initial country, and by the failover wrapper after a
+// successful relay switch.
+func (p *Program) SetCurrentCountry(code string) {
+	p.currentCountry.Store(code)
+}
+
+// FailoverManager returns the failover manager, used by IPC handlers to
+// update the preferred country after SelectCountry.
+func (p *Program) FailoverManager() *registry.FailoverManager {
+	return p.failoverMgr
+}
+
 // ResetCircuitBreaker clears the tripped state and resets the Reconnector
 // so subsequent StateDisconnected notifications resume the reconnect loop.
 // Called from the IPC Connect handler when the user asks to retry.
 func (p *Program) ResetCircuitBreaker() {
 	p.circuitBreakerTripped.Store(false)
 	p.circuitBreakerMessage.Store("")
+	p.failoverAlert.Store("")
 	if r := p.reconnector; r != nil {
 		r.Reset()
 	}
@@ -449,6 +513,13 @@ func (p *Program) ForTestTripCircuitBreaker(message string) {
 // the full service lifecycle. Do NOT call from production code.
 func (p *Program) ForTestSetTunnelClient(c *tunnel.Client) {
 	p.tunnelClient = c
+}
+
+// ForTestSetDiscoverer injects a registry discoverer for tests that exercise
+// IPC flows like SelectCountry without running the full service lifecycle.
+// Do NOT call from production code.
+func (p *Program) ForTestSetDiscoverer(d *registry.Discoverer) {
+	p.discoverer = d
 }
 
 // Context returns the service lifecycle context.
@@ -738,12 +809,41 @@ func (p *Program) run() {
 	relayPubKey := p.config.RelayPubKey
 
 	if p.config.RegistryEnabled {
+		regOpts := []registry.ClientOption{
+			registry.WithRefreshInterval(p.config.RegistryRefreshInterval),
+			registry.WithRejectLogger(func(id, domain, reason string) {
+				fmt.Fprintf(serviceStderr, "service: registry: entry rejected id=%s domain=%s reason=%s\n", id, domain, reason)
+			}),
+		}
+		if p.config.RegistryBootstrapDoHEnabled {
+			dohOpts := []registry.DoHOption{
+				registry.WithDoHLogger(func(format string, args ...any) {
+					fmt.Fprintf(serviceStderr, "service: registry doh: "+format+"\n", args...)
+				}),
+			}
+			if len(p.config.RegistryDoHUpstreams) > 0 {
+				dohOpts = append(dohOpts, registry.WithDoHUpstreams(p.config.RegistryDoHUpstreams))
+			}
+			doh, dohErr := registry.NewDoHResolver(dohOpts...)
+			if dohErr != nil {
+				fmt.Fprintf(serviceStderr, "service: registry doh: invalid configuration, falling back to system resolver: %v\n", dohErr)
+			} else {
+				regOpts = append(regOpts, registry.WithResolver(doh))
+				fmt.Fprintf(serviceStderr, "service: registry bootstrap via DoH enabled (NFR9i)\n")
+			}
+		}
 		regClient, regErr := registry.NewClient(
 			p.config.RegistryURL,
 			p.config.RegistryMasterPubKey,
-			registry.WithRefreshInterval(p.config.RegistryRefreshInterval),
+			regOpts...,
 		)
-		if regErr == nil {
+		if regErr != nil {
+			// Client init failed (invalid URL or malformed master key). Fallback
+			// to static relay is kept intentional for resilience, but surface
+			// the reason so operators can diagnose silent misconfig. No client
+			// IP or user content is emitted (NFR20/NFR22a).
+			fmt.Fprintf(serviceStderr, "service: registry: client init failed, falling back to static relay: %v\n", regErr)
+		} else {
 			homeDir, _ := os.UserConfigDir()
 			cachePath := filepath.Join(homeDir, "LeVoile", "relay-cache.toml")
 			cache := registry.NewCache(cachePath)
@@ -759,19 +859,26 @@ func (p *Program) run() {
 				registry.WithLatencyChecker(latencyChecker))
 
 			relays, discoverErr := p.discoverer.Discover(ctx)
-			if discoverErr == nil && len(relays) > 0 {
+			switch {
+			case discoverErr != nil:
+				// Discover/fetch/verify failed — log once and keep static relay.
+				fmt.Fprintf(serviceStderr, "service: registry: discover failed, falling back to static relay: %v\n", discoverErr)
+			case len(relays) == 0:
+				fmt.Fprintf(serviceStderr, "service: registry: discover returned 0 relays, falling back to static relay\n")
+			default:
 				chosen := relays[0]
-				// If preferred_country is set, try to find a relay in that country.
+				// If preferred_country is set, pick via the same round-robin
+				// path used by SelectCountry (AC Story 4.3). Fall back silently
+				// to relays[0] if the preferred country has no relay — don't
+				// abort startup.
 				if p.config.PreferredCountry != "" {
-					byCountry := p.discoverer.RelaysByCountry()
-					if countryRelays, ok := byCountry[p.config.PreferredCountry]; ok && len(countryRelays) > 0 {
-						chosen = countryRelays[0]
+					if picked, err := p.discoverer.SelectRelay(p.config.PreferredCountry); err == nil {
+						chosen = picked
 					}
 				}
 				relayDomain = chosen.Domain
 				relayPubKey = chosen.PublicKey
 			}
-			// If discover fails: keep static relayDomain/relayPubKey — no fatal error.
 		}
 	}
 
@@ -1016,14 +1123,23 @@ func (p *Program) run() {
 		_ = p.discoverer.Start(ctx)
 	}
 
-	// --- 1d. Setup failover manager (Story 9.2) ---
+	// --- 1d. Setup failover manager (Story 4.4 — country-aware) ---
 	if p.discoverer != nil && len(p.discoverer.Relays()) > 1 {
 		p.failoverMgr = registry.NewFailoverManager(
 			p.discoverer,
 			p.tunnelClient,
 			p.tunnelClient.Connect,
 		)
-		p.failoverMgr.SetCurrentRelay(p.discoverer.Primary().ID)
+		primary := p.discoverer.Primary()
+		p.failoverMgr.SetCurrentRelay(primary.ID)
+		p.failoverMgr.SetPreferredCountry(p.config.PreferredCountry)
+		// Record the initial country so IPC consumers see the active flag
+		// before any failover happens.
+		initialCountry := registry.ExtractCountryCode(primary.ID, primary.Domain)
+		if initialCountry == "" {
+			initialCountry = p.config.PreferredCountry
+		}
+		p.SetCurrentCountry(initialCountry)
 	}
 
 	// --- 2. Proxy start ---
@@ -1142,7 +1258,37 @@ func (p *Program) run() {
 		return nil
 	}))
 	if p.failoverMgr != nil {
-		reconnOpts = append(reconnOpts, tunnel.WithFailoverFn(p.failoverMgr.HandleFailover))
+		reconnOpts = append(reconnOpts, tunnel.WithFailoverFn(func(failoverCtx context.Context) error {
+			previousCountry := p.CurrentCountryCode()
+			result, err := p.failoverMgr.HandleFailover(failoverCtx)
+			if err != nil {
+				return err
+			}
+			// Only update currentCountry when the failover actually resolved a
+			// country — the flat-list fallback path may leave it empty if the
+			// new relay has no country hint, and overwriting with "" would
+			// drop the UI's active-country indicator.
+			if result.NewCountry != "" {
+				p.SetCurrentCountry(result.NewCountry)
+			}
+			if result.CrossCountry {
+				oldMeta := registry.CountryMetaMap[previousCountry]
+				newMeta := registry.CountryMetaMap[result.NewCountry]
+				oldName := oldMeta.Name
+				if oldName == "" {
+					oldName = previousCountry
+				}
+				newName := newMeta.Name
+				if newName == "" {
+					newName = result.NewCountry
+				}
+				p.setFailoverAlert(fmt.Sprintf("Tous les relais %s indisponibles, basculement vers %s", oldName, newName))
+				fmt.Fprintf(serviceStderr, "service: failover: %s pool exhausted → %s (inter)\n", previousCountry, result.NewRelayID)
+			} else {
+				fmt.Fprintf(serviceStderr, "service: failover: → %s (intra)\n", result.NewRelayID)
+			}
+			return nil
+		}))
 	}
 	reconnOpts = append(reconnOpts, tunnel.WithCircuitBreakerHook(func(_ context.Context) {
 		p.tripCircuitBreaker(CircuitBreakerAlertMessage)

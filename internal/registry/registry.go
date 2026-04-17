@@ -21,11 +21,29 @@ const SignaturePrefix = "relay-key-v1:"
 
 // Sentinel errors.
 var (
-	ErrInvalidSignature = errors.New("registry: invalid relay signature")
-	ErrNoValidRelays    = errors.New("registry: no valid relays after verification")
-	ErrInvalidMasterKey = errors.New("registry: invalid master public key")
-	ErrRegistryEmpty    = errors.New("registry: no relays in registry")
+	ErrInvalidSignature   = errors.New("registry: invalid relay signature")
+	ErrNoValidRelays      = errors.New("registry: no valid relays after verification")
+	ErrInvalidMasterKey   = errors.New("registry: invalid master public key")
+	ErrRegistryEmpty      = errors.New("registry: no relays in registry")
+	ErrDecodePublicKey    = errors.New("registry: decode relay public key")
+	ErrDecodeSignature    = errors.New("registry: decode relay signature")
+	ErrUnknownCountry     = errors.New("registry: unknown country code")
+	ErrNoRelaysForCountry = errors.New("registry: no relays available for country")
 )
+
+// RejectReason classifies why a relay entry was rejected at verification time.
+// Kept stable (id/domain/reason only, no binary content) so operators can
+// grep logs without ever touching user data (NFR20/NFR22a).
+const (
+	RejectReasonDecodePublicKey  = "decode-pubkey"
+	RejectReasonDecodeSignature  = "decode-signature"
+	RejectReasonInvalidSignature = "invalid-signature"
+)
+
+// RejectLogger is invoked for each relay entry that fails verification.
+// Implementations must not log binary content (signatures, public keys)
+// nor anything that could identify a client.
+type RejectLogger func(id, domain, reason string)
 
 // RelayEntry represents a single relay in the registry.
 type RelayEntry struct {
@@ -69,11 +87,11 @@ func Parse(data []byte) (*Registry, error) {
 func VerifyRelaySignature(masterPubKey ed25519.PublicKey, entry RelayEntry) error {
 	relayPubKeyBytes, err := base64.StdEncoding.DecodeString(entry.PublicKey)
 	if err != nil {
-		return fmt.Errorf("registry: decode relay public key: %w", err)
+		return fmt.Errorf("%w: %v", ErrDecodePublicKey, err)
 	}
 	sigBytes, err := base64.StdEncoding.DecodeString(entry.Signature)
 	if err != nil {
-		return fmt.Errorf("registry: decode signature: %w", err)
+		return fmt.Errorf("%w: %v", ErrDecodeSignature, err)
 	}
 
 	msg := append([]byte(SignaturePrefix), relayPubKeyBytes...)
@@ -83,9 +101,33 @@ func VerifyRelaySignature(masterPubKey ed25519.PublicKey, entry RelayEntry) erro
 	return nil
 }
 
+// classifyRejection maps a verification error to a stable reason string
+// suitable for operational logs. Caller must pass a non-nil error — only the
+// rejection branch of VerifyAllWithLogger invokes this.
+func classifyRejection(err error) string {
+	switch {
+	case errors.Is(err, ErrDecodePublicKey):
+		return RejectReasonDecodePublicKey
+	case errors.Is(err, ErrDecodeSignature):
+		return RejectReasonDecodeSignature
+	default:
+		// ErrInvalidSignature or any future verification failure not
+		// specifically decoded above.
+		return RejectReasonInvalidSignature
+	}
+}
+
 // VerifyAll verifies all relays against the master public key and returns only
 // those that pass verification. Returns ErrNoValidRelays if none pass.
 func (r *Registry) VerifyAll() ([]RelayEntry, error) {
+	return r.VerifyAllWithLogger(nil)
+}
+
+// VerifyAllWithLogger is VerifyAll with a per-rejection callback. The logger
+// (if non-nil) is invoked for each entry that fails verification with the
+// entry's id, domain, and a stable reason string. Binary content (signatures,
+// public keys) is never exposed to the logger — NFR20/NFR22a.
+func (r *Registry) VerifyAllWithLogger(logger RejectLogger) ([]RelayEntry, error) {
 	masterKeyBytes, err := base64.StdEncoding.DecodeString(r.MasterPublicKey)
 	if err != nil {
 		return nil, fmt.Errorf("registry: %w: %v", ErrInvalidMasterKey, err)
@@ -97,9 +139,13 @@ func (r *Registry) VerifyAll() ([]RelayEntry, error) {
 
 	var verified []RelayEntry
 	for _, entry := range r.Relays {
-		if err := VerifyRelaySignature(masterPubKey, entry); err == nil {
-			verified = append(verified, entry)
+		if err := VerifyRelaySignature(masterPubKey, entry); err != nil {
+			if logger != nil {
+				logger(entry.ID, entry.Domain, classifyRejection(err))
+			}
+			continue
 		}
+		verified = append(verified, entry)
 	}
 	if len(verified) == 0 {
 		return nil, ErrNoValidRelays

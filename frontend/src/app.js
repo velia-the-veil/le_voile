@@ -22,6 +22,8 @@ function init() {
     dom.btnConnect = document.getElementById('btn-connect');
     dom.captiveBanner = document.getElementById('captive-banner');
     dom.btnCaptiveRetry = document.getElementById('btn-captive-retry');
+    dom.failoverBanner = document.getElementById('failover-banner');
+    dom.failoverBannerText = document.getElementById('failover-banner-text');
     dom.ipv6Badge = document.getElementById('ipv6-badge');
     dom.ipv6Warn = document.getElementById('ipv6-warn');
 
@@ -109,6 +111,16 @@ function updateUI(s) {
             dom.titlebarV.className = 'titlebar-v captive';
         } else {
             dom.captiveBanner.style.display = 'none';
+        }
+    }
+
+    // Failover alert banner (Story 4.4) — inter-country switch message.
+    if (dom.failoverBanner) {
+        if (s.failover_alert) {
+            dom.failoverBannerText.textContent = s.failover_alert;
+            dom.failoverBanner.style.display = '';
+        } else {
+            dom.failoverBanner.style.display = 'none';
         }
     }
 

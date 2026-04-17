@@ -38,10 +38,12 @@ type resolvedConfig struct {
 	blocklistEnabled  bool
 	blocklistInterval time.Duration
 
-	registryEnabled         bool
-	registryURL             string
-	registryMasterPubKey    string
-	registryRefreshInterval time.Duration
+	registryEnabled             bool
+	registryURL                 string
+	registryMasterPubKey        string
+	registryRefreshInterval     time.Duration
+	registryBootstrapDoHEnabled bool
+	registryDoHUpstreams        []string
 
 	httpProxyEnabled bool
 	httpProxyPort    int
@@ -130,6 +132,8 @@ func resolveConfig(cfgPath, flagDomain, flagPubKey string, flagInsecure bool) (r
 	rc.registryEnabled = cfg.Registry.Enabled
 	rc.registryURL = cfg.Registry.URL
 	rc.registryMasterPubKey = cfg.Registry.MasterPublicKey
+	rc.registryBootstrapDoHEnabled = cfg.Registry.BootstrapDoHEnabled
+	rc.registryDoHUpstreams = cfg.Registry.DoHUpstreams
 	if cfg.Registry.RefreshInterval != "" {
 		d, err := time.ParseDuration(cfg.Registry.RefreshInterval)
 		if err != nil {
@@ -263,10 +267,12 @@ func main() {
 		UpdateStagingDir:  rc.updateStagingDir,
 		BlocklistEnabled:        rc.blocklistEnabled,
 		BlocklistInterval:       rc.blocklistInterval,
-		RegistryEnabled:         rc.registryEnabled,
-		RegistryURL:             rc.registryURL,
-		RegistryMasterPubKey:    rc.registryMasterPubKey,
-		RegistryRefreshInterval: rc.registryRefreshInterval,
+		RegistryEnabled:             rc.registryEnabled,
+		RegistryURL:                 rc.registryURL,
+		RegistryMasterPubKey:        rc.registryMasterPubKey,
+		RegistryRefreshInterval:     rc.registryRefreshInterval,
+		RegistryBootstrapDoHEnabled: rc.registryBootstrapDoHEnabled,
+		RegistryDoHUpstreams:        rc.registryDoHUpstreams,
 		HTTPProxyEnabled:        rc.httpProxyEnabled,
 		HTTPProxyPort:           rc.httpProxyPort,
 		BrowserPoliciesEnabled: rc.browserPoliciesEnabled,
