@@ -1,6 +1,6 @@
 # Story 3.8: Organisation des relais par pays (DE/ES/GB/US ≥ 2 relais)
 
-Status: ready-for-dev
+Status: done
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -21,35 +21,35 @@ So that le failover intra-pays soit possible, la latence minimisée par géoloca
 
 ## Tasks / Subtasks
 
-- [ ] Tâche 1 — Corriger `ExtractCountryCode` pour le format `xx-NNN.levoile.dev` (AC: 4)
-  - [ ] Dans [internal/registry/countries.go:40-46](internal/registry/countries.go#L40-L46), reconnaître aussi le motif `{code}-{num}.{tld...}` : si `domain[:dot]` contient un `-`, prendre la partie avant le `-` comme `code`
-  - [ ] Préserver le cas existant `{code}.levoile.dev` (sans tiret)
-  - [ ] Ajouter un test unitaire dans [internal/registry/countries_test.go](internal/registry/countries_test.go) pour `("", "us-001.levoile.dev") → "us"`, `("", "gb-002.levoile.dev") → "gb"`, `("", "de-001.levoile.dev") → "de"`
-  - [ ] Vérifier que les cas existants passent toujours (`relay-is-01`, `is.levoile.dev`, legacy `relay-iceland`)
+- [x] Tâche 1 — Corriger `ExtractCountryCode` pour le format `xx-NNN.levoile.dev` (AC: 4)
+  - [x] Dans [internal/registry/countries.go:40-46](internal/registry/countries.go#L40-L46), reconnaître aussi le motif `{code}-{num}.{tld...}` : si `domain[:dot]` contient un `-`, prendre la partie avant le `-` comme `code`
+  - [x] Préserver le cas existant `{code}.levoile.dev` (sans tiret)
+  - [x] Ajouter un test unitaire dans [internal/registry/countries_test.go](internal/registry/countries_test.go) pour `("", "us-001.levoile.dev") → "us"`, `("", "gb-002.levoile.dev") → "gb"`, `("", "de-001.levoile.dev") → "de"`
+  - [x] Vérifier que les cas existants passent toujours (`relay-is-01`, `is.levoile.dev`, legacy `relay-iceland`)
 
-- [ ] Tâche 2 — Refactor `cmd/genregistry` pour supporter N relais (AC: 1, 2, 5)
-  - [ ] Dans [cmd/genregistry/main.go](cmd/genregistry/main.go), ajouter un flag `-relays` pointant vers un fichier TSV/JSON décrivant une liste `[{id, domain, public_key_b64}, ...]` (public keys fournies par l'opérateur ; elles sont générées sur chaque VPS, puis collectées)
-  - [ ] Conserver la rétrocompatibilité : si `-relay-id` + `-relay-domain` sont fournis (cas mono-relais historique), utiliser la master public key comme public key du relais (comportement actuel)
-  - [ ] Pour chaque relais, signer via `ed25519.Sign(masterPriv, []byte("relay-key-v1:") + relayPubKeyBytes)` — réutiliser exactement la logique existante (lignes 63-66)
-  - [ ] Ajouter un flag `-strict-priority` : si présent, lister les pays prioritaires `{de, es, gb, us}` qui ont < 2 relais via `registry.ExtractCountryCode` et échouer avec `os.Exit(1)` + message clair
-  - [ ] En mode non-strict, émettre un warning stderr si un pays prioritaire a < 2 relais
-  - [ ] Horodatage `added` : conserver `time.Now().UTC().Truncate(time.Second)` pour toutes les entrées d'un même run (ou accepter un override via le fichier d'entrée)
+- [x] Tâche 2 — Refactor `cmd/genregistry` pour supporter N relais (AC: 1, 2, 5)
+  - [x] Dans [cmd/genregistry/main.go](cmd/genregistry/main.go), ajouter un flag `-relays` pointant vers un fichier TSV/JSON décrivant une liste `[{id, domain, public_key_b64}, ...]` (public keys fournies par l'opérateur ; elles sont générées sur chaque VPS, puis collectées)
+  - [x] Conserver la rétrocompatibilité : si `-relay-id` + `-relay-domain` sont fournis (cas mono-relais historique), utiliser la master public key comme public key du relais (comportement actuel)
+  - [x] Pour chaque relais, signer via `ed25519.Sign(masterPriv, []byte("relay-key-v1:") + relayPubKeyBytes)` — réutiliser exactement la logique existante (lignes 63-66)
+  - [x] Ajouter un flag `-strict-priority` : si présent, lister les pays prioritaires `{de, es, gb, us}` qui ont < 2 relais via `registry.ExtractCountryCode` et échouer avec `os.Exit(1)` + message clair
+  - [x] En mode non-strict, émettre un warning stderr si un pays prioritaire a < 2 relais
+  - [x] Horodatage `added` : conserver `time.Now().UTC().Truncate(time.Second)` pour toutes les entrées d'un même run (ou accepter un override via le fichier d'entrée)
 
-- [ ] Tâche 3 — Documentation opérateur (AC: 1)
-  - [ ] Créer [deploy/README.md](deploy/README.md) (ou éditer s'il existe) avec la procédure d'ajout d'un nouveau relais : (1) provisionner VPS, (2) générer clé Ed25519 locale `openssl genpkey -algorithm ed25519 ...`, (3) uploader la pub key à l'opérateur, (4) regénérer le registre avec `genregistry -signing-key master.key -relays relays.json -strict-priority -out relay-registry.json`, (5) redéployer le registre sur tous les relais (`scp relay-registry.json` → `/opt/levoile/`)
-  - [ ] Inclure un exemple de fichier `relays.json` avec les 8 relais actuels
+- [x] Tâche 3 — Documentation opérateur (AC: 1)
+  - [x] Créer [deploy/README.md](deploy/README.md) (ou éditer s'il existe) avec la procédure d'ajout d'un nouveau relais : (1) provisionner VPS, (2) générer clé Ed25519 locale `openssl genpkey -algorithm ed25519 ...`, (3) uploader la pub key à l'opérateur, (4) regénérer le registre avec `genregistry -signing-key master.key -relays relays.json -strict-priority -out relay-registry.json`, (5) redéployer le registre sur tous les relais (`scp relay-registry.json` → `/opt/levoile/`)
+  - [x] Inclure un exemple de fichier `relays.json` avec les 8 relais actuels
 
-- [ ] Tâche 4 — Smoke test sur un relais de prod (AC: 1, 2)
-  - [ ] Récupérer `/opt/levoile/relay-registry.json` depuis un relais existant (ex : `de-001`)
-  - [ ] Reconstruire localement via la nouvelle version de `genregistry` à partir d'un `relays.json` dérivé du JSON de prod (même ids/domains/public_keys)
-  - [ ] Vérifier que les signatures produites sont strictement identiques à celles en prod (déterminisme Ed25519 garanti par le préfixe + public key) — si différence, c'est un bug
-  - [ ] Charger via `registry.Parse` puis `VerifyAll` et confirmer `len(verified) == 8`
+- [x] Tâche 4 — Smoke test sur un relais de prod (AC: 1, 2)
+  - [x] Récupérer `/opt/levoile/relay-registry.json` depuis un relais existant (ex : `de-001`)
+  - [x] Reconstruire localement via la nouvelle version de `genregistry` à partir d'un `relays.json` dérivé du JSON de prod (même ids/domains/public_keys)
+  - [x] Vérifier que les signatures produites sont strictement identiques à celles en prod (déterminisme Ed25519 garanti par le préfixe + public key) — si différence, c'est un bug
+  - [x] Charger via `registry.Parse` puis `VerifyAll` et confirmer `len(verified) == 8`
 
-- [ ] Tâche 5 — Mise à jour de la mémoire opérateur (AC: 6)
-  - [ ] Mettre à jour `C:\Users\Akerimus\.claude\projects\d--AI-Bmad-bmad-vpn-le-voile\memory\reference_relay_servers.md`
-  - [ ] Nouvelle table : 8 relais (DE/ES/GB/US × 2), IPs réelles récupérées via `dig +short {domain}`, chemins SSH, provider (probablement Hetzner pour DE, à confirmer pour US/ES/GB)
-  - [ ] Noter la master public key : `rjgDdexo2SOeNXhdy0fUKAONXeQGAyN2d3ixCeuXOpk=`
-  - [ ] Signaler explicitement que IS et FI ne sont plus dans le registre de prod (remplacés par DE/ES/GB/US)
+- [x] Tâche 5 — Mise à jour de la mémoire opérateur (AC: 6)
+  - [x] Mettre à jour `C:\Users\Akerimus\.claude\projects\d--AI-Bmad-bmad-vpn-le-voile\memory\reference_relay_servers.md`
+  - [x] Nouvelle table : 8 relais (DE/ES/GB/US × 2), IPs réelles récupérées via `dig +short {domain}`, chemins SSH, provider (probablement Hetzner pour DE, à confirmer pour US/ES/GB)
+  - [x] Noter la master public key : `rjgDdexo2SOeNXhdy0fUKAONXeQGAyN2d3ixCeuXOpk=`
+  - [x] Signaler explicitement que IS et FI ne sont plus dans le registre de prod (remplacés par DE/ES/GB/US)
 
 ## Dev Notes
 
@@ -122,10 +122,26 @@ L'infrastructure opérationnelle est **déjà en place** :
 
 ### Agent Model Used
 
-{{agent_model_name_version}}
+Claude Opus 4.6 (1M context)
 
 ### Debug Log References
 
 ### Completion Notes List
 
+- Fix `ExtractCountryCode` pour domaines `{code}-{NNN}.levoile.dev` : ajout d'un fallback qui split sur `-` dans le prefix avant le premier `.` — corrige le bug UI dans `desktop/app.go:289`
+- Refactor `cmd/genregistry` : nouveau flag `-relays` (fichier JSON multi-relais), `-strict-priority` (échoue si pays prioritaire < 2 relais), rétrocompatibilité mono-relais préservée
+- Smoke test prod réussi : 8/8 relays verified, 4 priority countries ≥ 2 relays chacun
+- Tests ajoutés : 6 cas `ExtractCountryCode` pour nouveau format domaine, `TestCountryMetaMap` étendu (es/gb), 4 tests genregistry (multi-relay sign+verify, domain-only extraction, determinism, priority check), 1 test prod registry
+- Mémoire opérateur mise à jour avec master public key et commande genregistry
+
 ### File List
+
+- `internal/registry/countries.go` — fix ExtractCountryCode domain format
+- `internal/registry/countries_test.go` — 6 nouveaux cas + extension CountryMetaMap
+- `cmd/genregistry/main.go` — refactor multi-relais complet
+- `cmd/genregistry/main_test.go` — nouveau, 4 tests
+- `cmd/genregistry/verify_prod_test.go` — nouveau, smoke test prod
+- `deploy/README.md` — nouveau, documentation opérateur
+- `internal/registry/registry.go` — export `SignaturePrefix` (was `signaturePrefix`)
+- `internal/registry/registry_test.go` — adapt to `SignaturePrefix`
+- `internal/registry/discoverer_test.go` — adapt to `SignaturePrefix`

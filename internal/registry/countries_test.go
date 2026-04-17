@@ -21,6 +21,12 @@ func TestExtractCountryCode(t *testing.T) {
 		{"legacy relay-germany", "", "relay-germany.example.com", "de"},
 		{"legacy relay-france", "", "relay-france.levoile.dev", "fr"},
 		{"legacy relay-usa", "", "relay-usa.levoile.dev", "us"},
+		{"domain format us-001.levoile.dev", "", "us-001.levoile.dev", "us"},
+		{"domain format gb-002.levoile.dev", "", "gb-002.levoile.dev", "gb"},
+		{"domain format de-001.levoile.dev", "", "de-001.levoile.dev", "de"},
+		{"domain format es-001.levoile.dev", "", "es-001.levoile.dev", "es"},
+		{"ID format relay-us-001", "relay-us-001", "us-001.levoile.dev", "us"},
+		{"ID format relay-gb-002", "relay-gb-002", "gb-002.levoile.dev", "gb"},
 		{"unknown domain", "", "custom.example.com", ""},
 		{"empty both", "", "", ""},
 		{"short domain", "", "x.y", ""},
@@ -60,8 +66,34 @@ func TestRelaysByCountry(t *testing.T) {
 	}
 }
 
+// TestRelaysByCountryPriorityCountries exercises AC3: RelaysByCountry must
+// return ≥ 2 entries per priority country when 8 relays are loaded.
+func TestRelaysByCountryPriorityCountries(t *testing.T) {
+	relays := []RelayEntry{
+		{ID: "relay-de-001", Domain: "de-001.levoile.dev"},
+		{ID: "relay-de-002", Domain: "de-002.levoile.dev"},
+		{ID: "relay-es-001", Domain: "es-001.levoile.dev"},
+		{ID: "relay-es-002", Domain: "es-002.levoile.dev"},
+		{ID: "relay-gb-001", Domain: "gb-001.levoile.dev"},
+		{ID: "relay-gb-002", Domain: "gb-002.levoile.dev"},
+		{ID: "relay-us-001", Domain: "us-001.levoile.dev"},
+		{ID: "relay-us-002", Domain: "us-002.levoile.dev"},
+	}
+
+	d := &Discoverer{}
+	d.setRelays(relays)
+
+	byCountry := d.RelaysByCountry()
+
+	for _, code := range []string{"de", "es", "gb", "us"} {
+		if len(byCountry[code]) < 2 {
+			t.Errorf("RelaysByCountry[%q] = %d relays, want >= 2", code, len(byCountry[code]))
+		}
+	}
+}
+
 func TestCountryMetaMap_AllCountries(t *testing.T) {
-	expected := []string{"is", "de", "fi", "us", "fr"}
+	expected := []string{"is", "de", "fi", "us", "fr", "es", "gb"}
 	for _, code := range expected {
 		meta, ok := CountryMetaMap[code]
 		if !ok {

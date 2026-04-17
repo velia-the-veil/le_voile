@@ -22,6 +22,15 @@ var CountryMetaMap = map[string]CountryMeta{
 	"gb": {Name: "Royaume-Uni", Flag: "🇬🇧"},
 }
 
+// legacyCountryMap maps old-style domain/ID prefixes to ISO country codes.
+var legacyCountryMap = map[string]string{
+	"relay-iceland": "is",
+	"relay-finland": "fi",
+	"relay-germany": "de",
+	"relay-france":  "fr",
+	"relay-usa":     "us",
+}
+
 // ExtractCountryCode extracts the ISO 2-letter country code from a relay ID
 // or domain. It tries the ID first (relay-{code}-{num}), then the domain
 // ({code}.levoile.dev), and finally falls back to legacy prefixes.
@@ -37,23 +46,23 @@ func ExtractCountryCode(id, domain string) string {
 		}
 	}
 
-	// Try domain format: {code}.levoile.dev (e.g., "is.levoile.dev")
+	// Try domain format: {code}.levoile.dev or {code}-{num}.levoile.dev
 	if dot := strings.Index(domain, "."); dot >= 2 {
-		code := domain[:dot]
-		if _, ok := CountryMetaMap[code]; ok {
-			return code
+		prefix := domain[:dot]
+		if _, ok := CountryMetaMap[prefix]; ok {
+			return prefix
+		}
+		// Handle {code}-{num} format (e.g., "us-001.levoile.dev")
+		if dash := strings.Index(prefix, "-"); dash >= 2 {
+			code := prefix[:dash]
+			if _, ok := CountryMetaMap[code]; ok {
+				return code
+			}
 		}
 	}
 
 	// Legacy fallback: domain prefixes like "relay-iceland.levoile.dev"
-	legacyMap := map[string]string{
-		"relay-iceland": "is",
-		"relay-finland": "fi",
-		"relay-germany": "de",
-		"relay-france":  "fr",
-		"relay-usa":     "us",
-	}
-	for prefix, code := range legacyMap {
+	for prefix, code := range legacyCountryMap {
 		if strings.HasPrefix(domain, prefix) || strings.HasPrefix(id, prefix) {
 			return code
 		}

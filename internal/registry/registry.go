@@ -16,8 +16,8 @@ const CurrentVersion = 1
 // EndpointPath is the well-known URL path for the relay registry.
 const EndpointPath = "/.well-known/relay-registry.json"
 
-// signaturePrefix prevents signature reuse across different Ed25519 contexts.
-const signaturePrefix = "relay-key-v1:"
+// SignaturePrefix prevents signature reuse across different Ed25519 contexts.
+const SignaturePrefix = "relay-key-v1:"
 
 // Sentinel errors.
 var (
@@ -76,7 +76,7 @@ func VerifyRelaySignature(masterPubKey ed25519.PublicKey, entry RelayEntry) erro
 		return fmt.Errorf("registry: decode signature: %w", err)
 	}
 
-	msg := append([]byte(signaturePrefix), relayPubKeyBytes...)
+	msg := append([]byte(SignaturePrefix), relayPubKeyBytes...)
 	if !ed25519.Verify(masterPubKey, msg, sigBytes) {
 		return ErrInvalidSignature
 	}

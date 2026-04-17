@@ -70,13 +70,13 @@ development_status:
   # handler /tunnel + NAT + DNS interne + blocklist cote relais = NOUVEAU.
   epic-3: in-progress
   3-1-binaire-relais-go-http3-stateless-deployable-via-systemd: in-progress
-  3-2-endpoint-verify-avec-emission-session-tokens-ed25519: ready-for-dev
-  3-3-handler-tunnel-avec-stream-bidirectionnel-paquets-ip: ready-for-dev
-  3-4-nat-cote-relais-avec-table-en-ram-et-ttl-court: ready-for-dev
-  3-5-resolveur-dns-interne-cote-relais-avec-blocklist-stevenblack: ready-for-dev
-  3-6-rate-limiting-par-ip-source-bandwidth-quota-journalier: ready-for-dev
-  3-7-limite-globale-tunnels-par-relais-http-503: ready-for-dev
-  3-8-organisation-des-relais-par-pays-de-es-gb-us-2-relais: ready-for-dev
+  3-2-endpoint-verify-avec-emission-session-tokens-ed25519: done
+  3-3-handler-tunnel-avec-stream-bidirectionnel-paquets-ip: done
+  3-4-nat-cote-relais-avec-table-en-ram-et-ttl-court: done
+  3-5-resolveur-dns-interne-cote-relais-avec-blocklist-stevenblack: done
+  3-6-rate-limiting-par-ip-source-bandwidth-quota-journalier: done
+  3-7-limite-globale-tunnels-par-relais-http-503: done
+  3-8-organisation-des-relais-par-pays-de-es-gb-us-2-relais: done
   epic-3-retrospective: optional
 
   # Epic 4: Decouverte & Failover Multi-Pays

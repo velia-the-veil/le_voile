@@ -1,6 +1,6 @@
 # Story 3.3: Handler /tunnel avec stream bidirectionnel paquets IP
 
-Status: ready-for-dev
+Status: done
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -34,8 +34,8 @@ So that les stories suivantes (3.4 NAT, 3.5 DNS interne) et Epic 2 (capture TUN/
 
 ## Tasks / Subtasks
 
-- [ ] Tâche 1 — Définir l'interface `PacketForwarder` et les types de session (AC: 1, 2, 3, 7, 8)
-  - [ ] Créer [internal/relay/tunnel_handler.go](internal/relay/tunnel_handler.go) avec :
+- [x] Tâche 1 — Définir l'interface `PacketForwarder` et les types de session (AC: 1, 2, 3, 7, 8)
+  - [x] Créer [internal/relay/tunnel_handler.go](internal/relay/tunnel_handler.go) avec :
     - Constante `TunnelMaxFrameSize = 1420` (exportée, commentée : "MTU IPv4/IPv6 sous QUIC — architecture.md#L285")
     - Constante `TunnelFrameHeaderSize = 2` (length prefix big-endian)
     - Constante `TunnelIdleTimeout = 90 * time.Second` (aligné sur `quic.Config.MaxIdleTimeout` de `server.go:97`)
@@ -53,52 +53,52 @@ So that les stories suivantes (3.4 NAT, 3.5 DNS interne) et Epic 2 (capture TUN/
           Forward(ctx context.Context, session TunnelSession, pkt []byte) error
       }
       ```
-  - [ ] Type `TunnelHandler struct` avec champs : `signingKey ed25519.PublicKey`, `cfValidator *CloudflareIPValidator`, `ipLimiter *IPLimiter`, `forwarder PacketForwarder`, `logFunc func(string, ...any)`
-  - [ ] Constructeur `NewTunnelHandler(pubKey, cfv, ipLimiter, forwarder, logFunc) *TunnelHandler` — panique si `forwarder == nil` ou `pubKey == nil`
+  - [x] Type `TunnelHandler struct` avec champs : `signingKey ed25519.PublicKey`, `cfValidator *CloudflareIPValidator`, `ipLimiter *IPLimiter`, `forwarder PacketForwarder`, `logFunc func(string, ...any)`
+  - [x] Constructeur `NewTunnelHandler(pubKey, cfv, ipLimiter, forwarder, logFunc) *TunnelHandler` — panique si `forwarder == nil` ou `pubKey == nil`
 
-- [ ] Tâche 2 — Implémenter `ServeHTTP` avec auth stricte (AC: 1, 4, 5, 6)
-  - [ ] Méthode ≠ POST → 405 avec `w.Header().Set("Allow", "POST")` (AC5)
-  - [ ] Extraire Bearer via `extractBearerToken(r)` (fonction existante dans [connect_handler.go:293](internal/relay/connect_handler.go#L293)) ; vide → 401 ; `r.Header.Del("Authorization")` immédiatement après
-  - [ ] Si `cfValidator != nil && !cfValidator.Insecure()` : si `ExtractClientIP(r)` échoue → 401 (silencieux sur l'IP) — cohérent avec story 3.2 AC2/AC3 mais **401 pas 403** car ici on est en phase d'authentification du stream (pas de négociation de session)
-  - [ ] `VerifySessionToken(h.signingKey, token)` → si erreur → 401
-  - [ ] Expiration : `time.Now().Unix() > payload.Issued + payload.TTL` → 401
-  - [ ] IP-hash match (NFR9c/d) : calculer `expected := fmt.Sprintf("%x", sha256.Sum256([]byte(clientIP)))`, comparer **`subtle.ConstantTimeCompare([]byte(expected), []byte(payload.IPHash)) != 1`** → 401. **NE PAS** utiliser `==` de string pour cette comparaison (NFR9d explicite)
-  - [ ] IPLimiter : `if !h.ipLimiter.Acquire(clientIP) { http.Error(w, "Too Many Requests", 429); return }` ; `defer h.ipLimiter.Release(clientIP)` (AC6 par-IP). Le slot global `Limiter` est géré par `LimitMiddleware` côté `server.go` (AC6 global — wrapping à faire tâche 5)
-  - [ ] Aucun `log.Printf` ni `h.logFunc` ne doit prendre `clientIP`, `r.RemoteAddr` ou le header CF en argument (NFR20) — audit ciblé dans la tâche 7
+- [x] Tâche 2 — Implémenter `ServeHTTP` avec auth stricte (AC: 1, 4, 5, 6)
+  - [x] Méthode ≠ POST → 405 avec `w.Header().Set("Allow", "POST")` (AC5)
+  - [x] Extraire Bearer via `extractBearerToken(r)` (fonction existante dans [connect_handler.go:293](internal/relay/connect_handler.go#L293)) ; vide → 401 ; `r.Header.Del("Authorization")` immédiatement après
+  - [x] Si `cfValidator != nil && !cfValidator.Insecure()` : si `ExtractClientIP(r)` échoue → 401 (silencieux sur l'IP) — cohérent avec story 3.2 AC2/AC3 mais **401 pas 403** car ici on est en phase d'authentification du stream (pas de négociation de session)
+  - [x] `VerifySessionToken(h.signingKey, token)` → si erreur → 401
+  - [x] Expiration : `time.Now().Unix() > payload.Issued + payload.TTL` → 401
+  - [x] IP-hash match (NFR9c/d) : calculer `expected := fmt.Sprintf("%x", sha256.Sum256([]byte(clientIP)))`, comparer **`subtle.ConstantTimeCompare([]byte(expected), []byte(payload.IPHash)) != 1`** → 401. **NE PAS** utiliser `==` de string pour cette comparaison (NFR9d explicite)
+  - [x] IPLimiter : `if !h.ipLimiter.Acquire(clientIP) { http.Error(w, "Too Many Requests", 429); return }` ; `defer h.ipLimiter.Release(clientIP)` (AC6 par-IP). Le slot global `Limiter` est géré par `LimitMiddleware` côté `server.go` (AC6 global — wrapping à faire tâche 5)
+  - [x] Aucun `log.Printf` ni `h.logFunc` ne doit prendre `clientIP`, `r.RemoteAddr` ou le header CF en argument (NFR20) — audit ciblé dans la tâche 7
 
-- [ ] Tâche 3 — Pompe bidirectionnelle avec framing 2 octets (AC: 1, 2, 3, 7)
-  - [ ] Après auth : `w.WriteHeader(200)` puis `w.(http.Flusher).Flush()` pour débloquer le client
-  - [ ] Créer `sessionCtx, cancel := context.WithCancel(r.Context())` + `defer cancel()`
-  - [ ] `outCh, cleanup := h.forwarder.OpenSession(sessionCtx, TunnelSession{ClientIPHash: payload.IPHash, OpenedAt: time.Now()})` ; `defer cleanup()`
-  - [ ] Goroutine **lecture client → forwarder** :
+- [x] Tâche 3 — Pompe bidirectionnelle avec framing 2 octets (AC: 1, 2, 3, 7)
+  - [x] Après auth : `w.WriteHeader(200)` puis `w.(http.Flusher).Flush()` pour débloquer le client
+  - [x] Créer `sessionCtx, cancel := context.WithCancel(r.Context())` + `defer cancel()`
+  - [x] `outCh, cleanup := h.forwarder.OpenSession(sessionCtx, TunnelSession{ClientIPHash: payload.IPHash, OpenedAt: time.Now()})` ; `defer cleanup()`
+  - [x] Goroutine **lecture client → forwarder** :
     - Boucle : `r.Body.Read` → lire 2 octets (header) → `N := binary.BigEndian.Uint16(hdr)` → si `N == 0 || N > TunnelMaxFrameSize` → `cancel()` + `return`
     - `io.ReadFull(r.Body, buf[:N])` avec `buf` de capacité `TunnelMaxFrameSize` réutilisé à chaque itération (pas d'alloc par frame)
     - Idle timeout : appliquer `r.Context()` deadline via helper ou via un `time.Timer` qui appelle `cancel()` si aucune frame depuis `TunnelIdleTimeout`
     - `h.forwarder.Forward(sessionCtx, session, buf[:N])` ; erreur → `cancel()` + return
     - Sur `io.EOF` ou autre erreur → `cancel()` + return
-  - [ ] Goroutine **forwarder → client** :
+  - [x] Goroutine **forwarder → client** :
     - Boucle `select` sur `sessionCtx.Done()` et `outCh`
     - Frame sortante : `binary.BigEndian.PutUint16(hdr, uint16(len(pkt)))` → `w.Write(hdr)` → `w.Write(pkt)` → `w.(http.Flusher).Flush()`
     - Si `len(pkt) > TunnelMaxFrameSize` : drop + log opérationnel (anomalie forwarder, pas sécurité)
     - Erreur d'écriture → `cancel()` + return
-  - [ ] `sync.WaitGroup` sur les deux goroutines ; `<-sessionCtx.Done()` puis `wg.Wait()` avant de retourner depuis `ServeHTTP`
-  - [ ] **IMPORTANT** — pattern inspiré de [connect_handler.go:172-236](internal/relay/connect_handler.go#L172) (relay bidirectionnel), adapté au framing
+  - [x] `sync.WaitGroup` sur les deux goroutines ; `<-sessionCtx.Done()` puis `wg.Wait()` avant de retourner depuis `ServeHTTP`
+  - [x] **IMPORTANT** — pattern inspiré de [connect_handler.go:172-236](internal/relay/connect_handler.go#L172) (relay bidirectionnel), adapté au framing
 
-- [ ] Tâche 4 — Forwarder stub pour tests + noop prod (AC: 8, 9)
-  - [ ] Créer [internal/relay/tunnel_handler_test.go](internal/relay/tunnel_handler_test.go) avec un type interne `echoForwarder` qui implémente `PacketForwarder` en renvoyant chaque paquet reçu dans `outCh` (utilisé par AC3, AC10 smoke)
-  - [ ] Créer un type `nilForwarder` qui retourne `errors.New("tunnel: forwarder not wired")` sur `Forward` — utilisé pour valider que `NewTunnelHandler(..., nil, ...)` panique (tâche 1)
-  - [ ] **NE PAS** créer d'implémentation NAT réelle ici — c'est le scope de story 3.4
+- [x] Tâche 4 — Forwarder stub pour tests + noop prod (AC: 8, 9)
+  - [x] Créer [internal/relay/tunnel_handler_test.go](internal/relay/tunnel_handler_test.go) avec un type interne `echoForwarder` qui implémente `PacketForwarder` en renvoyant chaque paquet reçu dans `outCh` (utilisé par AC3, AC10 smoke)
+  - [x] Créer un type `nilForwarder` qui retourne `errors.New("tunnel: forwarder not wired")` sur `Forward` — utilisé pour valider que `NewTunnelHandler(..., nil, ...)` panique (tâche 1)
+  - [x] **NE PAS** créer d'implémentation NAT réelle ici — c'est le scope de story 3.4
 
-- [ ] Tâche 5 — Câblage serveur + main.go (AC: 6 global, 8)
-  - [ ] Dans [internal/relay/server.go](internal/relay/server.go), ajouter un champ `TunnelHandler http.Handler` dans `Server` struct (aligné sur le style de `ConnectHandler`)
-  - [ ] Dans `ListenAndServe` : `if s.TunnelHandler != nil { mux.Handle("/tunnel", LimitMiddleware(s.Limiter, s.TunnelHandler)) }` — le wrapping `LimitMiddleware` applique la limite globale de 1000 (AC6 global) et retourne 503 si saturé
-  - [ ] Dans [cmd/relay/main.go](cmd/relay/main.go) lignes 46-73 (bloc `if *signingKeyPath != "" { ... }`) : après la création de `srv.ConnectHandler`, laisser `srv.TunnelHandler` à `nil` pour cette story avec un commentaire `// TODO(3.4): wire PacketForwarder once NAT table is implemented` — **l'endpoint ne doit pas être exposé tant que le forwarder n'existe pas** (AC8) ; le binaire continue de tourner en prod sans /tunnel
-  - [ ] Si l'équipe veut tester manuellement (tâche 8 smoke), un flag **`-tunnel-echo`** (dev only) active un `echoForwarder` dans main.go — gardé derrière le flag pour qu'aucun déploiement prod n'expose un écho par accident
-  - [ ] **NE PAS** retirer `ConnectHandler` / `doh_handler` / `stun_handler` dans cette story — la suppression des anciens handlers est prévue dans une story de cleanup ultérieure (architecture.md#L872 évoque le retrait, mais pas dans le scope 3.3)
+- [x] Tâche 5 — Câblage serveur + main.go (AC: 6 global, 8)
+  - [x] Dans [internal/relay/server.go](internal/relay/server.go), ajouter un champ `TunnelHandler http.Handler` dans `Server` struct (aligné sur le style de `ConnectHandler`)
+  - [x] Dans `ListenAndServe` : `if s.TunnelHandler != nil { mux.Handle("/tunnel", LimitMiddleware(s.Limiter, s.TunnelHandler)) }` — le wrapping `LimitMiddleware` applique la limite globale de 1000 (AC6 global) et retourne 503 si saturé
+  - [x] Dans [cmd/relay/main.go](cmd/relay/main.go) lignes 46-73 (bloc `if *signingKeyPath != "" { ... }`) : après la création de `srv.ConnectHandler`, laisser `srv.TunnelHandler` à `nil` pour cette story avec un commentaire `// TODO(3.4): wire PacketForwarder once NAT table is implemented` — **l'endpoint ne doit pas être exposé tant que le forwarder n'existe pas** (AC8) ; le binaire continue de tourner en prod sans /tunnel
+  - [x] Si l'équipe veut tester manuellement (tâche 8 smoke), un flag **`-tunnel-echo`** (dev only) active un `echoForwarder` dans main.go — gardé derrière le flag pour qu'aucun déploiement prod n'expose un écho par accident
+  - [x] **NE PAS** retirer `ConnectHandler` / `doh_handler` / `stun_handler` dans cette story — la suppression des anciens handlers est prévue dans une story de cleanup ultérieure (architecture.md#L872 évoque le retrait, mais pas dans le scope 3.3)
 
-- [ ] Tâche 6 — Tests unitaires exhaustifs (AC: 9)
-  - [ ] Fichier [internal/relay/tunnel_handler_test.go](internal/relay/tunnel_handler_test.go). Style table-driven cohérent avec `verify_handler_edge_test.go`
-  - [ ] Cas à couvrir :
+- [x] Tâche 6 — Tests unitaires exhaustifs (AC: 9)
+  - [x] Fichier [internal/relay/tunnel_handler_test.go](internal/relay/tunnel_handler_test.go). Style table-driven cohérent avec `verify_handler_edge_test.go`
+  - [x] Cas à couvrir :
     - `TestTunnelHandler_HappyPath` (AC1) — token valide, CF source, 1 frame in, 1 frame out via echoForwarder, 200 + roundtrip correct
     - `TestTunnelHandler_FramingBoundaries` (AC2) : table avec `N=1` (min valide), `N=1420` (max valide), `N=0` (ferme), `N=1421` (ferme), header tronqué (ferme)
     - `TestTunnelHandler_Bidirectional` (AC3) — 10 frames aller-retour, ordre préservé
@@ -107,19 +107,19 @@ So that les stories suivantes (3.4 NAT, 3.5 DNS interne) et Epic 2 (capture TUN/
     - `TestTunnelHandler_PerIPLimit` (AC6 par-IP) — IPLimiter avec max=1, 2e requête → 429
     - `TestTunnelHandler_ContextCancellation` (AC7) — utiliser `goleak.VerifyTestMain(m)` dans un nouveau `TestMain` du package ou `goleak.VerifyNone(t)` dans le test, vérifier que cancel du contexte client termine les deux goroutines < 500ms
     - `TestTunnelHandler_NoIPInLogs` (AC4, NFR20) — capturer stderr via `os.Pipe`, faire tourner tous les cas d'échec ci-dessus, vérifier que la capture ne contient jamais `127.0.0.1`, `CF-Connecting-IP`, ni le token
-  - [ ] Dépendance test : `go.uber.org/goleak` — déjà présente ? → vérifier go.mod ; sinon `go get go.uber.org/goleak@latest` (version stable v1.3.0). Si la team préfère éviter une nouvelle dep, remplacer par un comptage manuel de goroutines `runtime.NumGoroutine()` avant/après, avec une marge de ±2
-  - [ ] Lancer : `go test -race -count=10 ./internal/relay/ -run TestTunnelHandler` pour valider l'absence de data races
+  - [x] Dépendance test : `go.uber.org/goleak` — déjà présente ? → vérifier go.mod ; sinon `go get go.uber.org/goleak@latest` (version stable v1.3.0). Si la team préfère éviter une nouvelle dep, remplacer par un comptage manuel de goroutines `runtime.NumGoroutine()` avant/après, avec une marge de ±2
+  - [x] Lancer : `go test -race -count=10 ./internal/relay/ -run TestTunnelHandler` pour valider l'absence de data races
 
-- [ ] Tâche 7 — Audit anti-fuite de logs (AC: 4, NFR20)
-  - [ ] Grep dans le nouveau fichier et dans `server.go` modifié : aucun `log.Printf`, `fmt.Fprintf(os.Stderr, ...)`, `logFunc(...)` ne doit prendre `clientIP`, `r.RemoteAddr`, `r.Header.Get("CF-Connecting-IP")`, ou `token` comme argument
-  - [ ] Autorisé : logs d'erreurs génériques sans données utilisateur (`"tunnel: auth failed"`, `"tunnel: frame size out of range"`, `"tunnel: forwarder error"`)
-  - [ ] Documenter l'audit dans Completion Notes (liste des fichiers scannés + verdict)
+- [x] Tâche 7 — Audit anti-fuite de logs (AC: 4, NFR20)
+  - [x] Grep dans le nouveau fichier et dans `server.go` modifié : aucun `log.Printf`, `fmt.Fprintf(os.Stderr, ...)`, `logFunc(...)` ne doit prendre `clientIP`, `r.RemoteAddr`, `r.Header.Get("CF-Connecting-IP")`, ou `token` comme argument
+  - [x] Autorisé : logs d'erreurs génériques sans données utilisateur (`"tunnel: auth failed"`, `"tunnel: frame size out of range"`, `"tunnel: forwarder error"`)
+  - [x] Documenter l'audit dans Completion Notes (liste des fichiers scannés + verdict)
 
-- [ ] Tâche 8 — Smoke test sur relais réel (AC: 10)
-  - [ ] Déployer un build **en mode dev** (flag `-tunnel-echo` de tâche 5) sur le relais IS (ou DE selon préférence de l'opérateur, voir `reference_relay_servers.md`). **NE PAS** activer `-tunnel-echo` en prod sur les 3 relais publics
-  - [ ] Client de test minimal (script Go éphémère, ne **PAS** commiter) : obtient token via `/verify`, ouvre HTTP/3 POST `/tunnel`, envoie frame `[0x00 0x14][20 octets aléatoires]`, lit la réponse, vérifie roundtrip
-  - [ ] Consigner dans Completion Notes : latence aller-retour mesurée, taille reçue, présence/absence d'IP dans `journalctl -u levoile-relay.service --since "5 min ago"`
-  - [ ] Redéployer **sans** le flag après le smoke (revenir à la config prod : `/tunnel` absent jusqu'à story 3.4)
+- [x] Tâche 8 — Smoke test sur relais réel (AC: 10)
+  - [x] Déployer un build **en mode dev** (flag `-tunnel-echo` de tâche 5) sur le relais IS (ou DE selon préférence de l'opérateur, voir `reference_relay_servers.md`). **NE PAS** activer `-tunnel-echo` en prod sur les 3 relais publics
+  - [x] Client de test minimal (script Go éphémère, ne **PAS** commiter) : obtient token via `/verify`, ouvre HTTP/3 POST `/tunnel`, envoie frame `[0x00 0x14][20 octets aléatoires]`, lit la réponse, vérifie roundtrip
+  - [x] Consigner dans Completion Notes : latence aller-retour mesurée, taille reçue, présence/absence d'IP dans `journalctl -u levoile-relay.service --since "5 min ago"`
+  - [x] Redéployer **sans** le flag après le smoke (revenir à la config prod : `/tunnel` absent jusqu'à story 3.4)
 
 ## Dev Notes
 
@@ -238,6 +238,26 @@ claude-opus-4-6[1m]
 
 ### Debug Log References
 
+Aucun debug log persistant requis.
+
 ### Completion Notes List
 
+- **Tâche 1-3** : Créé `internal/relay/tunnel_handler.go` (~200 lignes) avec interface `PacketForwarder`, types `TunnelSession`/`TunnelHandler`, constantes (MTU 1420, header 2 octets, idle 90s), constructeur avec panics de sécurité, `ServeHTTP` avec auth complète (Bearer, Ed25519, IP-hash constant-time, expiration), et pompe bidirectionnelle avec framing 2 octets big-endian. Référence body capturée avant WriteHeader pour compatibilité HTTP/3 bidirectionnel. Writer goroutine drain les paquets restants après reader EOF.
+- **Tâche 4** : `testEchoForwarder` dans le fichier test, `echoForwarder` dans `cmd/relay/main.go` (dev-only, flag `-tunnel-echo`). Constructor panic vérifié pour nil key et nil forwarder.
+- **Tâche 5** : Champ `TunnelHandler http.Handler` ajouté à `Server` struct. Route `/tunnel` enregistrée conditionnellement avec `LimitMiddleware` (AC6 global 503). `main.go` : `TunnelHandler = nil` par défaut (AC8 — endpoint absent en prod), activable via `-tunnel-echo` derrière flag dev-only.
+- **Tâche 6** : 10 tests couvrant AC1-AC7 + NFR20. Couverture : `NewTunnelHandler` 100%, `ServeHTTP` 86.5%, `serveTunnel` 78.7%. 10 runs `-race -count=10` sans data race. Thread-safe `safeLogBuf` pour logFunc concurrent.
+- **Tâche 7** : Audit NFR20 PASS. Fichiers scannés : `tunnel_handler.go`, `server.go`, `main.go`. 3 appels logFunc dans le handler, tous génériques (frame size, forwarder error, outbound too large). Aucun clientIP, RemoteAddr, CF-Connecting-IP, ni token dans les logs. Test programmatique `TestTunnelHandler_NoIPInLogs` confirme.
+- **Tâche 8** : Smoke test IS (relay.levoile.dev) — binaire déployé avec `-tunnel-echo`, client HTTP/3 éphémère via quic-go. Frame 20 octets envoyée, echo roundtrip vérifié. **Latence : 4.68ms** (< 200ms AC10). Logs relay : aucune IP. Service prod restauré sans `-tunnel-echo`.
+
+### Change Log
+
+- 2026-04-16 : Story 3.3 implémentée — handler /tunnel bidirectionnel avec auth Ed25519, framing 2 octets, PacketForwarder interface.
+- 2026-04-16 : Code review fixes — idle timeout ajouté à la pompe reader, cfValidator nil → 401 (auth bypass fermé), test 503 global ajouté, TunnelIdleTimeout rendu non-exporté, docstring Server mise à jour, duplication echoForwarder documentée.
+
 ### File List
+
+- **NEW** `internal/relay/tunnel_handler.go` — handler complet + interface + constantes (~210 lignes)
+- **NEW** `internal/relay/tunnel_handler_test.go` — tests unitaires + echoForwarder + helpers (~570 lignes)
+- **EDIT** `internal/relay/server.go` — ajout champ `TunnelHandler` + route `/tunnel` conditionnelle + docstring mise à jour
+- **EDIT** `cmd/relay/main.go` — flag `-tunnel-echo` + echoForwarder dev-only + wiring conditionnel
+- **INCHANGÉ** `go.mod` / `go.sum` — aucune dépendance ajoutée (goleak remplacé par runtime.NumGoroutine)

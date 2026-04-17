@@ -18,14 +18,14 @@ func TestBandwidthLimiter_AddBytesUnderQuota(t *testing.T) {
 	}{
 		{"first_add", 100, false},
 		{"second_add", 200, false},
-		{"just_at_quota", 700, false},
+		{"just_at_quota", 700, true}, // 100+200+700=1000 >= quota(1000)
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := bl.addBytes("10.0.0.1", tt.bytes)
+			got, _ := bl.addBytes("10.0.0.1", tt.bytes)
 			if got != tt.want {
-				t.Errorf("addBytes(%d) = %v, want %v", tt.bytes, got, tt.want)
+				t.Errorf("addBytes(%d) daily = %v, want %v", tt.bytes, got, tt.want)
 			}
 		})
 	}
@@ -39,13 +39,13 @@ func TestBandwidthLimiter_AddBytesExceedsQuota(t *testing.T) {
 	bl.addBytes(ip, 1000)
 
 	// Next byte should exceed.
-	if !bl.addBytes(ip, 1) {
-		t.Errorf("addBytes should return true when quota exceeded")
+	if daily, _ := bl.addBytes(ip, 1); !daily {
+		t.Errorf("addBytes should return dailyExceeded=true when quota exceeded")
 	}
 
 	// Subsequent calls should also exceed.
-	if !bl.addBytes(ip, 500) {
-		t.Errorf("addBytes should still return true after quota exceeded")
+	if daily, _ := bl.addBytes(ip, 500); !daily {
+		t.Errorf("addBytes should still return dailyExceeded=true after quota exceeded")
 	}
 }
 
@@ -55,7 +55,7 @@ func TestBandwidthLimiter_LazyReset(t *testing.T) {
 
 	// Add bytes to exceed quota.
 	bl.addBytes(ip, 1001)
-	if !bl.addBytes(ip, 1) {
+	if daily, _ := bl.addBytes(ip, 1); !daily {
 		t.Fatalf("should be over quota")
 	}
 
@@ -69,8 +69,8 @@ func TestBandwidthLimiter_LazyReset(t *testing.T) {
 	st.dayTimestamp.Store(yesterday)
 
 	// Next addBytes should trigger lazy reset.
-	exceeded := bl.addBytes(ip, 100)
-	if exceeded {
+	dailyExceeded, _ := bl.addBytes(ip, 100)
+	if dailyExceeded {
 		t.Errorf("after day reset, 100 bytes should not exceed quota of 1000")
 	}
 
@@ -249,6 +249,164 @@ func TestBandwidthLimiter_AccountAndThrottle_RespectsContext(t *testing.T) {
 
 	if elapsed > 100*time.Millisecond {
 		t.Errorf("AccountAndThrottle took %v with cancelled context, expected near-instant", elapsed)
+	}
+}
+
+// --- CanOpenTunnel tests (AC2) ---
+
+func TestBandwidthLimiter_CanOpenTunnel_UnderQuota(t *testing.T) {
+	bl := NewBandwidthLimiter(1000)
+	ip := "10.0.0.30"
+	bl.addBytes(ip, 500)
+
+	if !bl.CanOpenTunnel(ip) {
+		t.Errorf("CanOpenTunnel should be true (500 < 1000)")
+	}
+}
+
+func TestBandwidthLimiter_CanOpenTunnel_OverQuota(t *testing.T) {
+	bl := NewBandwidthLimiter(1000)
+	ip := "10.0.0.31"
+	bl.addBytes(ip, 1100)
+
+	if bl.CanOpenTunnel(ip) {
+		t.Errorf("CanOpenTunnel should be false (1100 >= 1000)")
+	}
+}
+
+func TestBandwidthLimiter_CanOpenTunnel_UnknownIP(t *testing.T) {
+	bl := NewBandwidthLimiter(1000)
+	if !bl.CanOpenTunnel("10.0.0.99") {
+		t.Errorf("CanOpenTunnel should be true for unknown IP")
+	}
+}
+
+func TestBandwidthLimiter_CanOpenTunnel_AfterDayReset(t *testing.T) {
+	bl := NewBandwidthLimiter(1000)
+	ip := "10.0.0.32"
+	bl.addBytes(ip, 1100) // exceed
+
+	if bl.CanOpenTunnel(ip) {
+		t.Fatalf("should be over quota before reset")
+	}
+
+	// Backdate to yesterday — lazy reset should clear counter.
+	val, _ := bl.ips.Load(ip)
+	st := val.(*bandwidthState)
+	yesterday := time.Now().UTC().Truncate(24*time.Hour).Add(-24*time.Hour).Unix()
+	st.dayTimestamp.Store(yesterday)
+
+	if !bl.CanOpenTunnel(ip) {
+		t.Errorf("CanOpenTunnel should be true after day reset")
+	}
+}
+
+// --- Hourly quota tests (AC3, AC5, AC6) ---
+
+func TestBandwidthLimiter_HourlyExceeded(t *testing.T) {
+	bl := NewBandwidthLimiter(DailyQuotaBytes) // large daily quota
+	ip := "10.0.0.40"
+
+	// Add just over 1 GiB.
+	_, hourly := bl.addBytes(ip, int(HourlyQuotaBytes)+1)
+	if !hourly {
+		t.Errorf("hourlyExceeded should be true (> HourlyQuotaBytes)")
+	}
+}
+
+func TestBandwidthLimiter_HourlyNotExceeded(t *testing.T) {
+	bl := NewBandwidthLimiter(DailyQuotaBytes)
+	ip := "10.0.0.41"
+
+	_, hourly := bl.addBytes(ip, int(HourlyQuotaBytes)-1)
+	if hourly {
+		t.Errorf("hourlyExceeded should be false (< HourlyQuotaBytes)")
+	}
+}
+
+func TestBandwidthLimiter_HourlyLazyReset(t *testing.T) {
+	bl := NewBandwidthLimiter(DailyQuotaBytes)
+	ip := "10.0.0.42"
+
+	// Exceed hourly.
+	bl.addBytes(ip, int(HourlyQuotaBytes)+100)
+
+	val, _ := bl.ips.Load(ip)
+	st := val.(*bandwidthState)
+
+	// Backdate hourTimestamp to previous hour.
+	lastHour := time.Now().UTC().Truncate(time.Hour).Add(-time.Hour).Unix()
+	st.hourTimestamp.Store(lastHour)
+
+	// Next addBytes should trigger lazy reset.
+	_, hourly := bl.addBytes(ip, 50)
+	if hourly {
+		t.Errorf("hourlyExceeded should be false after hour reset (50 bytes)")
+	}
+	if st.hourlyBytesUsed.Load() != 50 {
+		t.Errorf("hourlyBytesUsed = %d, want 50 after reset", st.hourlyBytesUsed.Load())
+	}
+}
+
+func TestBandwidthLimiter_HourlyThrottleSleep(t *testing.T) {
+	bl := NewBandwidthLimiter(DailyQuotaBytes)
+	ip := "10.0.0.43"
+	ctx := context.Background()
+
+	// Exceed hourly quota (but under daily).
+	bl.addBytes(ip, int(HourlyQuotaBytes)+1)
+
+	// AccountAndThrottle with 6250 bytes should sleep ~10ms.
+	start := time.Now()
+	bl.AccountAndThrottle(ctx, ip, 6250)
+	elapsed := time.Since(start)
+
+	if elapsed < 5*time.Millisecond {
+		t.Errorf("AccountAndThrottle took %v, expected at least ~10ms throttle delay", elapsed)
+	}
+}
+
+func TestBandwidthLimiter_ConcurrentHourly(t *testing.T) {
+	const goroutines = 50
+	const bytesPerCall = 100
+	const iterations = 200
+
+	bl := NewBandwidthLimiter(DailyQuotaBytes)
+	ip := "10.0.0.44"
+
+	var wg sync.WaitGroup
+	wg.Add(goroutines)
+
+	var totalAdded atomic.Int64
+
+	for g := 0; g < goroutines; g++ {
+		go func() {
+			defer wg.Done()
+			for i := 0; i < iterations; i++ {
+				bl.addBytes(ip, bytesPerCall)
+				totalAdded.Add(int64(bytesPerCall))
+			}
+		}()
+	}
+
+	wg.Wait()
+
+	val, ok := bl.ips.Load(ip)
+	if !ok {
+		t.Fatalf("expected ip entry to exist")
+	}
+	st := val.(*bandwidthState)
+
+	// Check both daily and hourly counters.
+	gotDaily := st.bytesUsed.Load()
+	gotHourly := st.hourlyBytesUsed.Load()
+	expected := totalAdded.Load()
+
+	if gotDaily != expected {
+		t.Errorf("bytesUsed = %d, want %d", gotDaily, expected)
+	}
+	if gotHourly != expected {
+		t.Errorf("hourlyBytesUsed = %d, want %d", gotHourly, expected)
 	}
 }
 

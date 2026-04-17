@@ -115,10 +115,18 @@ func (h *ConnectHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Per-IP rate limiting.
 	if h.ipLimiter != nil && clientIP != "" {
 		if !h.ipLimiter.Acquire(clientIP) {
+			RejectedIPLimitTotal.Add(1)
 			http.Error(w, "Too Many Requests", http.StatusTooManyRequests)
 			return
 		}
 		defer h.ipLimiter.Release(clientIP)
+	}
+
+	// Per-IP daily bandwidth quota check — reject before dialing upstream.
+	if h.bwLimiter != nil && clientIP != "" && !h.bwLimiter.CanOpenTunnel(clientIP) {
+		RejectedDailyQuotaTotal.Add(1)
+		http.Error(w, "Too Many Requests", http.StatusTooManyRequests)
+		return
 	}
 
 	// Read target from JSON body using a streaming decoder.

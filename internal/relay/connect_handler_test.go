@@ -215,6 +215,66 @@ func TestConnectHandler_RateLimitExceeded(t *testing.T) {
 	}
 }
 
+func TestConnectHandler_429_On_IPLimitReached(t *testing.T) {
+	// AC1: IP at 200 tunnels → 201st gets HTTP 429.
+	pub, priv := testKeys(t)
+	limiter := NewIPLimiter(IPLimiterMaxPerIP) // 200
+	h := newHandler(t, pub, limiter)
+
+	clientIP := "203.0.113.51"
+	token := testToken(t, priv, clientIP)
+
+	// Exhaust all 200 slots.
+	for i := int64(0); i < IPLimiterMaxPerIP; i++ {
+		if !limiter.Acquire(clientIP) {
+			t.Fatalf("failed to acquire slot %d", i+1)
+		}
+	}
+	defer func() {
+		for i := int64(0); i < IPLimiterMaxPerIP; i++ {
+			limiter.Release(clientIP)
+		}
+	}()
+
+	req := newConnectRequest(t, token, "example.com:443")
+	req.RemoteAddr = clientIP + ":12345"
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusTooManyRequests {
+		t.Errorf("status = %d, want 429 (IP limit at %d)", rec.Code, IPLimiterMaxPerIP)
+	}
+	if body := rec.Body.String(); body != "Too Many Requests\n" {
+		t.Errorf("body = %q, want %q", body, "Too Many Requests\n")
+	}
+}
+
+func TestConnectHandler_429_On_DailyQuotaExceeded(t *testing.T) {
+	// AC2: IP over daily quota → new /connect gets HTTP 429 before dialing.
+	pub, priv := testKeys(t)
+	bwLimiter := NewBandwidthLimiter(1000) // small quota for testing
+	cfv := NewCloudflareIPValidator(true, nil)
+	h := NewConnectHandler(pub, cfv, nil, bwLimiter, func(string, ...any) {})
+
+	clientIP := "203.0.113.52"
+	token := testToken(t, priv, clientIP)
+
+	// Exceed the daily quota.
+	bwLimiter.addBytes(clientIP, 1100)
+
+	req := newConnectRequest(t, token, "example.com:443")
+	req.RemoteAddr = clientIP + ":12345"
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusTooManyRequests {
+		t.Errorf("status = %d, want 429 (daily quota exceeded)", rec.Code)
+	}
+	if body := rec.Body.String(); body != "Too Many Requests\n" {
+		t.Errorf("body = %q, want %q", body, "Too Many Requests\n")
+	}
+}
+
 func TestConnectHandler_ValidRequestPassesAuth(t *testing.T) {
 	// This test verifies the full auth pipeline succeeds and the handler
 	// proceeds to the SSRF / dial stage. We target a loopback address which

@@ -4,6 +4,13 @@ domain = "your-relay-domain.example.com"
 public_key_ed25519 = "YOUR_ED25519_PUBLIC_KEY_BASE64"
 # insecure = true  # Uncomment for development only — NEVER in production
 
+# DNS resolver côté relais (story 3.5) — résolution interne avec blocklist.
+# Ces paramètres ne sont utilisés que par cmd/relay, pas par le client.
+[relay.dns]
+upstreams = ["https://1.1.1.1/dns-query", "https://9.9.9.9/dns-query"]
+blocklist_url = "https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts"
+blocklist_refresh_hours = 24
+
 [client]
 auto_start = true
 

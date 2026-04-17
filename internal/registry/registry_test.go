@@ -23,7 +23,7 @@ func testRegistry(t *testing.T, relayCount int) (masterPub ed25519.PublicKey, ma
 			t.Fatal(err)
 		}
 		relayPubB64 := base64.StdEncoding.EncodeToString(relayPub)
-		msg := append([]byte(signaturePrefix), relayPub...)
+		msg := append([]byte(SignaturePrefix), relayPub...)
 		sig := ed25519.Sign(masterPriv, msg)
 		sigB64 := base64.StdEncoding.EncodeToString(sig)
 

@@ -6,10 +6,13 @@ import (
 	"encoding/base64"
 	"flag"
 	"fmt"
+	"net"
 	"os"
 	"os/signal"
 	"strings"
+	"sync"
 	"syscall"
+	"time"
 
 	"github.com/velia-the-veil/le_voile/internal/relay"
 )
@@ -26,10 +29,15 @@ func main() {
 	signingKeyPath := flag.String("signing-key", "", "path to Ed25519 private key file (base64); enables /verify endpoint")
 	registryFile := flag.String("registry-file", "", "path to relay-registry.json (served at /.well-known/relay-registry.json)")
 	cfInsecure := flag.Bool("cf-insecure", false, "trust direct source IP instead of CF-Connecting-IP (dev mode only)")
+	publicIP := flag.String("public-ip", "", "relay public IP for NAT source rewriting (auto-detected from eth0 if empty)")
+	tunnelEcho := flag.Bool("tunnel-echo", false, "enable /tunnel with echo forwarder (dev/test only — never use in production)")
+	dnsBlocklistURL := flag.String("dns-blocklist-url", "https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts", "URL for DNS blocklist (StevenBlack format)")
 	flag.Parse()
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+
+	var natShutdown func(context.Context) error
 
 	upstreams := []string{*upstream}
 	if *fallback != "" && *fallback != *upstream {
@@ -63,10 +71,11 @@ func main() {
 		srv.SigningKey = key
 
 		// Enable per-IP connection limiter and bandwidth limiter.
+		// Cleanup goroutines are started by srv.ListenAndServe.
 		ipLimiter := relay.NewIPLimiter(relay.IPLimiterMaxPerIP)
 		bwLimiter := relay.NewBandwidthLimiter(relay.DailyQuotaBytes)
-		go ipLimiter.StartCleanup(ctx)
-		go bwLimiter.StartCleanup(ctx)
+		srv.IPLimiter = ipLimiter
+		srv.BWLimiter = bwLimiter
 
 		// Enable HTTP CONNECT proxy handler.
 		srv.ConnectHandler = relay.NewConnectHandler(
@@ -75,12 +84,126 @@ func main() {
 				fmt.Fprintf(os.Stderr, "relay: connect: "+format+"\n", args...)
 			},
 		)
+
+		// DNS blocklist + resolver for /tunnel DNS interception (story 3.5).
+		blocklist := relay.NewBlocklist(*dnsBlocklistURL, nil, 0)
+		go blocklist.Start(ctx)
+		dnsResolver := relay.NewDNSResolver(upstreams, blocklist, nil)
+
+		// NAT table for /tunnel packet forwarding (story 3.4).
+		relayIP := resolveRelayPublicIP(*publicIP)
+		natTable := relay.NewNAT(relayIP, relay.WithContext(ctx), relay.WithDNSResolver(dnsResolver))
+		natShutdown = natTable.Shutdown
+		srv.NATStatsFunc = natTable.Stats
+
+		if *tunnelEcho {
+			// Dev/test: echo forwarder ignores NAT.
+			th := relay.NewTunnelHandler(
+				key.Public().(ed25519.PublicKey), cfv, ipLimiter,
+				&echoForwarder{},
+				func(format string, args ...any) {
+					fmt.Fprintf(os.Stderr, "relay: tunnel: "+format+"\n", args...)
+				},
+			)
+			th.SetBWLimiter(bwLimiter)
+			srv.TunnelHandler = th
+			fmt.Fprintf(os.Stderr, "relay: WARNING: /tunnel enabled with echo forwarder (dev mode)\n")
+		} else {
+			th := relay.NewTunnelHandler(
+				key.Public().(ed25519.PublicKey), cfv, ipLimiter,
+				natTable,
+				func(format string, args ...any) {
+					fmt.Fprintf(os.Stderr, "relay: tunnel: "+format+"\n", args...)
+				},
+			)
+			th.SetBWLimiter(bwLimiter)
+			srv.TunnelHandler = th
+		}
 	}
 
 	if err := srv.ListenAndServe(ctx); err != nil {
 		fmt.Fprintf(os.Stderr, "relay: %v\n", err)
-		os.Exit(1)
 	}
+	if natShutdown != nil {
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer shutdownCancel()
+		natShutdown(shutdownCtx)
+	}
+}
+
+// echoForwarder is a dev-only PacketForwarder that echoes packets back.
+// Used exclusively with -tunnel-echo for smoke testing.
+// NOTE: intentional duplication with testEchoForwarder in tunnel_handler_test.go —
+// test types can't be imported from main, and extracting to a shared package
+// for a dev-only stub adds unnecessary complexity.
+type echoForwarder struct {
+	mu       sync.Mutex
+	sessions map[string]chan<- []byte
+}
+
+func (e *echoForwarder) OpenSession(_ context.Context, session relay.TunnelSession) (<-chan []byte, func()) {
+	ch := make(chan []byte, 64)
+	e.mu.Lock()
+	if e.sessions == nil {
+		e.sessions = make(map[string]chan<- []byte)
+	}
+	e.sessions[session.ClientIPHash] = ch
+	e.mu.Unlock()
+	return ch, func() {
+		e.mu.Lock()
+		delete(e.sessions, session.ClientIPHash)
+		e.mu.Unlock()
+	}
+}
+
+func (e *echoForwarder) Forward(_ context.Context, session relay.TunnelSession, pkt []byte) error {
+	e.mu.Lock()
+	ch, ok := e.sessions[session.ClientIPHash]
+	e.mu.Unlock()
+	if !ok {
+		return nil
+	}
+	cp := make([]byte, len(pkt))
+	copy(cp, pkt)
+	select {
+	case ch <- cp:
+	default:
+	}
+	return nil
+}
+
+// resolveRelayPublicIP returns the relay's public IP from the flag or auto-detection.
+func resolveRelayPublicIP(flagValue string) net.IP {
+	if flagValue != "" {
+		ip := net.ParseIP(flagValue)
+		if ip != nil {
+			return ip
+		}
+		fmt.Fprintf(os.Stderr, "relay: invalid -public-ip %q, falling back to auto-detect\n", flagValue)
+	}
+	// Try common interface names.
+	for _, name := range []string{"eth0", "ens3", "ens5", "enp0s3"} {
+		iface, err := net.InterfaceByName(name)
+		if err != nil {
+			continue
+		}
+		addrs, err := iface.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, a := range addrs {
+			ipNet, ok := a.(*net.IPNet)
+			if !ok {
+				continue
+			}
+			if ip4 := ipNet.IP.To4(); ip4 != nil && !ip4.IsLoopback() {
+				fmt.Fprintf(os.Stderr, "relay: auto-detected public IP %s from %s\n", ip4, name)
+				return ip4
+			}
+		}
+	}
+	fmt.Fprintf(os.Stderr, "relay: WARNING: could not detect public IP, using 0.0.0.0\n")
+	return net.IPv4zero
 }
 
 func loadSigningKey(path string) (ed25519.PrivateKey, error) {

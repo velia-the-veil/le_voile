@@ -110,6 +110,28 @@ func TestIPLimiter_DoubleReleaseNonNegative(t *testing.T) {
 	}
 }
 
+func TestIPLimiter_201stRejected(t *testing.T) {
+	l := NewIPLimiter(IPLimiterMaxPerIP) // 200
+	ip := "10.0.0.201"
+
+	for i := int64(1); i <= IPLimiterMaxPerIP; i++ {
+		if !l.Acquire(ip) {
+			t.Fatalf("Acquire #%d should succeed (limit=%d)", i, IPLimiterMaxPerIP)
+		}
+	}
+
+	// 201st must fail.
+	if l.Acquire(ip) {
+		t.Errorf("Acquire #%d should fail (limit=%d)", IPLimiterMaxPerIP+1, IPLimiterMaxPerIP)
+	}
+
+	// Release one slot → next Acquire succeeds.
+	l.Release(ip)
+	if !l.Acquire(ip) {
+		t.Errorf("Acquire should succeed after releasing one slot")
+	}
+}
+
 func TestIPLimiter_CleanupTwoPhase(t *testing.T) {
 	l := NewIPLimiter(IPLimiterMaxPerIP)
 	ip := "10.0.0.8"

@@ -17,8 +17,8 @@ import (
 // /.well-known/relay-registry.json) are protected by CFSourceMiddleware
 // when CFIPValidator is set in strict (non-insecure) mode: requests from
 // IPs outside Cloudflare's published ranges receive HTTP 403.
-// /connect is the documented exception — it carries its own per-IP
-// validation via the bearer-token / IPLimiter path.
+// /connect and /tunnel are documented exceptions — they carry their own
+// bearer-token + per-IP validation via IPLimiter.
 type Server struct {
 	Addr           string
 	CertFile       string
@@ -26,13 +26,17 @@ type Server struct {
 	Handler        http.Handler
 	STUNHandler    http.Handler
 	ConnectHandler http.Handler
+	TunnelHandler  http.Handler
 	SigningKey     ed25519.PrivateKey
 	Limiter        *Limiter
+	TunnelLimiter  *Limiter
 	IPLimiter      *IPLimiter
 	CFIPValidator  *CloudflareIPValidator
+	BWLimiter      *BandwidthLimiter
 	StartTime      time.Time
-	RegistryFile   string       // path to relay-registry.json (served at /.well-known/relay-registry.json)
-	CFRejectLog    func(string) // invoked with "cf-reject" on each refused request; never receives IPs (NFR20)
+	NATStatsFunc   NATStatsProvider // optional: provides NAT stats for /health
+	RegistryFile   string           // path to relay-registry.json (served at /.well-known/relay-registry.json)
+	CFRejectLog    func(string)     // invoked with "cf-reject" on each refused request; never receives IPs (NFR20)
 	h3             *http3.Server
 }
 
@@ -42,8 +46,9 @@ func NewServer(addr, certFile, keyFile string) *Server {
 		Addr:      addr,
 		CertFile:  certFile,
 		KeyFile:   keyFile,
-		Limiter:   NewLimiter(MaxConnections),
-		StartTime: time.Now(),
+		Limiter:       NewLimiter(MaxConnections),
+		TunnelLimiter: NewLimiter(MaxTunnels),
+		StartTime:     time.Now(),
 	}
 }
 
@@ -71,7 +76,11 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 	if s.Handler != nil {
 		mux.Handle("/dns-query", cfWrap(LimitMiddleware(s.Limiter, s.Handler)))
 	}
-	mux.Handle("/health", cfWrap(LimitMiddleware(s.Limiter, NewHealthHandler(s.Limiter, s.StartTime))))
+	healthHandler := NewHealthHandler(s.Limiter, s.TunnelLimiter, s.StartTime)
+	if s.NATStatsFunc != nil {
+		healthHandler.SetNATStatsProvider(s.NATStatsFunc)
+	}
+	mux.Handle("/health", cfWrap(LimitMiddleware(s.Limiter, healthHandler)))
 
 	// Create verify handler and wire CF validator for session token issuance.
 	if s.SigningKey != nil {
@@ -87,10 +96,17 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 	if s.ConnectHandler != nil {
 		// /connect uses its own per-IP limiter (IPLimiter), not the global
 		// connection limiter. CONNECT tunnels are long-lived streams that
-		// would exhaust the global short-request limiter (150 slots).
+		// would exhaust the global short-request limiter.
 		// Documented exception to CF source filtering — handler enforces
 		// its own bearer-token + per-IP validation.
 		mux.Handle("/connect", s.ConnectHandler)
+	}
+	if s.TunnelHandler != nil {
+		// /tunnel uses the dedicated TunnelLimiter (HTTP 503 when saturated)
+		// — separate from the global request Limiter.
+		// CF source filtering is not applied — handler enforces bearer-token
+		// + IP-hash auth directly.
+		mux.Handle("/tunnel", LimitMiddleware(s.TunnelLimiter, s.TunnelHandler))
 	}
 
 	// /ip returns the client's visible IP — used by desktop to display exit IP.
@@ -115,9 +131,12 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 		},
 	}
 
-	// Start background goroutines for IP limiter cleanup and CF IP refresh.
+	// Start background goroutines for IP limiter cleanup, bandwidth limiter cleanup, and CF IP refresh.
 	if s.IPLimiter != nil {
 		go s.IPLimiter.StartCleanup(ctx)
+	}
+	if s.BWLimiter != nil {
+		go s.BWLimiter.StartCleanup(ctx)
 	}
 	if s.CFIPValidator != nil {
 		go s.CFIPValidator.StartRefresh(ctx)

@@ -257,7 +257,7 @@ le_voile/
   - Windows : WFP + winipcfg (routes + firewall filters)
 - Packaging Linux : GoReleaser + nfpm pour .deb/.rpm/.apk. PKGBUILD Arch séparé. Dépendances déclarées : `libwebkit2gtk-6.0-0 | libwebkit2gtk-4.1-0`, `libayatana-appindicator3-1`, `nftables`, `iproute2`. Post-install : `AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW (dans le systemd unit)`, `systemctl enable --now levoile.service`
 - Déploiement relais VPS : scp + systemd (inchangé, mais handler `/tunnel` ajouté au binaire relais)
-- Monitoring : /health endpoint anonyme sur chaque relais (status, tunnels, uptime, RAM, CPU, country, relay_id) — `connections` renommé `tunnels`
+- Monitoring : /health endpoint anonyme sur chaque relais — deux compteurs de concurrence : `connections` (requêtes courtes /verify, /ip, /dns-query) et `tunnels` (streams /tunnel long-lived, plafond MaxTunnels=150). Champs additionnels : nat_entries, uptime, ram_mb, cpu_pct, country, relay_id, compteurs rate-limit agrégés
 - Auto-update : Vérification périodique GitHub releases (6h), signature Ed25519 checksums, rollback, rate limiting downloads. Linux : remplacement atomique binaire + `systemctl restart levoile.service`. Windows : inchangé
 - Installeur NSIS Windows : Installation service SCM, UI autostart registre HKCU, shortcuts, Wintun DLL dans `Program Files/LeVoile/wintun.dll`, désinstallation propre (clear WFP filters, remove routes, delete TUN adapter)
 - Installeur Linux : paquets natifs via `apt install levoile` / `dnf install levoile` / `yay -S levoile` / `apk add levoile`. Le paquet installe le service systemd + l'UI + setcap. L'UI est lancée au login via autostart XDG (`~/.config/autostart/levoile.desktop`)
@@ -379,7 +379,7 @@ Deux processus communiquant via IPC :
   - Renovate bot pour mises à jour dépendances automatiques avec scan vulnérabilités
   - `ldflags="-s -w"` appliqué à tous les binaires release (NFR9h)
   - **Supprimé** : pre-build hook CRX (plus d'extension)
-- **Monitoring** : Endpoint `/health` sur chaque relais — métriques anonymes : `{"status":"ok","tunnels":42,"nat_entries":1840,"uptime":"3d12h","ram_mb":220,"cpu_pct":3.4,"country":"de","relay_id":"de-01"}`. Aucun log de requêtes, aucune IP client. `tunnels` remplace `connections`, ajout `nat_entries`
+- **Monitoring** : Endpoint `/health` sur chaque relais — métriques anonymes : `{"status":"ok","connections":12,"tunnels":42,"nat_entries":1840,"uptime":"3d12h","ram_mb":220,"cpu_pct":3.4,"country":"de","relay_id":"de-01","rejected_ip_limit_total":0,"rejected_daily_quota_total":0,"throttled_hourly_quota_total":0}`. Aucun log de requêtes, aucune IP client. `tunnels` remplace `connections`, ajout `nat_entries`
 
 ### Decision Impact Analysis
 
@@ -570,7 +570,7 @@ http_port = 50114
 
 **Health Endpoint JSON :**
 ```json
-{"status":"ok","tunnels":42,"nat_entries":1840,"uptime":"3d12h","ram_mb":220,"cpu_pct":3.4,"country":"de","relay_id":"de-01"}
+{"status":"ok","connections":12,"tunnels":42,"nat_entries":1840,"uptime":"3d12h","ram_mb":220,"cpu_pct":3.4,"country":"de","relay_id":"de-01","rejected_ip_limit_total":0,"rejected_daily_quota_total":0,"throttled_hourly_quota_total":0}
 ```
 
 ### Error Handling Patterns

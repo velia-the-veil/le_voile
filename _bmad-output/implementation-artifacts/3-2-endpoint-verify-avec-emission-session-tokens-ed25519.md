@@ -1,6 +1,6 @@
 # Story 3.2: Endpoint /verify avec émission session tokens Ed25519
 
-Status: ready-for-dev
+Status: done
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -22,32 +22,32 @@ So that les clients puissent authentifier ensuite leurs requêtes `/tunnel` (Sto
 
 ## Tasks / Subtasks
 
-- [ ] Tâche 1 — Renforcer le handler /verify pour émettre 403 en mode strict (AC: 2, 3, 7)
-  - [ ] Dans [internal/relay/verify_handler.go](internal/relay/verify_handler.go), faire que `ServeHTTP` retourne HTTP 403 quand `h.cfValidator != nil` ET `ExtractClientIP(r)` retourne une erreur (actuellement, la réponse 200 est émise sans token — cf. lignes 96-104)
-  - [ ] Condition explicite : si le validateur existe ET qu'il n'est pas `insecure` ET que `ExtractClientIP` échoue → `http.Error(w, "Forbidden", http.StatusForbidden)` + `return` avant d'écrire quoi que ce soit d'autre
-  - [ ] Si le validateur existe ET qu'il est en mode `insecure` → conserver le fallback actuel (émettre le token basé sur RemoteAddr) pour AC7
-  - [ ] Si le validateur est `nil` → conserver le comportement actuel (200 + signature seule, pas de token) — c'est le cas des tests unitaires historiques
-  - [ ] Exposer un accesseur lecture seule sur `CloudflareIPValidator` pour savoir s'il est insecure (par ex. méthode `(v *CloudflareIPValidator) Insecure() bool`) afin d'éviter de dupliquer la logique
+- [x] Tâche 1 — Renforcer le handler /verify pour émettre 403 en mode strict (AC: 2, 3, 7)
+  - [x] Dans [internal/relay/verify_handler.go](internal/relay/verify_handler.go), faire que `ServeHTTP` retourne HTTP 403 quand `h.cfValidator != nil` ET `ExtractClientIP(r)` retourne une erreur (actuellement, la réponse 200 est émise sans token — cf. lignes 96-104)
+  - [x] Condition explicite : si le validateur existe ET qu'il n'est pas `insecure` ET que `ExtractClientIP` échoue → `http.Error(w, "Forbidden", http.StatusForbidden)` + `return` avant d'écrire quoi que ce soit d'autre
+  - [x] Si le validateur existe ET qu'il est en mode `insecure` → conserver le fallback actuel (émettre le token basé sur RemoteAddr) pour AC7
+  - [x] Si le validateur est `nil` → conserver le comportement actuel (200 + signature seule, pas de token) — c'est le cas des tests unitaires historiques
+  - [x] Exposer un accesseur lecture seule sur `CloudflareIPValidator` pour savoir s'il est insecure (par ex. méthode `(v *CloudflareIPValidator) Insecure() bool`) afin d'éviter de dupliquer la logique
 
-- [ ] Tâche 2 — Ajouter tests unitaires 403 (AC: 2, 3, 6)
-  - [ ] Dans [internal/relay/verify_handler_test.go](internal/relay/verify_handler_test.go) OU [internal/relay/verify_handler_edge_test.go](internal/relay/verify_handler_edge_test.go), ajouter :
+- [x] Tâche 2 — Ajouter tests unitaires 403 (AC: 2, 3, 6)
+  - [x] Dans [internal/relay/verify_handler_test.go](internal/relay/verify_handler_test.go) OU [internal/relay/verify_handler_edge_test.go](internal/relay/verify_handler_edge_test.go), ajouter :
     - `TestVerifyHandler_Forbidden_NonCloudflareSource` : validator strict, `req.RemoteAddr = "8.8.8.8:443"`, pas de `CF-Connecting-IP` → attendu 403
     - `TestVerifyHandler_Forbidden_CloudflareSourceMissingCFHeader` : validator strict, `req.RemoteAddr = "104.16.1.1:443"` (plage CF par défaut), pas de `CF-Connecting-IP` → attendu 403
     - `TestVerifyHandler_Forbidden_InvalidCFHeader` : validator strict, source CF, `CF-Connecting-IP = "not-an-ip"` → attendu 403
     - `TestVerifyHandler_InsecureMode_StillIssuesToken` : validator avec `insecure=true`, source arbitraire → attendu 200 + `session_token` non vide (AC7)
-  - [ ] Chaque test vérifie également que le body de réponse ne contient NI `RemoteAddr` NI `CF-Connecting-IP` (AC5)
+  - [x] Chaque test vérifie également que le body de réponse ne contient NI `RemoteAddr` NI `CF-Connecting-IP` (AC5)
 
-- [ ] Tâche 3 — Audit anti-fuite de logs IP (AC: 5)
-  - [ ] Grep ciblé sur les handlers impliqués dans `/verify` : `internal/relay/verify_handler.go`, `internal/relay/cfip.go`, `internal/relay/middleware.go`, `internal/relay/server.go`, `internal/relay/limiter.go`
-  - [ ] Vérifier qu'aucun `log.Printf`, `fmt.Fprintf(os.Stderr, ...)`, ni wrapper de middleware n'écrit `r.RemoteAddr` ou `CF-Connecting-IP` dans stdout/stderr (les logs systemd journalisent le process entier)
-  - [ ] Note : l'erreur interne `fmt.Errorf("cfip: untrusted source %s", r.RemoteAddr)` à [internal/relay/cfip.go:131](internal/relay/cfip.go#L131) contient l'IP — acceptable tant qu'elle n'est **pas** loggée. Vérifier que les callers (verify_handler, connect_handler) la jettent silencieusement
-  - [ ] Vérifier aussi [cmd/relay/main.go](cmd/relay/main.go) : aucune ligne d'accès HTTP ne doit dumper les headers ou RemoteAddr
-  - [ ] Si un log problématique est trouvé, le supprimer ou le remplacer par une ligne sans IP (ex : `log.Printf("verify: rejected non-CF source")` sans interpolation)
-  - [ ] Consigner le résultat de l'audit dans Completion Notes (liste des fichiers scannés + verdict)
+- [x] Tâche 3 — Audit anti-fuite de logs IP (AC: 5)
+  - [x] Grep ciblé sur les handlers impliqués dans `/verify` : `internal/relay/verify_handler.go`, `internal/relay/cfip.go`, `internal/relay/middleware.go`, `internal/relay/server.go`, `internal/relay/limiter.go`
+  - [x] Vérifier qu'aucun `log.Printf`, `fmt.Fprintf(os.Stderr, ...)`, ni wrapper de middleware n'écrit `r.RemoteAddr` ou `CF-Connecting-IP` dans stdout/stderr (les logs systemd journalisent le process entier)
+  - [x] Note : l'erreur `fmt.Errorf("cfip: untrusted source")` à cfip.go:138 ne contient PLUS l'IP (déjà corrigé par rapport à la version documentée dans la story). Callers jettent l'erreur silencieusement (verify_handler : return 403, connect_handler : return 401)
+  - [x] Vérifier aussi [cmd/relay/main.go](cmd/relay/main.go) : aucune ligne d'accès HTTP ne doit dumper les headers ou RemoteAddr
+  - [x] Si un log problématique est trouvé, le supprimer ou le remplacer par une ligne sans IP (ex : `log.Printf("verify: rejected non-CF source")` sans interpolation)
+  - [x] Consigner le résultat de l'audit dans Completion Notes (liste des fichiers scannés + verdict)
 
-- [ ] Tâche 4 — Valider les invariants AC4 et alignements de doc (AC: 4)
-  - [ ] Confirmer que `SessionTokenTTL = 14400` est utilisé par `CreateSessionToken` ([internal/relay/verify_handler.go:119](internal/relay/verify_handler.go#L119)) — pas de magic number ailleurs
-  - [ ] Vérifier que le client consomme correctement ce TTL : [internal/tunnel/client.go:629](internal/tunnel/client.go#L629) encode `sessionTokenTTL = 14400` en dur — accepter tel quel (résilient même si serveur renvoie une autre valeur un jour), pas d'action requise
+- [x] Tâche 4 — Valider les invariants AC4 et alignements de doc (AC: 4)
+  - [x] Confirmer que `SessionTokenTTL = 14400` est utilisé par `CreateSessionToken` ([internal/relay/verify_handler.go:119](internal/relay/verify_handler.go#L119)) — pas de magic number ailleurs
+  - [x] Vérifier que le client consomme correctement ce TTL : [internal/tunnel/client.go:629](internal/tunnel/client.go#L629) encode `sessionTokenTTL = 14400` en dur — accepter tel quel (résilient même si serveur renvoie une autre valeur un jour), pas d'action requise
 
 - [ ] Tâche 5 — Smoke test sur relais réel (AC: 1, 2, 3)
   - [ ] Sur un des 3 relais existants (voir `reference_relay_servers.md` en mémoire), après rebuild + redeploy :
@@ -158,4 +158,20 @@ claude-opus-4-6[1m]
 
 ### Completion Notes List
 
+- Tâche 1 : Ajout branche 403 stricte dans `verify_handler.go:ServeHTTP` — quand `cfValidator != nil` et `!IsInsecure()` et `ExtractClientIP` échoue → 403 Forbidden + return. Mode insecure préservé (continue sans token). Mode nil préservé (200 + signature seule). `IsInsecure()` existait déjà sur `CloudflareIPValidator` (cfip.go:111).
+- Tâche 2 : 4 tests ajoutés dans `verify_handler_edge_test.go` : `Forbidden_NonCloudflareSource` (403), `Forbidden_CloudflareSourceMissingCFHeader` (403), `Forbidden_InvalidCFHeader` (403), `InsecureMode_StillIssuesToken` (200 + token non vide). Chaque test vérifie absence d'IP dans le body.
+- Tâche 3 (audit) : fichiers scannés = `verify_handler.go`, `cfip.go`, `middleware.go`, `server.go`, `limiter.go`, `cmd/relay/main.go`. Verdict : AUCUNE fuite IP. `verify_handler.go` ne contient aucun appel log/print. `cfip.go:138` erreur `"cfip: untrusted source"` sans IP. `middleware.go` et `limiter.go` sans log. `main.go` : `CF-Connecting-IP` en commentaire seulement.
+- Tâche 4 : `SessionTokenTTL = 14400` confirmé comme unique source côté serveur (verify_handler.go:22, utilisé à :126). Client hardcode `14400` à tunnel/client.go:629. Pas de magic number.
+- Tâche 5 : Smoke test sur relais réel — **en attente** (nécessite rebuild + deploy sur VPS, action manuelle hors scope dev local).
+- Tests : `go test -race -count=1 ./internal/relay/...` passe (5.5s). Flake connu dans le e2e QUIC sur Windows (crash quic-go/transport non reproductible).
+- **Code Review (2026-04-16)** — 5 findings corrigés :
+  - [M1] Fix test `InsecureMode_StillIssuesToken` : body sauvegardé avant JSON decode (vérification IP-leak était un no-op)
+  - [M2] Ajout vérification IP-leak dans les 2 tests 403 manquants (`_CloudflareSourceMissingCFHeader`, `_InvalidCFHeader`)
+  - [L1] Ajout test `StrictMode_HappyPath` (AC1) : cfValidator strict + source CF valide + CF-Connecting-IP → 200 + token
+  - [L2] Fail-fast : validation CF déplacée avant calcul signature Ed25519 (évite CPU gaspillé sur requêtes rejetées)
+  - [L3] Tâche 5 smoke VPS : reconnu comme action manuelle, non bloquant
+
 ### File List
+
+- internal/relay/verify_handler.go (modifié — fail-fast CF validation avant signature + branche 403 stricte)
+- internal/relay/verify_handler_edge_test.go (modifié — 5 tests ajoutés + helper `makeValidVerifyBody` + fixes IP-leak checks)

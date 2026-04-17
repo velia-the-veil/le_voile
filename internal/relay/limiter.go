@@ -5,6 +5,11 @@ import "sync/atomic"
 // MaxConnections is the default maximum number of concurrent connections.
 const MaxConnections int64 = 1000
 
+// MaxTunnels is the global cap on concurrent /tunnel streams per relay.
+// Per architecture.md: 150 tunnels simultanés (clients distincts) par relais.
+// Excess returns HTTP 503 → client failover (Epic 4).
+const MaxTunnels int64 = 150
+
 // Limiter tracks concurrent connections using atomic operations.
 // Thread-safe without mutex — uses atomic.Int64 for lock-free counting.
 type Limiter struct {

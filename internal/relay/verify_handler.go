@@ -82,6 +82,24 @@ func (h *VerifyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Fail-fast: validate CF source before expensive Ed25519 signature.
+	var clientIP string
+	var hasClientIP bool
+	if h.cfValidator != nil {
+		ip, ipErr := h.cfValidator.ExtractClientIP(r)
+		if ipErr != nil {
+			if !h.cfValidator.IsInsecure() {
+				// Strict mode: reject non-CF sources or missing/invalid CF-Connecting-IP.
+				http.Error(w, "Forbidden", http.StatusForbidden)
+				return
+			}
+			// Insecure/dev mode: continue without session token (AC7).
+		} else {
+			clientIP = ip
+			hasClientIP = true
+		}
+	}
+
 	sig, err := lecrypto.Sign(h.signingKey, nonceBytes)
 	if err != nil {
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
@@ -92,14 +110,10 @@ func (h *VerifyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		Signature: base64.StdEncoding.EncodeToString(sig),
 	}
 
-	// Issue session token if CF validator is configured.
-	if h.cfValidator != nil {
-		clientIP, ipErr := h.cfValidator.ExtractClientIP(r)
-		if ipErr == nil {
-			token, tokenErr := CreateSessionToken(h.signingKey, clientIP)
-			if tokenErr == nil {
-				resp.SessionToken = token
-			}
+	if hasClientIP {
+		token, tokenErr := CreateSessionToken(h.signingKey, clientIP)
+		if tokenErr == nil {
+			resp.SessionToken = token
 		}
 	}
 

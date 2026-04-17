@@ -52,7 +52,7 @@ func TestDiscoverer_Discover_OfflineFallbackCache(t *testing.T) {
 	// Create a valid cached entry.
 	relayPub, _, _ := ed25519.GenerateKey(nil)
 	relayPubB64 := base64.StdEncoding.EncodeToString(relayPub)
-	msg := append([]byte(signaturePrefix), relayPub...)
+	msg := append([]byte(SignaturePrefix), relayPub...)
 	sig := ed25519.Sign(masterPriv, msg)
 	sigB64 := base64.StdEncoding.EncodeToString(sig)
 

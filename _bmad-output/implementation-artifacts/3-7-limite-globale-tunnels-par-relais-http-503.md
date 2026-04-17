@@ -1,6 +1,6 @@
 # Story 3.7: Limite globale tunnels par relais (HTTP 503)
 
-Status: ready-for-dev
+Status: done
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -22,60 +22,37 @@ So that la capacité de chaque VPS reste bornée (RAM/CPU prévisibles) et que l
 
 ## Tasks / Subtasks
 
-- [ ] Tâche 1 — Définir `MaxTunnels` et instancier `TunnelLimiter` (AC: 1, 3)
-  - [ ] Dans [internal/relay/limiter.go](internal/relay/limiter.go), **ajouter** (ne PAS toucher à `MaxConnections = 1000`) :
-    ```go
-    // MaxTunnels is the global cap on concurrent /tunnel streams per relay.
-    // Per architecture.md L243, L295: 150 tunnels simultanés (clients distincts)
-    // par relais. Excess returns HTTP 503 → client failover (Epic 4).
-    const MaxTunnels int64 = 150
-    ```
-  - [ ] Dans [internal/relay/server.go](internal/relay/server.go), ajouter un champ `TunnelLimiter *Limiter` à `Server` (lignes 15-30) à côté de `Limiter`
-  - [ ] Initialiser dans `NewServer` : `TunnelLimiter: NewLimiter(MaxTunnels)` (lignes 33-41)
-  - [ ] **Ne PAS** wirer `/tunnel` dans `ListenAndServe` — le handler `/tunnel` est créé par Story 3.3. Cette story livre uniquement le limiter et le câble de `/health`. Story 3.3 enroulera son handler avec `LimitMiddleware(s.TunnelLimiter, tunnelHandler)`.
+- [x] Tâche 1 — Définir `MaxTunnels` et instancier `TunnelLimiter` (AC: 1, 3)
+  - [x] Dans [internal/relay/limiter.go](internal/relay/limiter.go), ajout `const MaxTunnels int64 = 150` (sans toucher `MaxConnections = 1000`)
+  - [x] Dans [internal/relay/server.go](internal/relay/server.go), ajout champ `TunnelLimiter *Limiter` à `Server`
+  - [x] Initialisation dans `NewServer` : `TunnelLimiter: NewLimiter(MaxTunnels)`
+  - [x] `/tunnel` rewired : `LimitMiddleware(s.TunnelLimiter, ...)` au lieu de `s.Limiter` (Story 3.3 avait câblé avec le mauvais limiter)
 
-- [ ] Tâche 2 — Étendre `/health` avec le champ `tunnels` (AC: 4)
-  - [ ] Dans [internal/relay/health.go](internal/relay/health.go), ajouter `Tunnels int64 \`json:"tunnels"\`` à `HealthResponse` (entre `Connections` et `Uptime`)
-  - [ ] Modifier `HealthHandler` pour stocker un second `*Limiter` :
-    ```go
-    type HealthHandler struct {
-        limiter       *Limiter // legacy /dns-query etc. (rendered as "connections")
-        tunnelLimiter *Limiter // /tunnel global cap (rendered as "tunnels")
-        startTime     time.Time
-    }
-    ```
-  - [ ] Adapter la signature de `NewHealthHandler` : `func NewHealthHandler(limiter, tunnelLimiter *Limiter, startTime time.Time) *HealthHandler` (rupture API privée acceptable — un seul caller dans server.go)
-  - [ ] Dans `ServeHTTP`, peupler `resp.Tunnels = h.tunnelLimiter.Current()`. Si `h.tunnelLimiter == nil` (sécurité), renvoyer `0` (pas de panic)
-  - [ ] Mettre à jour le caller [internal/relay/server.go:60](internal/relay/server.go#L60) : `mux.Handle("/health", LimitMiddleware(s.Limiter, NewHealthHandler(s.Limiter, s.TunnelLimiter, s.StartTime)))`
+- [x] Tâche 2 — Étendre `/health` avec le champ `tunnels` (AC: 4)
+  - [x] Ajout `Tunnels int64 \`json:"tunnels"\`` à `HealthResponse`
+  - [x] `HealthHandler` stocke maintenant `tunnelLimiter *Limiter`
+  - [x] `NewHealthHandler` signature étendue : `(limiter, tunnelLimiter *Limiter, startTime time.Time)`
+  - [x] `ServeHTTP` popule `resp.Tunnels` via `tunnelLimiter.Current()` (nil-safe → 0)
+  - [x] Caller server.go mis à jour : `NewHealthHandler(s.Limiter, s.TunnelLimiter, s.StartTime)`
 
-- [ ] Tâche 3 — Tests unitaires neufs (AC: 5)
-  - [ ] Dans [internal/relay/middleware_test.go](internal/relay/middleware_test.go), ajouter `TestLimitMiddleware_Returns503WhenTunnelLimiterSaturated` :
-    - Crée `l := NewLimiter(MaxTunnels)`, appelle `Acquire()` 150 fois (saturer)
-    - Wrap un handler dummy avec `LimitMiddleware(l, dummy)`
-    - Émet une requête → vérifier `rec.Code == http.StatusServiceUnavailable` et que le body contient "Service Unavailable"
-    - Vérifier `l.Current() == 150` (pas d'incrément parasite — protection limiter.go:24-26)
-  - [ ] Dans [internal/relay/health_test.go](internal/relay/health_test.go), ajouter `TestHealthHandler_ExposesTunnelsField` :
-    - Crée `legacy := NewLimiter(MaxConnections)` et `tun := NewLimiter(MaxTunnels)`
-    - `tun.Acquire()` 3 fois
-    - `handler := NewHealthHandler(legacy, tun, time.Now())`
-    - Émet GET, décode `HealthResponse`, vérifier `hr.Tunnels == 3`
-    - Vérifier que le JSON brut contient bien `"tunnels":3` (string match) — protège contre un rename de tag JSON
-  - [ ] Adapter les **5 tests existants** dans health_test.go qui appellent `NewHealthHandler(limiter, time.Now())` (lignes 15, 48, 83, 104, 118) pour passer désormais `NewHealthHandler(limiter, nil, time.Now())` — `nil` est sûr par Tâche 2
-  - [ ] Vérifier que `TestHealthHandler_NoSensitiveData` (health_test.go:81-100) reste vert : "tunnels" n'est pas dans la liste des forbidden tokens → OK
+- [x] Tâche 3 — Tests unitaires neufs (AC: 5)
+  - [x] Ajout `TestLimitMiddleware_Returns503WhenTunnelLimiterSaturated` dans middleware_test.go (sature 150, vérifie 503 + body + pas d'incrément)
+  - [x] Ajout `TestHealthHandler_ExposesTunnelsField` dans health_test.go (vérifie Tunnels==3 + tag JSON brut)
+  - [x] Ajout `TestHealthHandler_TunnelsZeroWhenNilLimiter` (vérifie nil-safety)
+  - [x] 8 callers existants `NewHealthHandler` adaptés (2ème arg `nil`)
+  - [x] `TestHealthHandler_NoSensitiveData` reste vert ("tunnels" pas dans la liste forbidden)
 
-- [ ] Tâche 4 — Vérifications de non-régression (AC: 6, 3)
-  - [ ] Confirmer que [internal/relay/limiter_test.go](internal/relay/limiter_test.go) reste **inchangé** : il utilise `MaxConnections` partout (1000), pas `MaxTunnels`. Aucun test ne devrait référencer 150 en dur.
-  - [ ] `go vet ./internal/relay/... && go test ./internal/relay/...` doit passer entièrement.
-  - [ ] Vérifier qu'aucun appel à `NewHealthHandler` n'a été oublié : grep `NewHealthHandler\(` dans tout le repo → seul caller hors tests = `internal/relay/server.go`.
-  - [ ] Compilation `go build ./...` doit passer (binaire relais + binaire desktop, le second n'utilise pas le package relay côté serveur mais s'appuie sur des types partagés rares).
+- [x] Tâche 4 — Vérifications de non-régression (AC: 6, 3)
+  - [x] limiter_test.go inchangé, utilise `MaxConnections` partout — aucune référence à 150
+  - [x] `go vet ./internal/relay/...` clean + `go test ./internal/relay/...` all pass (7.4s)
+  - [x] grep `NewHealthHandler(` → seul caller prod = server.go, tous les tests mis à jour
+  - [x] `go build ./...` clean (aucune erreur)
 
-- [ ] Tâche 5 — Smoke test sur relais réel (AC: 7)
-  - [ ] Sur un seul des 3 relais (voir mémoire `reference_relay_servers.md`), rebuild le binaire `cmd/relay` (cross-compile linux/amd64 depuis Windows ou compile sur le VPS si Go installé), scp + `systemctl restart levoile-relay`
-  - [ ] `curl -k https://<relais>/health` → vérifier que le JSON contient `"tunnels":0` ET les champs préexistants `status`, `connections`, `uptime`, `ram_mb`, `cpu_pct`
-  - [ ] `curl -k https://<relais>/verify -X POST -H "Content-Type: application/json" -d '{"nonce":"<base64 32B>"}'` → vérifier réponse non-corrompue (200 ou 403 selon CF, peu importe — on contrôle juste l'absence de régression)
-  - [ ] `curl -k https://<relais>/.well-known/relay-registry.json` → vérifier 200 + JSON registry intact
+- [ ] Tâche 5 — Smoke test sur relais réel (AC: 7) — **À faire manuellement par l'opérateur**
+  - [ ] Cross-compile `GOOS=linux GOARCH=amd64 go build -o levoile-relay ./cmd/relay`, scp vers un VPS, `systemctl restart levoile-relay`
+  - [ ] `curl -k https://<relais>/health` → vérifier `"tunnels":0` + champs préexistants
+  - [ ] `curl -k https://<relais>/verify` et `/.well-known/relay-registry.json` → non-régression
   - [ ] Consigner les outputs dans Completion Notes (masquer toute IP)
-  - [ ] **Ne PAS** redéployer sur les 3 relais — un seul suffit pour valider, les 2 autres bénéficieront du déploiement coordonné après merge de Story 3.3
 
 ## Dev Notes
 
@@ -167,5 +144,22 @@ claude-opus-4-6 (1M context)
 - Ultimate context engine analysis completed - comprehensive developer guide created
 - Story découplée de 3.3 par design : livre uniquement le limiter + l'exposition `/health`, le wiring effectif `/tunnel` arrive avec Story 3.3
 - Constante `MaxTunnels = 150` distincte de `MaxConnections = 1000` (rationale dans Dev Notes)
+- Adaptation post-Story 3.3 : `/tunnel` était câblé avec `s.Limiter` (1000) au lieu d'un limiter dédié → corrigé vers `s.TunnelLimiter` (150)
+- 3 tests neufs ajoutés : 503 saturé tunnel, tunnels field health, nil-safety health
+- 8 callers `NewHealthHandler` adaptés (signature étendue avec tunnelLimiter)
+- `go vet` clean, `go test ./internal/relay/...` all pass, `go build ./...` clean
+- Tâche 5 (smoke test relais réel) reste à faire manuellement par l'opérateur
+- Audit cmd/relay/main.go : TunnelHandler assigné à srv (L101-120), TunnelLimiter auto-créé par NewServer — aucun changement requis
+- Code review fixes : architecture.md L260+L573 mis à jour (dual-field connections+tunnels), commentaire server.go sans magic number, completion notes enrichies
+
+### Change Log
+
+- 2026-04-16: Implémentation complète Tâches 1-4 (MaxTunnels, TunnelLimiter, /health tunnels field, tests, non-régression)
 
 ### File List
+
+- internal/relay/limiter.go — ajout constante `MaxTunnels = 150`
+- internal/relay/server.go — champ `TunnelLimiter`, init `NewServer`, `/tunnel` rewired, `/health` caller mis à jour, commentaire stale corrigé
+- internal/relay/health.go — champ `Tunnels` dans `HealthResponse`, `tunnelLimiter` dans `HealthHandler`, signature `NewHealthHandler` étendue
+- internal/relay/health_test.go — 2 tests neufs + 8 callers adaptés (nil 2ème arg)
+- internal/relay/middleware_test.go — 1 test neuf + 1 caller adapté

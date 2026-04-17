@@ -5,30 +5,55 @@ import (
 	"fmt"
 	"net/http"
 	"runtime"
+	"sync/atomic"
 	"time"
 )
 
+// Rate limiting counters — package-level atomics, aggregate only (never per-IP).
+var (
+	RejectedIPLimitTotal     atomic.Int64
+	RejectedDailyQuotaTotal  atomic.Int64
+	ThrottledHourlyQuotaTotal atomic.Int64
+)
+
+// NATStatsProvider returns NAT table statistics for the health endpoint.
+type NATStatsProvider func() NATStats
+
 // HealthResponse contains relay health metrics.
 type HealthResponse struct {
-	Status      string  `json:"status"`
-	Connections int64   `json:"connections"`
-	Uptime      string  `json:"uptime"`
-	RAMMB       float64 `json:"ram_mb"`
-	CPUPct      float64 `json:"cpu_pct"`
+	Status                    string  `json:"status"`
+	Connections               int64   `json:"connections"`
+	Tunnels                   int64   `json:"tunnels"`
+	NATEntries                int64   `json:"nat_entries,omitempty"`
+	Uptime                    string  `json:"uptime"`
+	RAMMB                     float64 `json:"ram_mb"`
+	CPUPct                    float64 `json:"cpu_pct"`
+	RejectedIPLimitTotal      int64   `json:"rejected_ip_limit_total"`
+	RejectedDailyQuotaTotal   int64   `json:"rejected_daily_quota_total"`
+	ThrottledHourlyQuotaTotal int64   `json:"throttled_hourly_quota_total"`
 }
 
 // HealthHandler serves enriched health check responses with metrics.
 type HealthHandler struct {
-	limiter   *Limiter
-	startTime time.Time
+	limiter       *Limiter
+	tunnelLimiter *Limiter
+	startTime     time.Time
+	natStatsFunc  NATStatsProvider
 }
 
 // NewHealthHandler creates a HealthHandler with metrics dependencies.
-func NewHealthHandler(limiter *Limiter, startTime time.Time) *HealthHandler {
+// tunnelLimiter may be nil (tunnels field will report 0).
+func NewHealthHandler(limiter *Limiter, tunnelLimiter *Limiter, startTime time.Time) *HealthHandler {
 	return &HealthHandler{
-		limiter:   limiter,
-		startTime: startTime,
+		limiter:       limiter,
+		tunnelLimiter: tunnelLimiter,
+		startTime:     startTime,
 	}
+}
+
+// SetNATStatsProvider sets the callback for NAT table stats.
+func (h *HealthHandler) SetNATStatsProvider(fn NATStatsProvider) {
+	h.natStatsFunc = fn
 }
 
 // ServeHTTP responds with JSON health metrics. Only GET is allowed.
@@ -41,12 +66,24 @@ func (h *HealthHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	var memStats runtime.MemStats
 	runtime.ReadMemStats(&memStats)
 
+	var tunnels int64
+	if h.tunnelLimiter != nil {
+		tunnels = h.tunnelLimiter.Current()
+	}
+
 	resp := HealthResponse{
-		Status:      "ok",
-		Connections: h.limiter.Current(),
-		Uptime:      formatUptime(time.Since(h.startTime)),
-		RAMMB:       float64(memStats.Sys) / 1024 / 1024,
-		CPUPct:      0.0, // TODO: implement CPU sampling
+		Status:                    "ok",
+		Connections:               h.limiter.Current(),
+		Tunnels:                   tunnels,
+		Uptime:                    formatUptime(time.Since(h.startTime)),
+		RAMMB:                     float64(memStats.Sys) / 1024 / 1024,
+		CPUPct:                    0.0, // TODO: implement CPU sampling
+		RejectedIPLimitTotal:      RejectedIPLimitTotal.Load(),
+		RejectedDailyQuotaTotal:   RejectedDailyQuotaTotal.Load(),
+		ThrottledHourlyQuotaTotal: ThrottledHourlyQuotaTotal.Load(),
+	}
+	if h.natStatsFunc != nil {
+		resp.NATEntries = h.natStatsFunc().Entries
 	}
 
 	data, err := json.Marshal(resp)

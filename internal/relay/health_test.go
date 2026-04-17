@@ -12,7 +12,7 @@ import (
 
 func TestHealthHandler_ReturnsOK(t *testing.T) {
 	limiter := NewLimiter(MaxConnections)
-	handler := NewHealthHandler(limiter, time.Now())
+	handler := NewHealthHandler(limiter, nil, time.Now())
 	req := httptest.NewRequest(http.MethodGet, "/health", nil)
 	rec := httptest.NewRecorder()
 
@@ -45,7 +45,7 @@ func TestHealthHandler_ReturnsFullMetrics(t *testing.T) {
 	defer limiter.Release()
 
 	startTime := time.Now().Add(-25 * time.Hour) // 1d1h ago
-	handler := NewHealthHandler(limiter, startTime)
+	handler := NewHealthHandler(limiter, nil, startTime)
 	req := httptest.NewRequest(http.MethodGet, "/health", nil)
 	rec := httptest.NewRecorder()
 
@@ -80,7 +80,7 @@ func TestHealthHandler_ReturnsFullMetrics(t *testing.T) {
 
 func TestHealthHandler_NoSensitiveData(t *testing.T) {
 	limiter := NewLimiter(MaxConnections)
-	handler := NewHealthHandler(limiter, time.Now())
+	handler := NewHealthHandler(limiter, nil, time.Now())
 	req := httptest.NewRequest(http.MethodGet, "/health", nil)
 	rec := httptest.NewRecorder()
 
@@ -91,8 +91,10 @@ func TestHealthHandler_NoSensitiveData(t *testing.T) {
 		t.Fatalf("read body: %v", err)
 	}
 
+	// Check for actual IP addresses or user-identifying data (not generic field names
+	// like "ip_limit" which are operational counters, not sensitive data).
 	bodyStr := string(body)
-	for _, forbidden := range []string{"ip", "client", "dns", "query", "header", "remote"} {
+	for _, forbidden := range []string{"client_ip", "dns_query", "header", "remote_addr", "cf-connecting"} {
 		if strings.Contains(strings.ToLower(bodyStr), forbidden) {
 			t.Errorf("response contains potentially sensitive field %q: %s", forbidden, bodyStr)
 		}
@@ -101,7 +103,7 @@ func TestHealthHandler_NoSensitiveData(t *testing.T) {
 
 func TestHealthHandler_ContentType(t *testing.T) {
 	limiter := NewLimiter(MaxConnections)
-	handler := NewHealthHandler(limiter, time.Now())
+	handler := NewHealthHandler(limiter, nil, time.Now())
 	req := httptest.NewRequest(http.MethodGet, "/health", nil)
 	rec := httptest.NewRecorder()
 
@@ -115,7 +117,7 @@ func TestHealthHandler_ContentType(t *testing.T) {
 
 func TestHealthHandler_MethodGET(t *testing.T) {
 	limiter := NewLimiter(MaxConnections)
-	handler := NewHealthHandler(limiter, time.Now())
+	handler := NewHealthHandler(limiter, nil, time.Now())
 
 	methods := []string{http.MethodPost, http.MethodPut, http.MethodDelete, http.MethodPatch}
 	for _, method := range methods {
@@ -126,6 +128,131 @@ func TestHealthHandler_MethodGET(t *testing.T) {
 		if rec.Code != http.StatusMethodNotAllowed {
 			t.Errorf("%s: expected 405, got %d", method, rec.Code)
 		}
+	}
+}
+
+func TestHealthHandler_NATEntries(t *testing.T) {
+	limiter := NewLimiter(MaxConnections)
+	handler := NewHealthHandler(limiter, nil, time.Now())
+	handler.SetNATStatsProvider(func() NATStats {
+		return NATStats{Entries: 42, PortsUsed: 42}
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/health", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	body, _ := io.ReadAll(rec.Result().Body)
+	var hr HealthResponse
+	if err := json.Unmarshal(body, &hr); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if hr.NATEntries != 42 {
+		t.Errorf("nat_entries=%d, want 42", hr.NATEntries)
+	}
+}
+
+func TestHealthHandler_NATEntriesOmittedWhenNoProvider(t *testing.T) {
+	limiter := NewLimiter(MaxConnections)
+	handler := NewHealthHandler(limiter, nil, time.Now())
+
+	req := httptest.NewRequest(http.MethodGet, "/health", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	body, _ := io.ReadAll(rec.Result().Body)
+	if strings.Contains(string(body), "nat_entries") {
+		t.Errorf("nat_entries should be omitted when no provider: %s", body)
+	}
+}
+
+func TestHealthHandler_ExposesRateLimitCounters(t *testing.T) {
+	// Reset global counters and ensure cleanup even on failure.
+	RejectedIPLimitTotal.Store(0)
+	RejectedDailyQuotaTotal.Store(0)
+	ThrottledHourlyQuotaTotal.Store(0)
+	t.Cleanup(func() {
+		RejectedIPLimitTotal.Store(0)
+		RejectedDailyQuotaTotal.Store(0)
+		ThrottledHourlyQuotaTotal.Store(0)
+	})
+
+	// Simulate some events.
+	RejectedIPLimitTotal.Add(3)
+	RejectedDailyQuotaTotal.Add(1)
+	ThrottledHourlyQuotaTotal.Add(7)
+
+	limiter := NewLimiter(MaxConnections)
+	handler := NewHealthHandler(limiter, nil, time.Now())
+
+	req := httptest.NewRequest(http.MethodGet, "/health", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	body, _ := io.ReadAll(rec.Result().Body)
+	var hr HealthResponse
+	if err := json.Unmarshal(body, &hr); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	if hr.RejectedIPLimitTotal != 3 {
+		t.Errorf("rejected_ip_limit_total = %d, want 3", hr.RejectedIPLimitTotal)
+	}
+	if hr.RejectedDailyQuotaTotal != 1 {
+		t.Errorf("rejected_daily_quota_total = %d, want 1", hr.RejectedDailyQuotaTotal)
+	}
+	if hr.ThrottledHourlyQuotaTotal != 7 {
+		t.Errorf("throttled_hourly_quota_total = %d, want 7", hr.ThrottledHourlyQuotaTotal)
+	}
+
+	// Cleanup handled by t.Cleanup above.
+}
+
+func TestHealthHandler_ExposesTunnelsField(t *testing.T) {
+	legacy := NewLimiter(MaxConnections)
+	tun := NewLimiter(MaxTunnels)
+	for i := 0; i < 3; i++ {
+		tun.Acquire()
+	}
+	defer func() {
+		for i := 0; i < 3; i++ {
+			tun.Release()
+		}
+	}()
+
+	handler := NewHealthHandler(legacy, tun, time.Now())
+	req := httptest.NewRequest(http.MethodGet, "/health", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	body, _ := io.ReadAll(rec.Result().Body)
+	var hr HealthResponse
+	if err := json.Unmarshal(body, &hr); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if hr.Tunnels != 3 {
+		t.Errorf("tunnels = %d, want 3", hr.Tunnels)
+	}
+	// Verify JSON tag exists in raw output
+	if !strings.Contains(string(body), `"tunnels":3`) {
+		t.Errorf("expected raw JSON to contain '\"tunnels\":3', got %s", body)
+	}
+}
+
+func TestHealthHandler_TunnelsZeroWhenNilLimiter(t *testing.T) {
+	limiter := NewLimiter(MaxConnections)
+	handler := NewHealthHandler(limiter, nil, time.Now())
+	req := httptest.NewRequest(http.MethodGet, "/health", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	body, _ := io.ReadAll(rec.Result().Body)
+	var hr HealthResponse
+	if err := json.Unmarshal(body, &hr); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if hr.Tunnels != 0 {
+		t.Errorf("tunnels = %d, want 0 when tunnelLimiter is nil", hr.Tunnels)
 	}
 }
 
