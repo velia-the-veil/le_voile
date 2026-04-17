@@ -5,7 +5,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=/opt/levoile/relay -addr :443 -cert /opt/levoile/cert.pem -key /opt/levoile/key.pem
+ExecStart=/opt/levoile/relay -addr :443 -cert /opt/levoile/cert.pem -key /opt/levoile/key.pem -signing-key /opt/levoile/signing.key -registry-file /opt/levoile/relay-registry.json
 Restart=always
 RestartSec=5
 User=levoile

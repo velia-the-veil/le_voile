@@ -26,16 +26,12 @@ apt install certbot
 certbot certonly --standalone -d {code}-{num}.levoile.dev
 ```
 
-### 4. Deploy relay binary
+### 4. Generate the relay registry (BEFORE install)
 
-```bash
-scp relay cert.pem key.pem install.sh levoile-relay.service root@{vps}:/opt/levoile/
-ssh root@{vps} 'cd /opt/levoile && bash install.sh'
-```
+Le relais refuse de démarrer sans `signing.key` et `relay-registry.json` (référencés par l'ExecStart du .service). Il faut donc les préparer d'abord :
 
-### 5. Regenerate the relay registry
-
-Add the new relay to `relays.json`, then:
+- `signing.key` : clé privée Ed25519 du relais (base64, 64 octets décodés). Générée localement ou provisionnée depuis un coffre d'ops.
+- `relay-registry.json` : registre signé par le master, incluant le nouveau relais. Ajouter d'abord le nouveau relais à `relays.json`, puis :
 
 ```bash
 genregistry \
@@ -45,7 +41,16 @@ genregistry \
   -out relay-registry.json
 ```
 
-### 6. Deploy registry to all relays
+### 5. Deploy relay binary
+
+```bash
+scp relay cert.pem key.pem signing.key relay-registry.json install.sh levoile-relay.service root@{vps}:/tmp/levoile-install/
+ssh root@{vps} 'cd /tmp/levoile-install && bash install.sh'
+```
+
+`install.sh` valide la présence des 6 fichiers, crée le user `levoile`, pose les bons modes (signing.key 0600, registry 0644), installe l'unit systemd et fait `enable --now`.
+
+### 6. Propager le registry mis à jour aux autres relais
 
 ```bash
 for host in de-001 de-002 es-001 es-002 gb-001 gb-002 us-001 us-002; do

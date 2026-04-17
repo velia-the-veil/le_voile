@@ -45,7 +45,7 @@ story_location: _bmad-output/implementation-artifacts
 development_status:
   # Epic 1: Tunnel Chiffre et Authentification Relais
   # Code existant couvre l'essentiel (issu des anciens Epics 1+2). A verifier story par story.
-  epic-1: in-progress
+  epic-1: done
   1-1-etablir-un-tunnel-quic-http3-vers-un-relais-via-cloudflare-avec-certificate-pinning: done
   1-2-reconnexion-automatique-avec-backoff-exponentiel-et-circuit-breaker: done
   1-3-relais-accepte-les-connexions-quic-http3-entrantes: done
@@ -53,7 +53,7 @@ development_status:
 
   # Epic 2: Capture L3 Machine-Wide & Kill Switch Firewall
   # CHEMIN CRITIQUE — entierement nouveau (refactor majeur TUN/Wintun + nftables/WFP).
-  epic-2: in-progress
+  epic-2: done
   2-1-creation-et-destruction-de-l-interface-tun-wintun-levoile0: done
   2-2-watchdog-tun-detection-d-alteration-externe: done
   2-3-detection-de-vpn-concurrent-au-demarrage: done
@@ -68,8 +68,8 @@ development_status:
   # Epic 3: Relais Stateless Multi-VPS avec Tunnel IP & NAT
   # Mix : binaire relais + verify + rate limiting + organisation pays = existant ;
   # handler /tunnel + NAT + DNS interne + blocklist cote relais = NOUVEAU.
-  epic-3: in-progress
-  3-1-binaire-relais-go-http3-stateless-deployable-via-systemd: in-progress
+  epic-3: done
+  3-1-binaire-relais-go-http3-stateless-deployable-via-systemd: done
   3-2-endpoint-verify-avec-emission-session-tokens-ed25519: done
   3-3-handler-tunnel-avec-stream-bidirectionnel-paquets-ip: done
   3-4-nat-cote-relais-avec-table-en-ram-et-ttl-court: done
