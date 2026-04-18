@@ -45,3 +45,21 @@ allow_ipv6_leak = false
 # Watchdog TUN : détecte la disparition/altération de levoile0 toutes les
 # 3s (NFR16 < 5s). Non configurable pour l'instant — DefaultInterval codé
 # dans internal/tun/watchdog/watchdog.go. Sera exposé via TOML si besoin.
+
+[stun]
+# Story 6.1 — Validation anti-fuite. Le client émet régulièrement des
+# requêtes STUN Binding (RFC 5389) via la TUN pour vérifier que le trafic
+# UDP passe bien par le tunnel. Après Epic 2, c'est un check de validation :
+# la capture L3 empêche structurellement les fuites.
+#
+# Intervalle entre deux checks. 10m suffit pour une validation
+# anti-fuite non-intrusive sans surcharger les serveurs STUN publics.
+# leakcheck_interval = "10m"
+#
+# Override du premier serveur STUN de la liste (legacy — compat < 6.1).
+# Laisser vide pour garder le défaut stun.l.google.com:19302.
+# default_server = "stun.l.google.com:19302"
+#
+# Override complet de la liste des serveurs STUN (ordre = ordre d'essai).
+# Si vide, utilise les défauts : Google x2 + Cloudflare.
+# servers = ["stun.l.google.com:19302", "stun1.l.google.com:19302", "stun.cloudflare.com:3478"]

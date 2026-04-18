@@ -464,8 +464,10 @@ func (u *UI) handleIPCError(ctx context.Context) {
 func (u *UI) updateTrayState(resp ipc.Response) {
 	// Build state key to detect changes — include killswitch mode so the
 	// degraded-mode override doesn't get debounced away when the tunnel
-	// state is unchanged (Story 5.9 AC3).
-	stateKey := fmt.Sprintf("%s|%s|%s|%s|%v|%s", resp.Status, resp.IP, resp.Country, resp.RelayID, resp.HTTPProxyActive, resp.KillSwitchMode)
+	// state is unchanged (Story 5.9 AC3). Story 6.3: also include
+	// anomaly_active so the orange icon flips back to normal the instant
+	// recovery completes, even when no other field changed.
+	stateKey := fmt.Sprintf("%s|%s|%s|%s|%v|%s|%v", resp.Status, resp.IP, resp.Country, resp.RelayID, resp.HTTPProxyActive, resp.KillSwitchMode, resp.AnomalyActive)
 	u.mu.Lock()
 	if u.last == stateKey {
 		u.mu.Unlock()
@@ -473,6 +475,21 @@ func (u *UI) updateTrayState(resp ipc.Response) {
 	}
 	u.last = stateKey
 	u.mu.Unlock()
+
+	// Story 6.3 — anomaly recovery wins over every other state. The user
+	// needs to see the orange glyph regardless of whether the tunnel is
+	// still technically "connected" when the leak check or TUN watchdog
+	// fires. The banner text below matches the webview copy so tray and
+	// webview stay in lockstep. Auto-clears once resp.AnomalyActive flips
+	// back to false at the end of RecoverFromAnomaly.
+	if resp.AnomalyActive {
+		u.api.SetIcon(IconAlert)
+		u.api.SetTooltip("Anomalie détectée — reconnexion en cours")
+		u.mu.Lock()
+		u.connected = false
+		u.mu.Unlock()
+		return
+	}
 
 	// Story 5.9 — degraded mode wins over the tunnel-state-driven icon. The
 	// tray must render red + the dedicated tooltip even when the tunnel is

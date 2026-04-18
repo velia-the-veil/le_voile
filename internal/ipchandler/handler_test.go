@@ -18,16 +18,13 @@ import (
 
 // --- Helpers for leakcheck scheduler construction in tests ---
 
-type testKSQuerier struct{ active bool }
-
-func (k *testKSQuerier) IsActive() bool { return k.active }
-
 type testTSQuerier struct{ state tunnel.ConnState }
 
 func (s *testTSQuerier) Get() tunnel.ConnState { return s.state }
 
 // newTestScheduler builds a PeriodicScheduler suitable for unit tests.
 // It uses a no-op PublicIPFunc so RunFullCheck never dials real STUN servers.
+// Story 6.1: scheduler no longer takes a KillSwitchQuerier.
 func newTestScheduler() *leakcheck.PeriodicScheduler {
 	checker := leakcheck.NewWebRTCLeakChecker(func(_ context.Context) (net.IP, error) {
 		return net.ParseIP("192.0.2.1"), nil
@@ -35,7 +32,6 @@ func newTestScheduler() *leakcheck.PeriodicScheduler {
 	return leakcheck.NewPeriodicScheduler(
 		10*time.Minute,
 		checker,
-		&testKSQuerier{active: false},
 		&testTSQuerier{state: tunnel.StateConnected},
 		nil, nil,
 	)
@@ -333,13 +329,6 @@ func TestHandle_LeakCheck_NilTunnel(t *testing.T) {
 	}
 }
 
-func TestHandle_STUNStatus_Inactive(t *testing.T) {
-	resp := Handle(newTestProgram(), ipc.Request{Action: ipc.ActionSTUNStatus}, Options{})
-	if resp.Status != ipc.StatusSTUNInactive {
-		t.Errorf("expected %q, got %q", ipc.StatusSTUNInactive, resp.Status)
-	}
-}
-
 func TestHandle_CheckUpdate_NoUpdater(t *testing.T) {
 	resp := Handle(newTestProgram(), ipc.Request{Action: ipc.ActionCheckUpdate}, Options{})
 	if resp.Status != ipc.StatusError || resp.Error != "updates_disabled" {
@@ -504,6 +493,104 @@ func TestHandle_GetStatus_NoLeakStatus_WhenNoScheduler(t *testing.T) {
 		t.Errorf("LeakStatus = %q, want empty when no scheduler", resp.LeakStatus)
 	}
 }
+
+// TestHandle_GetStatus_LeakOK (Story 6.2 AC6) — when the scheduler cache
+// shows an "ok" result, fillLeakStatus exposes the status, the expected IP,
+// and leaves LeakReason empty. Wire contract : the new field names must
+// appear in the Response struct.
+func TestHandle_GetStatus_LeakOK(t *testing.T) {
+	prg := newTestProgram()
+	sched := newTestScheduler()
+	sched.ForTestSetLastResult(&leakcheck.FullLeakReport{
+		Status:     ipc.StatusLeakOK,
+		STUNIP:     "198.51.100.7",
+		ExpectedIP: "198.51.100.7",
+	}, time.Now())
+	prg.SetLeakScheduler(sched)
+
+	resp := Handle(prg, ipc.Request{Action: ipc.ActionGetStatus}, Options{})
+
+	if resp.LeakStatus != ipc.StatusLeakOK {
+		t.Errorf("LeakStatus = %q, want %q", resp.LeakStatus, ipc.StatusLeakOK)
+	}
+	if resp.LeakExpectedIP != "198.51.100.7" {
+		t.Errorf("LeakExpectedIP = %q, want %q", resp.LeakExpectedIP, "198.51.100.7")
+	}
+	if resp.LeakReason != "" {
+		t.Errorf("LeakReason = %q, want empty on ok status", resp.LeakReason)
+	}
+}
+
+// TestHandle_GetStatus_LeakDetected (Story 6.2 AC3, AC6) — when the scheduler
+// reports a leak with a classification, every signal is surfaced on the
+// wire: status, expected IP, and reason code.
+func TestHandle_GetStatus_LeakDetected(t *testing.T) {
+	prg := newTestProgram()
+	sched := newTestScheduler()
+	sched.ForTestSetLastResult(&leakcheck.FullLeakReport{
+		Status:     ipc.StatusLeakDetected,
+		STUNIP:     "203.0.113.99",
+		ExpectedIP: "198.51.100.7",
+		LeakReason: leakcheck.LeakReasonStunIPDiffers,
+	}, time.Now())
+	prg.SetLeakScheduler(sched)
+
+	resp := Handle(prg, ipc.Request{Action: ipc.ActionGetStatus}, Options{})
+
+	if resp.LeakStatus != ipc.StatusLeakDetected {
+		t.Errorf("LeakStatus = %q, want %q", resp.LeakStatus, ipc.StatusLeakDetected)
+	}
+	if resp.LeakExpectedIP != "198.51.100.7" {
+		t.Errorf("LeakExpectedIP = %q, want %q", resp.LeakExpectedIP, "198.51.100.7")
+	}
+	if resp.LeakReason != leakcheck.LeakReasonStunIPDiffers {
+		t.Errorf("LeakReason = %q, want %q", resp.LeakReason, leakcheck.LeakReasonStunIPDiffers)
+	}
+}
+
+// TestHandle_LeakCheck_NoTunnel covers the early-return when tc == nil.
+// This is the pre-existing service_not_ready contract, kept to lock that
+// guard in place.
+func TestHandle_LeakCheck_NoTunnel(t *testing.T) {
+	prg := newTestProgram()
+	resp := Handle(prg, ipc.Request{Action: ipc.ActionLeakCheck}, Options{})
+	if resp.Status != ipc.StatusError || resp.Error != "service_not_ready" {
+		t.Errorf("Status/Error = %q/%q, want error/service_not_ready", resp.Status, resp.Error)
+	}
+}
+
+// TestHandle_LeakCheck_SchedulerNil (Story 6.2 AC5, AC6 — H1 review fix)
+// exercises the branch `scheduler := prg.LeakScheduler(); if scheduler == nil`
+// introduced in the 6.2 refactor. Requires a tunnel in StateConnected so the
+// earlier guards pass; otherwise the test would exit on tunnel_not_connected
+// before ever reaching the scheduler-nil branch.
+func TestHandle_LeakCheck_SchedulerNil(t *testing.T) {
+	prg := newTestProgram()
+
+	// Wire a Connected tunnel so we bypass the tc == nil and
+	// tunnel_not_connected guards and reach the scheduler check.
+	const zeroKey32 = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+	client, err := tunnel.NewClient("127.0.0.1:1", zeroKey32, tunnel.WithInsecure(true))
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	client.State().Set(tunnel.StateConnected)
+	prg.ForTestSetTunnelClient(client)
+	// Intentionally NOT calling prg.SetLeakScheduler.
+
+	resp := Handle(prg, ipc.Request{Action: ipc.ActionLeakCheck}, Options{})
+	if resp.Status != ipc.StatusError {
+		t.Errorf("Status = %q, want %q", resp.Status, ipc.StatusError)
+	}
+	if resp.Error != "leak_scheduler_not_running" {
+		t.Errorf("Error = %q, want %q (scheduler-nil branch not exercised)", resp.Error, "leak_scheduler_not_running")
+	}
+}
+
+// Story 6.2 AC6 introduced StatusLeakPass/Fail as transitional aliases of
+// StatusLeakOK/Detected. Story 6.3 AC8 finalises the migration and removes
+// them; the corresponding alias-parity test is deleted alongside the
+// constants — there is nothing left to prove once the aliases are gone.
 
 func TestFormatUptime(t *testing.T) {
 	tests := []struct {

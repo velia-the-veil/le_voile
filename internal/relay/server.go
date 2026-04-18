@@ -13,18 +13,20 @@ import (
 
 // Server wraps an HTTP/3 server for the stateless relay.
 //
-// Public endpoints (/health, /verify, /ip, /dns-query, /stun-relay,
+// Public endpoints (/health, /verify, /ip, /dns-query,
 // /.well-known/relay-registry.json) are protected by CFSourceMiddleware
 // when CFIPValidator is set in strict (non-insecure) mode: requests from
 // IPs outside Cloudflare's published ranges receive HTTP 403.
 // /connect and /tunnel are documented exceptions — they carry their own
 // bearer-token + per-IP validation via IPLimiter.
+//
+// Story 6.1: /stun-relay removed — post-Epic-2 L3 capture routes STUN
+// Binding Requests through the tunnel pump natively.
 type Server struct {
 	Addr           string
 	CertFile       string
 	KeyFile        string
 	Handler        http.Handler
-	STUNHandler    http.Handler
 	ConnectHandler http.Handler
 	TunnelHandler  http.Handler
 	SigningKey     ed25519.PrivateKey
@@ -89,9 +91,6 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 			vh.SetCFValidator(s.CFIPValidator)
 		}
 		mux.Handle("/verify", cfWrap(LimitMiddleware(s.Limiter, vh)))
-	}
-	if s.STUNHandler != nil {
-		mux.Handle("/stun-relay", cfWrap(LimitMiddleware(s.Limiter, s.STUNHandler)))
 	}
 	if s.ConnectHandler != nil {
 		// /connect uses its own per-IP limiter (IPLimiter), not the global

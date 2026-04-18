@@ -11,4 +11,6 @@ var (
 	IconConnected    []byte
 	IconConnecting   []byte
 	IconDisconnected []byte
+	// IconAlert mirrors the windows/linux slice for parity. Story 6.3.
+	IconAlert []byte
 )

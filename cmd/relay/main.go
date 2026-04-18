@@ -48,7 +48,6 @@ func main() {
 
 	srv := relay.NewServer(*addr, *certFile, *keyFile)
 	srv.Handler = dohHandler
-	srv.STUNHandler = relay.NewSTUNHandler()
 	srv.RegistryFile = *registryFile
 
 	// Cloudflare source validation runs on every public endpoint, even when

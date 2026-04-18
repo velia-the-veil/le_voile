@@ -24,7 +24,7 @@ func TestClient_ConcurrentConnect(t *testing.T) {
 		t.Fatalf("generate key: %v", err)
 	}
 
-	addr, _, cleanup := startTestRelay(t, priv)
+	addr, cleanup := startTestRelay(t, priv)
 	defer cleanup()
 
 	pubB64 := lecrypto.ExportPublicKeyBase64(pub)
@@ -293,7 +293,7 @@ func TestClient_Disconnect_ThenReconnect(t *testing.T) {
 		t.Fatalf("generate key: %v", err)
 	}
 
-	addr, _, cleanup := startTestRelay(t, priv)
+	addr, cleanup := startTestRelay(t, priv)
 	defer cleanup()
 
 	pubB64 := lecrypto.ExportPublicKeyBase64(pub)
@@ -416,7 +416,7 @@ func TestClient_DoHFailureCounter_ResetsOnSuccess(t *testing.T) {
 		t.Fatalf("generate key: %v", err)
 	}
 
-	addr, _, cleanup := startTestRelay(t, priv)
+	addr, cleanup := startTestRelay(t, priv)
 	defer cleanup()
 
 	pubB64 := lecrypto.ExportPublicKeyBase64(pub)

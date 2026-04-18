@@ -75,6 +75,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return runKillSwitch(args[1:], stdout, stderr)
 	case "status":
 		return runStatus(stdout, stderr)
+	case "trigger-recovery", "recover":
+		return runTriggerRecovery(stdout, stderr)
 	default:
 		fmt.Fprintf(stderr, "levoile-ctl: commande inconnue : %q\n", args[0])
 		printUsage(stderr)
@@ -88,6 +90,8 @@ func printUsage(w io.Writer) {
 Commandes :
   killswitch off       Désactiver le kill switch (mode dégradé — trafic en clair)
   killswitch on        Réactiver le kill switch (mode normal — protection complète)
+  trigger-recovery     Forcer une reconnexion complète kill-switch-préservée (debug / incident)
+  recover              Alias de trigger-recovery
   status               Afficher l'état actuel du tunnel et du kill switch
   help                 Afficher ce message
 
@@ -138,6 +142,44 @@ func runKillSwitch(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stdout, "kill switch réactivé — protection complète")
 	}
 	_ = resp
+	return exitOK
+}
+
+// runTriggerRecovery forces a manual auto-recovery sequence by sending
+// an authenticated ActionTriggerRecovery to the service (Story 6.3 AC9).
+// The service replies immediately and runs the work in the background;
+// progress shows up in `levoile-ctl status` (anomaly_active) and in the
+// system log (Event Log / journald).
+func runTriggerRecovery(stdout, stderr io.Writer) int {
+	token, err := loadToken()
+	if err != nil {
+		if errors.Is(err, ctlauth.ErrTokenAbsent) {
+			fmt.Fprintln(stderr, "levoile-ctl : token machine-local absent — démarrez le service Le Voile une fois pour le générer.")
+		} else {
+			fmt.Fprintf(stderr, "levoile-ctl : lecture du token impossible : %v\n", err)
+		}
+		return exitAuth
+	}
+
+	resp, code := sendIPC(ipc.Request{
+		Action: ipc.ActionTriggerRecovery,
+		Auth:   ctlauth.Hex(token),
+	}, stderr)
+	if code != exitOK {
+		return code
+	}
+	// Review-fix M2: the service flags an in-flight recovery so we can
+	// tell the operator their trigger piggybacked on an existing run
+	// rather than pretending a fresh sequence was kicked off.
+	if resp.AnomalyActive {
+		reason := resp.AnomalyReason
+		if reason == "" {
+			reason = "en cours"
+		}
+		fmt.Fprintf(stdout, "reconnexion déjà en cours (raison : %s) — observez `levoile-ctl status` ou le journal système\n", reason)
+		return exitOK
+	}
+	fmt.Fprintln(stdout, "reconnexion déclenchée — observez `levoile-ctl status` ou le journal système pour la progression")
 	return exitOK
 }
 

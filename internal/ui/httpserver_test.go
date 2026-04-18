@@ -437,9 +437,13 @@ func TestQuitEndpointRemoved(t *testing.T) {
 	}
 }
 
-func TestLeakStatus_Pass(t *testing.T) {
+func TestLeakStatus_OK(t *testing.T) {
 	mock := &mockIPCClient{
-		resp: ipc.Response{LeakStatus: ipc.StatusLeakPass, LeakLastCheck: "2026-04-17T13:00:00Z"},
+		resp: ipc.Response{
+			LeakStatus:     ipc.StatusLeakOK,
+			LeakLastCheck:  "2026-04-17T13:00:00Z",
+			LeakExpectedIP: "198.51.100.7",
+		},
 	}
 	srv := NewHTTPServer(NewSafeIPCClient(mock), testFS())
 
@@ -460,17 +464,30 @@ func TestLeakStatus_Pass(t *testing.T) {
 	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if resp.Status != "pass" {
-		t.Errorf("status = %q, want pass", resp.Status)
+	if resp.Status != ipc.StatusLeakOK {
+		t.Errorf("status = %q, want %q", resp.Status, ipc.StatusLeakOK)
 	}
 	if resp.LastCheck != "2026-04-17T13:00:00Z" {
 		t.Errorf("last_check = %q, want timestamp", resp.LastCheck)
 	}
+	if resp.ExpectedIP != "198.51.100.7" {
+		t.Errorf("expected_ip = %q, want %q", resp.ExpectedIP, "198.51.100.7")
+	}
+	if resp.Reason != "" {
+		t.Errorf("reason = %q, want empty on ok", resp.Reason)
+	}
 }
 
-func TestLeakStatus_Fail(t *testing.T) {
+// TestLeakStatus_LeakDetected (Story 6.2 AC6) — the handler forwards the
+// new fields (expected_ip, reason) from the IPC Response to the JSON
+// payload unchanged so the frontend can render a precise alert.
+func TestLeakStatus_LeakDetected(t *testing.T) {
 	mock := &mockIPCClient{
-		resp: ipc.Response{LeakStatus: ipc.StatusLeakFail},
+		resp: ipc.Response{
+			LeakStatus:     ipc.StatusLeakDetected,
+			LeakExpectedIP: "198.51.100.7",
+			LeakReason:     "stun_ip_differs_from_relay",
+		},
 	}
 	srv := NewHTTPServer(NewSafeIPCClient(mock), testFS())
 
@@ -480,8 +497,14 @@ func TestLeakStatus_Fail(t *testing.T) {
 
 	var resp APILeakStatusResponse
 	json.NewDecoder(w.Body).Decode(&resp)
-	if resp.Status != "fail" {
-		t.Errorf("status = %q, want fail", resp.Status)
+	if resp.Status != ipc.StatusLeakDetected {
+		t.Errorf("status = %q, want %q", resp.Status, ipc.StatusLeakDetected)
+	}
+	if resp.ExpectedIP != "198.51.100.7" {
+		t.Errorf("expected_ip = %q, want %q", resp.ExpectedIP, "198.51.100.7")
+	}
+	if resp.Reason != "stun_ip_differs_from_relay" {
+		t.Errorf("reason = %q, want %q", resp.Reason, "stun_ip_differs_from_relay")
 	}
 }
 

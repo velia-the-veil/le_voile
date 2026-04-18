@@ -23,6 +23,11 @@ let lastStatus = null;
 // disconnect, indépendant de l'état `disabled` du bouton (qui peut être réécrit
 // par le polling updateUI pendant que le fetch est en vol).
 let connectInflight = false;
+// Story 6.3 — retained across polls so we can detect the true → false
+// transition of anomaly_active and flash a transient "Reconnexion
+// réussie" confirmation before the banner is hidden.
+let wasAnomalyActive = false;
+let anomalyFlashTimer = null;
 
 function init() {
     dom.dot = document.getElementById('status-dot');
@@ -39,6 +44,10 @@ function init() {
     dom.btnCaptiveRetry = document.getElementById('btn-captive-retry');
     dom.failoverBanner = document.getElementById('failover-banner');
     dom.failoverBannerText = document.getElementById('failover-banner-text');
+    // Story 6.3 — anomaly recovery banner, driven by /api/status
+    // anomaly_active + anomaly_reason fields surfaced by the service.
+    dom.anomalyBanner = document.getElementById('anomaly-banner');
+    dom.anomalyBannerText = document.getElementById('anomaly-banner-text');
     dom.ipv6Badge = document.getElementById('ipv6-badge');
     dom.ipv6Warn = document.getElementById('ipv6-warn');
     // Story 5.6 — fallback screen elements.
@@ -263,6 +272,12 @@ function updateUI(s) {
         }
     }
 
+    // Anomaly recovery banner (Story 6.3) — auto-reconnect triggered by
+    // the leak scheduler (STUN mismatch) or the TUN watchdog. Orange
+    // while the recovery runs, flashes green for 3s on the true → false
+    // transition to confirm success, then hides.
+    renderAnomalyBanner(s);
+
     // Connect/Disconnect button — Story 5.4 AC3 + AC5.
     // Visibilité selon ux-design-specification.md §Feedback Patterns :
     //   connected  → "Déconnecter" (rouge transparent)
@@ -320,6 +335,64 @@ function updateUI(s) {
 
     // Test link
     if (dom.testLink) dom.testLink.style.display = st === 'connected' ? '' : 'none';
+}
+
+// renderAnomalyBanner drives the #anomaly-banner element in response to
+// the two status fields surfaced by /api/status (Story 6.3). It is
+// intentionally self-contained: no external state beyond the
+// wasAnomalyActive / anomalyFlashTimer module-level flags.
+//
+// - active=true          → orange banner, reason-aware text.
+// - true → false flip    → green "Reconnexion réussie" flash for 3s
+//                           then hide.
+// - idle (false → false) → banner hidden, no work.
+function renderAnomalyBanner(s) {
+    if (!dom.anomalyBanner || !dom.anomalyBannerText) {
+        return;
+    }
+    var active = !!s.anomaly_active;
+
+    if (active) {
+        if (anomalyFlashTimer) {
+            clearTimeout(anomalyFlashTimer);
+            anomalyFlashTimer = null;
+        }
+        dom.anomalyBanner.classList.remove('anomaly-success');
+        dom.anomalyBanner.style.display = '';
+        dom.anomalyBannerText.textContent = anomalyText(s.anomaly_reason);
+    } else if (wasAnomalyActive) {
+        // Transition: a recovery just completed. Show success flash.
+        dom.anomalyBanner.classList.add('anomaly-success');
+        dom.anomalyBanner.style.display = '';
+        dom.anomalyBannerText.textContent = 'Reconnexion réussie';
+        if (anomalyFlashTimer) { clearTimeout(anomalyFlashTimer); }
+        anomalyFlashTimer = setTimeout(function () {
+            if (dom.anomalyBanner) {
+                dom.anomalyBanner.style.display = 'none';
+                dom.anomalyBanner.classList.remove('anomaly-success');
+            }
+            anomalyFlashTimer = null;
+        }, 3000);
+    } else if (!anomalyFlashTimer) {
+        // No transition, no active recovery, no lingering flash timer
+        // — safe to hide outright. When a flash is still running we
+        // leave the banner visible so it can play out.
+        dom.anomalyBanner.style.display = 'none';
+        dom.anomalyBanner.classList.remove('anomaly-success');
+    }
+
+    wasAnomalyActive = active;
+}
+
+function anomalyText(reason) {
+    switch (reason) {
+        case 'tun_altered':
+            return 'Interface VPN altérée — reconnexion en cours';
+        case 'manual':
+            return 'Reconnexion manuelle en cours';
+        default:
+            return 'Anomalie détectée — reconnexion en cours';
+    }
 }
 
 // === Registry ===

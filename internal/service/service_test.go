@@ -225,86 +225,10 @@ func TestProgram_StopProxy_NilSafe(t *testing.T) {
 	prg.stopProxy()
 }
 
-func TestProgram_STUNActive_NilBeforeStart(t *testing.T) {
-	cfg := Config{RelayDomain: "test.example.com", RelayPubKey: "dGVzdA=="}
-	prg := NewProgram(cfg)
-	if prg.STUNActive() {
-		t.Error("STUNActive should be false before start")
-	}
-}
-
-func TestProgram_StartStopSTUN(t *testing.T) {
-	cfg := Config{RelayDomain: "test.example.com", RelayPubKey: "dGVzdA=="}
-	prg := NewProgram(cfg)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	// Start STUN on ephemeral ports (port 0).
-	prg.startSTUN(ctx)
-
-	if !prg.STUNActive() {
-		t.Error("STUNActive should be true after startSTUN")
-	}
-
-	// Stop STUN.
-	prg.stopSTUN()
-
-	// Wait briefly for goroutine to clean up.
-	time.Sleep(50 * time.Millisecond)
-
-	if prg.STUNActive() {
-		t.Error("STUNActive should be false after stopSTUN")
-	}
-}
-
-func TestService_KillSwitch_BlocksSTUN(t *testing.T) {
-	cfg := Config{RelayDomain: "test.example.com", RelayPubKey: "dGVzdA=="}
-	prg := NewProgram(cfg)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	// Start STUN on ephemeral ports.
-	prg.startSTUN(ctx)
-	defer prg.stopSTUN()
-
-	if !prg.STUNActive() {
-		t.Fatal("STUN should be active after startSTUN")
-	}
-
-	// Verify interceptor processes packets when enabled.
-	prg.stunMu.Lock()
-	interceptor := prg.stunInterceptor
-	prg.stunMu.Unlock()
-
-	if interceptor == nil {
-		t.Fatal("stunInterceptor is nil")
-	}
-
-	// Simulate kill switch activation — disable STUN.
-	prg.setSTUNEnabled(false)
-
-	// Verify interceptor is disabled (enabled field via SetEnabled).
-	// We can't directly check enabled field, but we can verify behavior:
-	// send packet to handlePacket — neither forward nor intercept should be called.
-	// This confirms setSTUNEnabled propagates to the interceptor.
-
-	// Simulate kill switch deactivation — re-enable STUN.
-	prg.setSTUNEnabled(true)
-
-	// Verify interceptor is re-enabled — STUN should still be active.
-	if !prg.STUNActive() {
-		t.Error("STUN should still be active after re-enabling")
-	}
-}
-
-func TestProgram_StopSTUN_NilSafe(t *testing.T) {
-	cfg := Config{RelayDomain: "test.example.com", RelayPubKey: "dGVzdA=="}
-	prg := NewProgram(cfg)
-	// stopSTUN should be safe to call with nil cancel/errCh.
-	prg.stopSTUN()
-}
+// Story 6.1: removed tests tied to the ex-STUN interceptor (STUNActive,
+// startSTUN, stopSTUN, setSTUNEnabled, TestService_KillSwitch_BlocksSTUN).
+// Post-Epic-2 L3 capture + Story-6.1 net.DialUDP leakcheck make those paths
+// obsolete. STUN traffic now flows structurally through levoile0.
 
 func TestProgram_TryInstall_NoStagedUpdate(t *testing.T) {
 	var buf bytes.Buffer

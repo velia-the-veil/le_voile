@@ -210,6 +210,35 @@ html, body {
     text-align: left;
 }
 
+/* Anomaly recovery banner (Story 6.3) — solid orange + white text so the
+   user immediately distinguishes an auto-recovery in progress from the
+   amber failover notice. Reuses the failover structural rules for size
+   and spacing. */
+.anomaly-banner {
+    background: #ff8c00;
+    border: 1px solid #c96a00;
+    border-radius: 6px;
+    padding: 10px 12px;
+    margin: 0 0 8px 0;
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
+    font-family: 'Rajdhani', sans-serif;
+    font-size: 12px;
+    color: #ffffff;
+    text-align: left;
+    transition: background 200ms ease-out;
+}
+
+/* The success flash is a one-off state applied via JS setTimeout after a
+   true → false transition: stays for 3 seconds on green before the JS
+   hides the banner entirely. */
+.anomaly-banner.anomaly-success {
+    background: #28a745;
+    border-color: #1f7a34;
+}
+
 .link {
     font-family: 'Rajdhani', sans-serif; font-weight: 600; font-size: 14px;
     color: var(--accent-glow); text-decoration: none; cursor: pointer;

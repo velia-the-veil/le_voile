@@ -116,8 +116,8 @@ func TestRunFullCheck_AllPass(t *testing.T) {
 		t.Fatalf("RunFullCheck() error = %v", err)
 	}
 
-	if report.Status != "pass" {
-		t.Errorf("RunFullCheck() Status = %q, want %q", report.Status, "pass")
+	if report.Status != statusOK {
+		t.Errorf("RunFullCheck() Status = %q, want %q", report.Status, statusOK)
 	}
 	if report.STUNIP != vpsIP.String() {
 		t.Errorf("RunFullCheck() STUNIP = %q, want %q", report.STUNIP, vpsIP.String())
@@ -158,8 +158,8 @@ func TestRunFullCheck_LeakDetected(t *testing.T) {
 		t.Fatalf("RunFullCheck() error = %v", err)
 	}
 
-	if report.Status != "fail" {
-		t.Errorf("RunFullCheck() Status = %q, want %q", report.Status, "fail")
+	if report.Status != statusLeakDetected {
+		t.Errorf("RunFullCheck() Status = %q, want %q", report.Status, statusLeakDetected)
 	}
 
 	// Verify at least one result is marked as leaked.
@@ -203,14 +203,14 @@ func TestLeakCheck_WithProxy(t *testing.T) {
 		t.Fatalf("RunFullCheck() error = %v", err)
 	}
 
-	if report.Status != "pass" {
-		t.Errorf("RunFullCheck() Status = %q, want %q", report.Status, "pass")
+	if report.Status != statusOK {
+		t.Errorf("RunFullCheck() Status = %q, want %q", report.Status, statusOK)
 	}
 	if report.STUNIP != vpsIP.String() {
 		t.Errorf("RunFullCheck() STUNIP = %q, want %q", report.STUNIP, vpsIP.String())
 	}
-	if report.HTTPIP != vpsIP.String() {
-		t.Errorf("RunFullCheck() HTTPIP = %q, want %q", report.HTTPIP, vpsIP.String())
+	if report.ExpectedIP != vpsIP.String() {
+		t.Errorf("RunFullCheck() ExpectedIP = %q, want %q", report.ExpectedIP, vpsIP.String())
 	}
 	for _, r := range report.Results {
 		if r.Leaked {

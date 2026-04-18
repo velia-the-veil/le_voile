@@ -16,7 +16,6 @@ const (
 	ActionDisconnect   = "disconnect"
 	ActionSetAutoStart = "set_auto_start"
 	ActionQuit         = "quit"
-	ActionSTUNStatus   = "stun_status"
 	ActionLeakCheck    = "leak_check"
 	ActionCheckUpdate  = "check_update"
 	ActionUpdateStatus = "update_status"
@@ -42,6 +41,14 @@ const (
 	// the machine-local token; UI requests leave it empty.
 	ActionGetKillSwitchMode = "get_killswitch_mode"
 	ActionSetKillSwitchMode = "set_killswitch_mode"
+	// ActionTriggerRecovery forces a manual auto-recovery sequence
+	// (Story 6.3 — Task 8). Intended for operator debugging and incident
+	// response (invoked from levoile-ctl). The service replies StatusOK
+	// immediately and runs recovery in the background; the UI observes
+	// progress via the anomaly_active / anomaly_reason fields of
+	// get_status. Auth required: the request carries the machine-local
+	// ctl token just like the kill-switch toggle.
+	ActionTriggerRecovery = "trigger_recovery"
 )
 
 // Story 5.9 — kill-switch mode values used by ActionSetKillSwitchMode and
@@ -61,11 +68,12 @@ const (
 	StatusDisconnected = "disconnected"
 	StatusError        = "error"
 	StatusOK           = "ok"
-	StatusSTUNActive   = "active"
-	StatusSTUNInactive = "inactive"
-	StatusLeakPass    = "pass"
-	StatusLeakFail    = "fail"
-	StatusLeakPending = "pending"
+	// Story 6.2 renamed "pass"/"fail" to "ok"/"leak_detected" to align
+	// with the Validation Anti-Fuite framing; Story 6.3 finalises the
+	// migration by removing the deprecated aliases.
+	StatusLeakOK       = "ok"
+	StatusLeakDetected = "leak_detected"
+	StatusLeakPending  = "pending"
 	StatusUpdateReady  = "update_ready"
 	StatusUpToDate     = "up_to_date"
 	StatusDownloading  = "downloading"
@@ -97,8 +105,18 @@ type Response struct {
 	InstallError     string `json:"install_error,omitempty"`
 	RollbackVersion  string `json:"rollback_version,omitempty"`
 	RollbackReason   string `json:"rollback_reason,omitempty"`
-	LeakStatus       string `json:"leak_status,omitempty"`
-	LeakLastCheck    string `json:"leak_last_check,omitempty"`
+	LeakStatus     string `json:"leak_status,omitempty"`
+	LeakLastCheck  string `json:"leak_last_check,omitempty"`
+	// LeakExpectedIP is the relay's public IP that STUN servers SHOULD
+	// report when the TUN capture is intact. Populated on every leak status
+	// response for transparency (story 6.2). Empty when the checker has
+	// never run or when the DoH resolver was not configured.
+	LeakExpectedIP string `json:"leak_expected_ip,omitempty"`
+	// LeakReason carries a short classification code when LeakStatus is
+	// "leak_detected": "tun_capture_likely_down" or
+	// "stun_ip_differs_from_relay". Empty when LeakStatus is "ok" or
+	// "pending".
+	LeakReason string `json:"leak_reason,omitempty"`
 	AutoStart        bool   `json:"auto_start,omitempty"`
 	BlocklistEnabled bool   `json:"blocklist_enabled,omitempty"`
 	HTTPProxyActive  bool   `json:"http_proxy_active,omitempty"`
@@ -165,6 +183,15 @@ type Response struct {
 	// (Story 5.7). Pointer + omitempty so Linux installs (where the
 	// watchdog is delegated to systemd) can leave it nil.
 	UISupervision *UISupervisionState `json:"ui_supervision,omitempty"`
+
+	// AnomalyActive is true while Program.RecoverFromAnomaly is running a
+	// reconnect sequence (Story 6.3). When true, AnomalyReason carries one
+	// of "leak_detected", "tun_altered", or "manual". Consumers must pair
+	// the two fields: checking AnomalyReason alone without AnomalyActive
+	// does not tell you whether the recovery is in flight or already
+	// completed.
+	AnomalyActive bool   `json:"anomaly_active,omitempty"`
+	AnomalyReason string `json:"anomaly_reason,omitempty"`
 }
 
 // UISupervisionState mirrors uiwatchdog.Snapshot but lives in the IPC

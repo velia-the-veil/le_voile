@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -58,7 +57,7 @@ func waitForRelay(t *testing.T, addr string) {
 }
 
 // startTestRelay starts an HTTP/3 relay with /verify and /health endpoints.
-func startTestRelay(t *testing.T, signingKey ed25519.PrivateKey) (addr string, stunH *relay.STUNHandler, cleanup func()) {
+func startTestRelay(t *testing.T, signingKey ed25519.PrivateKey) (addr string, cleanup func()) {
 	t.Helper()
 
 	_, tlsPriv, err := lecrypto.GenerateKeyPair()
@@ -90,11 +89,6 @@ func startTestRelay(t *testing.T, signingKey ed25519.PrivateKey) (addr string, s
 	dohHandler := relay.NewDoHHandler([]string{"https://1.1.1.1/dns-query"}, nil)
 	srv.Handler = dohHandler
 
-	// STUN relay handler for SendSTUNRelay tests (skip IP validation for loopback)
-	stunH = relay.NewSTUNHandler()
-	stunH.TestSkipIPCheck = true
-	srv.STUNHandler = stunH
-
 	ctx, cancel := context.WithCancel(context.Background())
 
 	go func() {
@@ -103,7 +97,7 @@ func startTestRelay(t *testing.T, signingKey ed25519.PrivateKey) (addr string, s
 
 	waitForRelay(t, addr)
 
-	return addr, stunH, func() {
+	return addr, func() {
 		cancel()
 		time.Sleep(100 * time.Millisecond)
 	}
@@ -171,7 +165,7 @@ func TestClient_Connect_VerificationSuccess(t *testing.T) {
 		t.Fatalf("generate key: %v", err)
 	}
 
-	addr, _, cleanup := startTestRelay(t, priv)
+	addr, cleanup := startTestRelay(t, priv)
 	defer cleanup()
 
 	pubB64 := lecrypto.ExportPublicKeyBase64(pub)
@@ -193,7 +187,7 @@ func TestClient_Connect_VerificationFailed(t *testing.T) {
 		t.Fatalf("generate relay key: %v", err)
 	}
 
-	addr, _, cleanup := startTestRelay(t, priv)
+	addr, cleanup := startTestRelay(t, priv)
 	defer cleanup()
 
 	// Use a different public key so verification fails
@@ -245,7 +239,7 @@ func TestClient_SendDoHQuery(t *testing.T) {
 		t.Fatalf("generate key: %v", err)
 	}
 
-	addr, _, cleanup := startTestRelay(t, priv)
+	addr, cleanup := startTestRelay(t, priv)
 	defer cleanup()
 
 	pubB64 := lecrypto.ExportPublicKeyBase64(pub)
@@ -302,7 +296,7 @@ func TestClient_Disconnect(t *testing.T) {
 		t.Fatalf("generate key: %v", err)
 	}
 
-	addr, _, cleanup := startTestRelay(t, priv)
+	addr, cleanup := startTestRelay(t, priv)
 	defer cleanup()
 
 	pubB64 := lecrypto.ExportPublicKeyBase64(pub)
@@ -321,99 +315,13 @@ func TestClient_Disconnect(t *testing.T) {
 	}
 }
 
-func TestClient_SendSTUNRelay(t *testing.T) {
-	pub, priv, err := lecrypto.GenerateKeyPair()
-	if err != nil {
-		t.Fatalf("generate key: %v", err)
-	}
-
-	addr, stunHandler, cleanup := startTestRelay(t, priv)
-	defer cleanup()
-
-	pubB64 := lecrypto.ExportPublicKeyBase64(pub)
-	client := newTestClient(t, addr, pubB64)
-	defer client.Disconnect()
-
-	if err := client.Connect(context.Background()); err != nil {
-		t.Fatalf("Connect: %v", err)
-	}
-
-	// Start a mock UDP STUN server that echoes with response type.
-	udpAddr, err := net.ResolveUDPAddr("udp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("resolve: %v", err)
-	}
-	udpConn, err := net.ListenUDP("udp", udpAddr)
-	if err != nil {
-		t.Fatalf("listen: %v", err)
-	}
-	defer udpConn.Close()
-
-	mockSTUNAddr := udpConn.LocalAddr().String()
-
-	// Allow the ephemeral port for the STUN handler target validation.
-	_, portStr, _ := net.SplitHostPort(mockSTUNAddr)
-	mockPort, _ := strconv.Atoi(portStr)
-	stunHandler.TestAllowPort = mockPort
-
-	go func() {
-		buf := make([]byte, 1500)
-		n, clientAddr, err := udpConn.ReadFromUDP(buf)
-		if err != nil {
-			return
-		}
-		resp := make([]byte, n)
-		copy(resp, buf[:n])
-		resp[0] = 0x01
-		resp[1] = 0x01 // Binding Success Response
-		udpConn.WriteToUDP(resp, clientAddr)
-	}()
-
-	// Build a STUN Binding Request
-	stunPkt := make([]byte, 20)
-	stunPkt[0] = 0x00
-	stunPkt[1] = 0x01
-	stunPkt[4] = 0x21
-	stunPkt[5] = 0x12
-	stunPkt[6] = 0xA4
-	stunPkt[7] = 0x42
-
-	resp, err := client.SendSTUNRelay(context.Background(), stunPkt, mockSTUNAddr)
-	if err != nil {
-		t.Fatalf("SendSTUNRelay: %v", err)
-	}
-
-	if len(resp) == 0 {
-		t.Error("expected non-empty STUN response")
-	}
-
-	if len(resp) >= 2 && (resp[0] != 0x01 || resp[1] != 0x01) {
-		t.Errorf("expected Binding Success Response, got 0x%02X%02X", resp[0], resp[1])
-	}
-}
-
-func TestClient_SendSTUNRelay_NotConnected(t *testing.T) {
-	pub, _, err := lecrypto.GenerateKeyPair()
-	if err != nil {
-		t.Fatalf("generate key: %v", err)
-	}
-
-	pubB64 := lecrypto.ExportPublicKeyBase64(pub)
-	client := newTestClient(t, "127.0.0.1:1", pubB64)
-
-	_, err = client.SendSTUNRelay(context.Background(), []byte{0x00}, "stun.l.google.com:19302")
-	if err != ErrNotConnected {
-		t.Errorf("error = %v, want ErrNotConnected", err)
-	}
-}
-
 func TestClient_StateTransitions(t *testing.T) {
 	pub, priv, err := lecrypto.GenerateKeyPair()
 	if err != nil {
 		t.Fatalf("generate key: %v", err)
 	}
 
-	addr, _, cleanup := startTestRelay(t, priv)
+	addr, cleanup := startTestRelay(t, priv)
 	defer cleanup()
 
 	pubB64 := lecrypto.ExportPublicKeyBase64(pub)
@@ -467,7 +375,6 @@ func startTestRelayWithSharedKey(t *testing.T, key ed25519.PrivateKey) (addr str
 	srv := relay.NewServer(addr, certPath, keyPath)
 	srv.SigningKey = key // same key for signing
 	srv.Handler = relay.NewDoHHandler([]string{"https://1.1.1.1/dns-query"}, nil)
-	srv.STUNHandler = relay.NewSTUNHandler()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() {
@@ -598,7 +505,7 @@ func TestClient_UpdateRelay_ThreadSafe(t *testing.T) {
 	}
 	_ = priv
 
-	addr, _, cleanup := startTestRelay(t, priv)
+	addr, cleanup := startTestRelay(t, priv)
 	defer cleanup()
 	waitForRelay(t, addr)
 
@@ -632,7 +539,7 @@ func TestClient_RelayDomain_AfterUpdate(t *testing.T) {
 	}
 	_ = priv
 
-	addr, _, cleanup := startTestRelay(t, priv)
+	addr, cleanup := startTestRelay(t, priv)
 	defer cleanup()
 	waitForRelay(t, addr)
 

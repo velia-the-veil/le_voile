@@ -26,11 +26,13 @@ const defaultRelayDomain = "levoile.dev"
 
 // resolvedConfig holds the result of config resolution.
 type resolvedConfig struct {
-	relayDomain       string
-	relayPubKey       string
-	insecure          bool
-	stunDefaultServer string
-	updateEnabled     bool
+	relayDomain           string
+	relayPubKey           string
+	insecure              bool
+	stunDefaultServer     string
+	stunServers           []string
+	stunLeakcheckInterval time.Duration
+	updateEnabled         bool
 	updateInterval    time.Duration
 	updateRateLimit   int64
 	updateOwner       string
@@ -77,6 +79,14 @@ func resolveConfig(cfgPath, flagDomain, flagPubKey string, flagInsecure bool) (r
 		relayPubKey:       cfg.Relay.PublicKeyEd25519,
 		insecure:          cfg.Relay.Insecure,
 		stunDefaultServer: cfg.STUN.DefaultServer,
+		stunServers:       cfg.STUN.Servers,
+	}
+	if cfg.STUN.LeakcheckInterval != "" {
+		d, err := time.ParseDuration(cfg.STUN.LeakcheckInterval)
+		if err != nil {
+			return resolvedConfig{}, fmt.Errorf("client: config: invalid stun.leakcheck_interval %q: %w", cfg.STUN.LeakcheckInterval, err)
+		}
+		rc.stunLeakcheckInterval = d
 	}
 
 	// CLI flags override file values (backward compatibility).
@@ -256,11 +266,13 @@ func main() {
 	}
 
 	prg := svc.NewProgram(svc.Config{
-		RelayDomain:       rc.relayDomain,
-		RelayPubKey:       rc.relayPubKey,
-		Insecure:          rc.insecure,
-		STUNDefaultServer: rc.stunDefaultServer,
-		UpdateEnabled:     rc.updateEnabled,
+		RelayDomain:           rc.relayDomain,
+		RelayPubKey:           rc.relayPubKey,
+		Insecure:              rc.insecure,
+		STUNDefaultServer:     rc.stunDefaultServer,
+		STUNServers:           rc.stunServers,
+		STUNLeakcheckInterval: rc.stunLeakcheckInterval,
+		UpdateEnabled:         rc.updateEnabled,
 		UpdateInterval:    rc.updateInterval,
 		UpdateRateLimit:   rc.updateRateLimit,
 		UpdateOwner:       rc.updateOwner,

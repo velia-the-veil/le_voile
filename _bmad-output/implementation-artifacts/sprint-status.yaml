@@ -105,25 +105,25 @@ development_status:
 
   # Epic 6: Validation Anti-Fuite (STUN + Watchdog TUN)
   # 6.1 existant (STUN Binding). 6.2 refactor (role redefini : validation TUN au lieu de relay STUN). 6.3 partiel.
-  epic-6: backlog
-  6-1-emission-de-stun-binding-requests-via-la-tun: backlog
-  6-2-comparaison-ip-stun-vs-ip-tunnel-attendue: backlog
-  6-3-reconnexion-automatique-alerte-ui-log-en-cas-d-anomalie: backlog
+  epic-6: in-progress
+  6-1-emission-de-stun-binding-requests-via-la-tun: done
+  6-2-comparaison-ip-stun-vs-ip-tunnel-attendue: done
+  6-3-reconnexion-automatique-alerte-ui-log-en-cas-d-anomalie: done
   epic-6-retrospective: optional
 
   # Epic 7: Distribution & Installation Cross-Platform Signee
   # 7.1 (NSIS Windows) et 7.5 (config TOML) existants. 7.2/7.3/7.4 = NOUVEAU (packaging Linux + signature paquets).
-  epic-7: backlog
-  7-1-installeur-nsis-windows-service-scm-ui-autostart-wintun-dll: backlog
-  7-2-paquets-linux-deb-rpm-apk-via-goreleaser-nfpm: backlog
-  7-3-pkgbuild-aur-publication-github-action: backlog
+  epic-7: in-progress
+  7-1-installeur-nsis-windows-service-scm-ui-autostart-wintun-dll: ready-for-dev
+  7-2-paquets-linux-deb-rpm-apk-via-goreleaser-nfpm: ready-for-dev
+  7-3-pkgbuild-aur-publication-github-action: ready-for-dev
   7-4-signature-ed25519-de-tous-les-paquets-de-distribution: backlog
-  7-5-configuration-toml-persistee-avec-paths-cross-platform: backlog
+  7-5-configuration-toml-persistee-avec-paths-cross-platform: ready-for-dev
   epic-7-retrospective: optional
 
   # Epic 8: Auto-Update Securise avec Rollback
   # Largement existant (ancien Epic 6). A valider + ajout systemctl restart pour Linux.
-  epic-8: backlog
-  8-1-verification-periodique-des-releases-github: backlog
-  8-2-telechargement-signe-application-rollback-automatique: backlog
+  epic-8: in-progress
+  8-1-verification-periodique-des-releases-github: ready-for-dev
+  8-2-telechargement-signe-application-rollback-automatique: ready-for-dev
   epic-8-retrospective: optional

@@ -129,9 +129,21 @@ type ClientConfig struct {
 	SkipQuitModal    bool   `toml:"skip_quit_modal"`
 }
 
-// STUNConfig holds STUN relay configuration.
+// STUNConfig holds STUN server configuration used by the leakcheck scheduler.
+// Story 6.1 refactor: no more applicative STUN relay — packets go via OS ->
+// TUN -> relay NAT (L3 capture). The scheduler emits STUN Binding Requests
+// via net.DialUDP, the OS routes them through levoile0 (default route).
 type STUNConfig struct {
+	// DefaultServer overrides the first entry of the scheduler's default
+	// STUN server list ("stun.l.google.com:19302"). Optional — kept for
+	// retro-compatibility with configs written before Story 6.1.
 	DefaultServer string `toml:"default_server"`
+	// Servers overrides the full default STUN server list. If empty, the
+	// scheduler uses the built-in defaults (Google x2 + Cloudflare).
+	Servers []string `toml:"servers,omitempty"`
+	// LeakcheckInterval is the period between two leak checks. Default 10m.
+	// Accepts any Go duration string ("5m", "1h", "30s").
+	LeakcheckInterval string `toml:"leakcheck_interval,omitempty"`
 }
 
 // Load reads a TOML configuration file. If the file does not exist,

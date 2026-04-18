@@ -16,6 +16,7 @@ import (
 
 	"github.com/kardianos/service"
 
+	"github.com/velia-the-veil/le_voile/internal/anomaly"
 	"github.com/velia-the-veil/le_voile/internal/blocklist"
 	"github.com/velia-the-veil/le_voile/internal/browser"
 	"github.com/velia-the-veil/le_voile/internal/captive"
@@ -26,7 +27,6 @@ import (
 	"github.com/velia-the-veil/le_voile/internal/preflight"
 	"github.com/velia-the-veil/le_voile/internal/registry"
 	"github.com/velia-the-veil/le_voile/internal/routing"
-	"github.com/velia-the-veil/le_voile/internal/stun"
 	"github.com/velia-the-veil/le_voile/internal/tun"
 	tunwatchdog "github.com/velia-the-veil/le_voile/internal/tun/watchdog"
 	"github.com/velia-the-veil/le_voile/internal/tunnel"
@@ -54,11 +54,13 @@ const rollbackTimeout = 30 * time.Second
 
 // Config holds the parameters needed to construct a Program.
 type Config struct {
-	RelayDomain       string
-	RelayPubKey       string
-	Insecure          bool   // skip TLS verification (development only)
-	STUNDefaultServer string // default STUN server for relay (e.g. "stun.l.google.com:19302")
-	UpdateEnabled     bool
+	RelayDomain           string
+	RelayPubKey           string
+	Insecure              bool          // skip TLS verification (development only)
+	STUNDefaultServer     string        // optional override of the first STUN server for leakcheck
+	STUNServers           []string      // optional override of the full STUN server list
+	STUNLeakcheckInterval time.Duration // period between two STUN leak checks; default 10m
+	UpdateEnabled         bool
 	UpdateInterval    time.Duration
 	UpdateRateLimit   int64  // bytes per second
 	UpdateOwner       string // GitHub owner
@@ -127,11 +129,15 @@ type Program struct {
 	killSwitch      *dns.KillSwitch
 	reconnector     *tunnel.Reconnector
 	watchdog        *watchdog.Watchdog
-	stunInterceptor *stun.Interceptor
-	stunRelayer     *stun.Relayer
 	updater         *updater.Updater
 	installer       *updater.Installer
 	leakScheduler    *leakcheck.PeriodicScheduler
+	// leakRelayResolver caches the active relay's public IP (via DoH) so
+	// the leak checker can compare STUN responses. Persisted on Program so
+	// failover events can call Invalidate() and force a fresh DoH lookup
+	// against the NEW relay — otherwise the cached IP would cause a 5 min
+	// window of false LEAK_DETECTED after an inter-country failover.
+	leakRelayResolver *leakcheck.RelayIPResolver
 	discoverer       *registry.Discoverer
 	failoverMgr      *registry.FailoverManager
 	blocklistManager *blocklist.Manager
@@ -167,11 +173,6 @@ type Program struct {
 	proxyV6ErrCh  chan error
 	proxy         *dns.Proxy // IPv4 proxy ref
 	proxyV6       *dns.Proxy // IPv6 proxy ref
-
-	// stunMu protects STUN interceptor lifecycle.
-	stunMu     sync.Mutex
-	stunCancel context.CancelFunc
-	stunErrCh  chan error
 
 	// browserPolicyMu protects browserPolicyMgr and browserPolicyResult.
 	browserPolicyMu     sync.Mutex
@@ -251,9 +252,40 @@ type Program struct {
 	// (NFR9c). Empty value = ctl auth disabled (UI/IPC paths still work).
 	// Story 5.9.
 	ctlToken []byte
+
+	// Story 6.3 — anomaly auto-recovery state.
+	// anomalyActive is true while a RecoverFromAnomaly sequence is running.
+	// anomalyReasonPtr stores a *string pointing to the current Reason value
+	// so readers can access it lock-free. anomalyRecoveryMu serializes
+	// concurrent RecoverFromAnomaly invocations (leakcheck + watchdog may
+	// both fire in the same window) — a second call TryLock-drops.
+	// anomalyLogger writes operator-facing events to Event Log / journald.
+	// anomalyNotifier pushes Started/Succeeded/Failed to the UI so the tray
+	// icon + webview banner stay in sync.
+	anomalyActive      atomic.Bool
+	anomalyReasonPtr   atomic.Pointer[string]
+	anomalyRecoveryMu  sync.Mutex
+	anomalyLogger      anomaly.Logger
+	anomalyNotifier    anomaly.Notifier
 }
 
 // NewProgram creates a Program with the given configuration.
+// resolveSTUNServers builds the ordered STUN server list for the leakcheck
+// scheduler. Priority: [stun].servers (full override) > [stun].default_server
+// (first-entry override of the built-in list) > built-in defaults.
+func resolveSTUNServers(servers []string, defaultServer string) []string {
+	if len(servers) > 0 {
+		out := make([]string, len(servers))
+		copy(out, servers)
+		return out
+	}
+	out := leakcheck.DefaultSTUNServers()
+	if defaultServer != "" {
+		out[0] = defaultServer
+	}
+	return out
+}
+
 func NewProgram(cfg Config) *Program {
 	return &Program{
 		config: cfg,
@@ -675,17 +707,6 @@ func (p *Program) RollbackReason() string {
 	p.updateMu.Lock()
 	defer p.updateMu.Unlock()
 	return p.rollbackReason
-}
-
-// STUNActive reports whether the STUN interceptor is currently running.
-func (p *Program) STUNActive() bool {
-	p.stunMu.Lock()
-	interceptor := p.stunInterceptor
-	p.stunMu.Unlock()
-	if interceptor == nil {
-		return false
-	}
-	return interceptor.Active()
 }
 
 // LeakScheduler returns the periodic leak scheduler (used by IPC handler). May be nil.
@@ -1236,10 +1257,9 @@ func (p *Program) run() {
 		}
 	}
 
-	// --- 2b. STUN interceptor start (after tunnel connected, best-effort) ---
-	p.startSTUN(ctx)
-
-	// --- 2c. Browser policies (before DNS to close WebRTC race window) ---
+	// --- 2b. Browser policies (before DNS to close WebRTC race window) ---
+	// Story 6.1: STUN interceptor removed — post-Epic-2 the L3 capture
+	// handles the STUN pass-through structurally; no applicative relay.
 	if p.config.BrowserPoliciesEnabled {
 		bpMgr := browser.NewPolicyManager()
 		result, bpErr := bpMgr.ApplyPolicies(ctx)
@@ -1258,7 +1278,6 @@ func (p *Program) run() {
 	p.dnsManager = dnsMgr
 	if err := dnsMgr.SetResolver(ctx, "127.0.0.1"); err != nil {
 		fmt.Fprintf(serviceStderr, "service: dns set resolver: %v\n", err)
-		p.stopSTUN()
 		p.stopProxy()
 		if p.discoverer != nil {
 			p.discoverer.Stop()
@@ -1307,9 +1326,10 @@ func (p *Program) run() {
 	go wd.Start(ctx)
 
 	// --- 5. Kill switch + Reconnector start ---
-	// Wrap stopProxy/startProxy to also disable/enable STUN components.
+	// Story 6.1: setSTUNEnabled removed — the kill switch only gates DNS
+	// proxy + HTTP proxy. The STUN leakcheck scheduler reads tunnel state
+	// directly and skips when disconnected.
 	ks := dns.NewKillSwitch(dnsMgr, func() {
-		p.setSTUNEnabled(false)
 		p.stopHTTPProxy()
 		p.stopProxy()
 	}, func(reconnCtx context.Context) error {
@@ -1320,7 +1340,6 @@ func (p *Program) run() {
 					fmt.Fprintf(serviceStderr, "service: http proxy restart: %v\n", hpErr)
 				}
 			}
-			p.setSTUNEnabled(true)
 		}
 		return err
 	})
@@ -1338,6 +1357,13 @@ func (p *Program) run() {
 			result, err := p.failoverMgr.HandleFailover(failoverCtx)
 			if err != nil {
 				return err
+			}
+			// Story 6.2 M3 — drop the cached relay IP so the next leak
+			// check resolves against the newly-selected relay's domain.
+			// Without this, the STUN comparison would run for up to 5 min
+			// against the OLD relay's IP and fire false LEAK_DETECTED.
+			if p.leakRelayResolver != nil {
+				p.leakRelayResolver.Invalidate()
 			}
 			// Only update currentCountry when the failover actually resolved a
 			// country — the flat-list fallback path may leave it empty if the
@@ -1378,55 +1404,62 @@ func (p *Program) run() {
 	go reconnector.Start(ctx)
 
 	// --- 5b. Leak scheduler start ---
-	getPublicIP := func(lkCtx context.Context) (net.IP, error) {
-		stunServer := p.config.STUNDefaultServer
-		if stunServer == "" {
-			stunServer = "stun.l.google.com:19302"
-		}
-		req := leakcheck.BuildBindingRequest()
-		resp, err := client.SendSTUNRelay(lkCtx, req, stunServer)
-		if err != nil {
-			// Retry once for transient QUIC stream errors.
-			select {
-			case <-lkCtx.Done():
-				return nil, fmt.Errorf("leakcheck: tunnel stun relay: %w", err)
-			case <-time.After(500 * time.Millisecond):
-			}
-			req = leakcheck.BuildBindingRequest()
-			resp, err = client.SendSTUNRelay(lkCtx, req, stunServer)
-			if err != nil {
-				return nil, fmt.Errorf("leakcheck: tunnel stun relay: %w", err)
-			}
-		}
-		return leakcheck.ParseXORMappedAddress(resp)
-	}
-	// STUN relay function: sends STUN checks through the tunnel so the leak
-	// checker sees the relay's public IP, not the local machine's.
-	stunRelayFn := func(relayCtx context.Context, req []byte, server string) ([]byte, error) {
-		resp, err := client.SendSTUNRelay(relayCtx, req, server)
-		if err != nil {
-			// Retry once for transient QUIC stream errors.
-			select {
-			case <-relayCtx.Done():
-				return nil, err
-			case <-time.After(500 * time.Millisecond):
-			}
-			resp, err = client.SendSTUNRelay(relayCtx, req, server)
-		}
-		return resp, err
-	}
-	checker := leakcheck.NewWebRTCLeakChecker(getPublicIP).WithSTUNRelay(stunRelayFn)
+	// Story 6.1: STUN checks flow via net.DialUDP — the OS routes through
+	// levoile0 (default route, Story 2.4) and the tunnel pump carries the
+	// packet to the relay NAT. No /stun-relay endpoint, no applicative relay.
+	//
+	// Story 6.2: the checker compares each STUN response against the active
+	// relay's public IP, resolved via DoH (never the system resolver — a
+	// poisoned DNS could inject a matching "expected" IP and mask a real
+	// leak). If DoH resolution fails the comparison is skipped (no false
+	// leak_detected); the scheduler treats the error as transient.
+	stunServers := resolveSTUNServers(p.config.STUNServers, p.config.STUNDefaultServer)
 
-	var lkScheduler *leakcheck.PeriodicScheduler
-	onLeak := func(_ *leakcheck.FullLeakReport) {
-		// With STUN relay, a leak means the relay returned a different IP than
-		// expected — this is a genuine concern, but auto-disconnect is still
-		// disabled to avoid false positives from transient relay issues.
+	var expectedIPFunc leakcheck.ExpectedIPFunc
+	if relayDomain != "" {
+		dohForLeakCheck, dohErr := registry.NewDoHResolver(
+			registry.WithDoHLogger(func(format string, args ...any) {
+				fmt.Fprintf(serviceStderr, "service: leakcheck doh: "+format+"\n", args...)
+			}),
+		)
+		if dohErr != nil {
+			fmt.Fprintf(serviceStderr, "service: leakcheck doh: invalid configuration, leak comparison disabled: %v\n", dohErr)
+		} else {
+			relayResolver, resErr := leakcheck.NewRelayIPResolver(relayDomain, dohForLeakCheck)
+			if resErr != nil {
+				fmt.Fprintf(serviceStderr, "service: leakcheck: relay resolver init failed, leak comparison disabled: %v\n", resErr)
+			} else {
+				p.leakRelayResolver = relayResolver
+				expectedIPFunc = relayResolver.ExpectedIP
+			}
+		}
 	}
-	lkScheduler = leakcheck.NewPeriodicScheduler(
-		10*time.Minute,
+	checker := leakcheck.NewWebRTCLeakChecker(expectedIPFunc).WithSTUNServers(stunServers)
+	interval := p.config.STUNLeakcheckInterval
+	if interval == 0 {
+		interval = 10 * time.Minute
+	}
+	// Story 6.3 — a confirmed leak (FullLeakReport.Status == "leak_detected")
+	// triggers the full anomaly recovery sequence. The scheduler itself
+	// only invokes onLeak when the comparison is actually positive, never
+	// on transient DoH/STUN errors (see leakcheck/scheduler.go:runCheck).
+	//
+	// M5 review fix: read the service ctx via p.Context() at callback
+	// time rather than capturing the closure-scoped `ctx`. If a future
+	// refactor makes the scheduler outlive the initial run, this keeps
+	// us reading the live lifecycle context instead of a stale one.
+	onLeak := func(_ *leakcheck.FullLeakReport) {
+		rctx := p.Context()
+		if rctx == nil {
+			rctx = ctx
+		}
+		if err := p.RecoverFromAnomaly(rctx, anomaly.ReasonLeakDetected); err != nil {
+			fmt.Fprintf(serviceStderr, "service: anomaly recovery (leak): %v\n", err)
+		}
+	}
+	lkScheduler := leakcheck.NewPeriodicScheduler(
+		interval,
 		checker,
-		ks,
 		client.State(),
 		onLeak,
 		func() { /* onRecovery: tray sees "pass" on next poll */ },
@@ -1588,10 +1621,7 @@ func (p *Program) shutdown() {
 		p.watchdog.Stop()
 	}
 
-	// 2b. Stop STUN interceptor (before DNS restore)
-	p.stopSTUN()
-
-	// 2c. Stop HTTP proxy (5s drain, before kill switch deactivate)
+	// 2b. Stop HTTP proxy (5s drain, before kill switch deactivate)
 	p.stopHTTPProxy()
 
 	// 3. Deactivate kill switch if active
@@ -1942,76 +1972,6 @@ func (p *Program) stopProxy() {
 	}
 }
 
-// tunnelStateAdapter adapts tunnel.Client to the stun.TunnelStateChecker interface.
-type tunnelStateAdapter struct {
-	client *tunnel.Client
-}
-
-func (a *tunnelStateAdapter) IsConnected() bool {
-	return a.client.State().Get() == tunnel.StateConnected
-}
-
-// startSTUN starts the STUN interceptor on standard ports (best-effort, non-fatal).
-func (p *Program) startSTUN(ctx context.Context) {
-	p.stunMu.Lock()
-	defer p.stunMu.Unlock()
-
-	var onIntercept stun.InterceptFunc
-	if p.tunnelClient != nil {
-		defaultServer := p.config.STUNDefaultServer
-		if defaultServer == "" {
-			defaultServer = "stun.l.google.com:19302"
-		}
-		relayer := stun.NewRelayer(
-			p.tunnelClient,
-			&tunnelStateAdapter{client: p.tunnelClient},
-			defaultServer,
-		)
-		p.stunRelayer = relayer
-		onIntercept = relayer.HandleIntercept
-	}
-
-	interceptor := stun.NewInterceptor(stun.DefaultPort, stun.DefaultTLSPort, nil, onIntercept)
-	p.stunInterceptor = interceptor
-
-	sCtx, sCancel := context.WithCancel(ctx)
-	p.stunCancel = sCancel
-	errCh := make(chan error, 1)
-	p.stunErrCh = errCh
-
-	go func() {
-		errCh <- interceptor.Start(sCtx)
-	}()
-
-	select {
-	case <-interceptor.Ready():
-		// STUN interceptor started successfully.
-	case err := <-errCh:
-		// Best-effort: log but don't fail the service.
-		fmt.Fprintf(serviceStderr, "service: stun interceptor: %v\n", err)
-		sCancel()
-		p.stunInterceptor = nil
-		p.stunCancel = nil
-		p.stunErrCh = nil
-	}
-}
-
-// setSTUNEnabled enables or disables the STUN interceptor and relayer.
-// Used by the kill switch to block STUN traffic during tunnel disconnection.
-func (p *Program) setSTUNEnabled(enabled bool) {
-	p.stunMu.Lock()
-	interceptor := p.stunInterceptor
-	relayer := p.stunRelayer
-	p.stunMu.Unlock()
-
-	if interceptor != nil {
-		interceptor.SetEnabled(enabled)
-	}
-	if relayer != nil {
-		relayer.SetEnabled(enabled)
-	}
-}
-
 // startHTTPProxy starts the local HTTP CONNECT proxy (pattern: startProxy).
 func (p *Program) startHTTPProxy(proxyCtx context.Context) error {
 	p.httpProxyMu.Lock()
@@ -2088,25 +2048,6 @@ func (p *Program) stopHTTPProxy() {
 	}
 }
 
-// stopSTUN stops the STUN interceptor.
-func (p *Program) stopSTUN() {
-	p.stunMu.Lock()
-	cancel := p.stunCancel
-	errCh := p.stunErrCh
-	p.stunCancel = nil
-	p.stunErrCh = nil
-	p.stunInterceptor = nil
-	p.stunRelayer = nil
-	p.stunMu.Unlock()
-
-	if cancel != nil {
-		cancel()
-	}
-	if errCh != nil {
-		<-errCh
-	}
-}
-
 // startTUNWatchdog crée et démarre le watchdog TUN (Story 2.2 — NFR16).
 // Surveille levoile0 toutes les 3s. Sur disparition/altération, exécute
 // recoverTUN (sequence : recreate TUN → routing → firewall → tunnel reconnect).
@@ -2121,8 +2062,16 @@ func (p *Program) startTUNWatchdog(ctx context.Context) {
 	}
 	wd, err := tunwatchdog.NewWatchdog(tunwatchdog.Config{
 		Checker: chk,
-		OnLost:  p.recoverTUN,
-		Logger:  &serviceLogger{},
+		// Story 6.3 — watchdog calls RecoverFromAnomaly instead of
+		// recoverTUN directly so the sequence is wrapped with logging
+		// (Event Log / journald) + UI notification + serialization
+		// against a concurrent leakcheck trigger. RecoverFromAnomaly
+		// delegates to recoverTUN internally — functional behaviour is
+		// preserved.
+		OnLost: func(ctx context.Context) error {
+			return p.RecoverFromAnomaly(ctx, anomaly.ReasonTUNAltered)
+		},
+		Logger: &serviceLogger{},
 	})
 	if err != nil {
 		fmt.Fprintf(serviceStderr, "service: tun watchdog: %v\n", err)

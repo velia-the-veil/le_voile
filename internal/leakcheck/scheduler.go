@@ -15,11 +15,6 @@ import (
 // ErrSchedulerAlreadyRunning is returned when Start is called on an already-running scheduler.
 var ErrSchedulerAlreadyRunning = errors.New("leakcheck: scheduler already running")
 
-// KillSwitchQuerier abstracts dns.KillSwitch for test isolation.
-type KillSwitchQuerier interface {
-	IsActive() bool
-}
-
 // TunnelStateQuerier abstracts tunnel.StateManager for test isolation.
 type TunnelStateQuerier interface {
 	Get() tunnel.ConnState
@@ -35,12 +30,15 @@ type leakCheckerIface interface {
 const maxConsecutiveSkips = 6
 
 // PeriodicScheduler runs WebRTC leak checks at a fixed interval.
-// It skips checks when the kill switch is active or the tunnel is not connected.
+// It skips checks when the tunnel is not connected.
 // On leak detection it invokes onLeak; on recovery it invokes onRecovery.
+//
+// Story 6.1 refactor: the kill-switch skip condition was removed — post-Epic-2,
+// the kill switch and the TUN capture coexist, and STUN Binding Requests must
+// flow through the TUN precisely to validate that the chain is intact.
 type PeriodicScheduler struct {
 	interval    time.Duration
 	checker     leakCheckerIface
-	killSwitch  KillSwitchQuerier
 	tunnelState TunnelStateQuerier
 	onLeak      func(report *FullLeakReport)
 	onRecovery  func()
@@ -53,6 +51,12 @@ type PeriodicScheduler struct {
 	lastCheckAt       time.Time
 	lastWasLeak       bool
 	consecutiveSkips  int
+
+	// checkMu serializes runCheck execution so that a user-triggered
+	// TriggerCheck cannot run in parallel with the periodic tick. Two
+	// concurrent RunFullCheck invocations would dial the same STUN
+	// servers twice and race on writes to lastResult. Story 6.2 M1 fix.
+	checkMu sync.Mutex
 }
 
 // NewPeriodicScheduler creates a PeriodicScheduler.
@@ -60,7 +64,6 @@ type PeriodicScheduler struct {
 func NewPeriodicScheduler(
 	interval time.Duration,
 	checker *WebRTCLeakChecker,
-	ks KillSwitchQuerier,
 	ts TunnelStateQuerier,
 	onLeak func(*FullLeakReport),
 	onRecovery func(),
@@ -71,16 +74,12 @@ func NewPeriodicScheduler(
 	if interval == 0 {
 		panic("leakcheck: NewPeriodicScheduler: interval must not be zero")
 	}
-	if ks == nil {
-		panic("leakcheck: NewPeriodicScheduler: KillSwitchQuerier must not be nil")
-	}
 	if ts == nil {
 		panic("leakcheck: NewPeriodicScheduler: TunnelStateQuerier must not be nil")
 	}
 	return &PeriodicScheduler{
 		interval:    interval,
 		checker:     checker,
-		killSwitch:  ks,
 		tunnelState: ts,
 		onLeak:      onLeak,
 		onRecovery:  onRecovery,
@@ -159,16 +158,29 @@ func (p *PeriodicScheduler) ConsecutiveSkips() int {
 	return p.consecutiveSkips
 }
 
+// ForTestSetLastResult seeds the cached LastResult/LastCheckAt so tests can
+// exercise the IPC-handler pass-through paths (fillLeakStatus) without
+// running a real RunFullCheck cycle. Not for production use.
+func (p *PeriodicScheduler) ForTestSetLastResult(r *FullLeakReport, when time.Time) {
+	p.mu.Lock()
+	p.lastResult = r
+	p.lastCheckAt = when
+	p.mu.Unlock()
+}
+
 // runCheck executes a single leak check, applying skip conditions and invoking callbacks.
+// Concurrent calls (e.g. periodic tick racing with TriggerCheck) are serialized via
+// checkMu — a TryLock ensures the second caller drops rather than queueing, which
+// avoids duplicate STUN dials under user-clicked refresh.
 func (p *PeriodicScheduler) runCheck(ctx context.Context) {
-	// Skip when kill switch is active (AC5): no traffic outside tunnel.
-	if p.killSwitch.IsActive() {
-		p.mu.Lock()
-		p.consecutiveSkips++
-		p.mu.Unlock()
+	if !p.checkMu.TryLock() {
+		// Another goroutine is already running RunFullCheck — drop this
+		// invocation. The concurrent call will update lastResult shortly.
 		return
 	}
-	// Skip when tunnel is not fully connected (AC6).
+	defer p.checkMu.Unlock()
+	// Skip when tunnel is not fully connected — STUN needs the TUN pump up
+	// to reach the relay and the public STUN server.
 	if p.tunnelState.Get() != tunnel.StateConnected {
 		p.mu.Lock()
 		p.consecutiveSkips++
@@ -181,7 +193,13 @@ func (p *PeriodicScheduler) runCheck(ctx context.Context) {
 
 	report, err := p.checker.RunFullCheck(checkCtx)
 	if err != nil {
-		// Transient network error — skip silently (no log, no alert).
+		// Transient network error OR DoH outage (story 6.2) — count the
+		// miss so consecutiveSkips eventually trips the stuck-check alarm
+		// (maxConsecutiveSkips). Without this, a persistent DoH failure
+		// would leave lastResult at nil forever with no operator signal.
+		p.mu.Lock()
+		p.consecutiveSkips++
+		p.mu.Unlock()
 		return
 	}
 
@@ -190,16 +208,16 @@ func (p *PeriodicScheduler) runCheck(ctx context.Context) {
 	p.lastCheckAt = time.Now()
 	p.consecutiveSkips = 0
 	wasLeak := p.lastWasLeak
-	p.lastWasLeak = report.Status == statusFail
+	p.lastWasLeak = report.Status == statusLeakDetected
 	p.mu.Unlock()
 
-	if report.Status == statusFail {
-		// Leak detected — notify caller (AC3, AC4).
+	if report.Status == statusLeakDetected {
+		// Leak detected — notify caller.
 		if p.onLeak != nil {
 			p.onLeak(report)
 		}
 	} else if wasLeak && p.onRecovery != nil {
-		// Recovery: previous check was a leak, this one passed.
+		// Recovery: previous check was a leak, this one is ok.
 		p.onRecovery()
 	}
 }

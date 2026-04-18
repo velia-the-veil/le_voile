@@ -21,6 +21,39 @@ func TestConfig_LoadDefaults(t *testing.T) {
 	if want := "stun.l.google.com:19302"; cfg.STUN.DefaultServer != want {
 		t.Errorf("expected default STUN server %q, got %q", want, cfg.STUN.DefaultServer)
 	}
+	if cfg.STUN.LeakcheckInterval != "" {
+		t.Errorf("expected empty LeakcheckInterval by default, got %q", cfg.STUN.LeakcheckInterval)
+	}
+	if len(cfg.STUN.Servers) != 0 {
+		t.Errorf("expected empty Servers by default, got %v", cfg.STUN.Servers)
+	}
+}
+
+func TestConfig_STUN_LeakcheckInterval_Roundtrip(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	original := &Config{
+		Client: ClientConfig{AutoStart: true},
+		TUN:    TUNConfig{Name: "levoile0", MTU: 1420},
+		Firewall: FirewallConfig{EnableKillSwitch: true},
+		STUN: STUNConfig{
+			DefaultServer:     "stun.example.com:3478",
+			Servers:           []string{"stun.a.com:3478", "stun.b.com:3478"},
+			LeakcheckInterval: "5m",
+		},
+	}
+	if err := original.Save(path); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	loaded, err := Load(path)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if loaded.STUN.LeakcheckInterval != "5m" {
+		t.Errorf("interval mismatch: got %q", loaded.STUN.LeakcheckInterval)
+	}
+	if len(loaded.STUN.Servers) != 2 || loaded.STUN.Servers[0] != "stun.a.com:3478" {
+		t.Errorf("servers mismatch: got %v", loaded.STUN.Servers)
+	}
 }
 
 func TestConfig_SaveRoundtrip(t *testing.T) {

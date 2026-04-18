@@ -6,13 +6,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net"
 	"sort"
 	"time"
 
+	"github.com/velia-the-veil/le_voile/internal/anomaly"
 	"github.com/velia-the-veil/le_voile/internal/config"
 	"github.com/velia-the-veil/le_voile/internal/ipc"
-	"github.com/velia-the-veil/le_voile/internal/leakcheck"
 	"github.com/velia-the-veil/le_voile/internal/registry"
 	svc "github.com/velia-the-veil/le_voile/internal/service"
 	"github.com/velia-the-veil/le_voile/internal/tunnel"
@@ -89,8 +88,6 @@ func Handle(prg *svc.Program, req ipc.Request, opts Options) ipc.Response {
 		return handleQuit(prg)
 	case ipc.ActionUIDisconnect:
 		return handleUIDisconnect(prg)
-	case ipc.ActionSTUNStatus:
-		return handleSTUNStatus(prg)
 	case ipc.ActionLeakCheck:
 		return handleLeakCheck(prg)
 	case ipc.ActionCheckUpdate:
@@ -117,6 +114,8 @@ func Handle(prg *svc.Program, req ipc.Request, opts Options) ipc.Response {
 		return handleGetKillSwitchMode(prg)
 	case ipc.ActionSetKillSwitchMode:
 		return handleSetKillSwitchMode(prg, req, opts)
+	case ipc.ActionTriggerRecovery:
+		return handleTriggerRecovery(prg, req)
 	default:
 		return ipc.Response{Status: ipc.StatusError, Error: "unknown_action"}
 	}
@@ -171,6 +170,10 @@ func handleGetStatus(prg *svc.Program) ipc.Response {
 		// the UI diagnostics panel can observe supervision even when a
 		// concurrent VPN blocks the tunnel.
 		resp.UISupervision = uiSupervisionFromSnapshot(prg.UIWatchdogSnapshot())
+		// Story 6.3 — anomaly recovery flags are independent of the tunnel
+		// state: the watchdog may fire even when preflight rejected the tunnel.
+		resp.AnomalyActive = prg.AnomalyActive()
+		resp.AnomalyReason = prg.AnomalyReason()
 		return resp
 	}
 	tc := prg.TunnelClient()
@@ -198,6 +201,8 @@ func handleGetStatus(prg *svc.Program) ipc.Response {
 		resp.CaptivePortal = prg.CaptivePortal()
 		resp.CaptiveProbeURL = prg.CaptiveProbeURL()
 		resp.UISupervision = uiSupervisionFromSnapshot(prg.UIWatchdogSnapshot())
+		resp.AnomalyActive = prg.AnomalyActive()
+		resp.AnomalyReason = prg.AnomalyReason()
 		return resp
 	}
 	state := tc.State().Get()
@@ -260,10 +265,18 @@ func handleGetStatus(prg *svc.Program) ipc.Response {
 	resp.CaptivePortal = prg.CaptivePortal()
 	resp.CaptiveProbeURL = prg.CaptiveProbeURL()
 	resp.UISupervision = uiSupervisionFromSnapshot(prg.UIWatchdogSnapshot())
+	// Story 6.3 — surface anomaly recovery state to the UI so the webview
+	// can show the orange banner and the tray can switch to the alert icon
+	// while a RecoverFromAnomaly sequence is in flight.
+	resp.AnomalyActive = prg.AnomalyActive()
+	resp.AnomalyReason = prg.AnomalyReason()
 	return resp
 }
 
-// fillLeakStatus populates LeakStatus and LeakLastCheck from the leak scheduler.
+// fillLeakStatus populates LeakStatus, LeakLastCheck, LeakExpectedIP and
+// LeakReason from the leak scheduler's last result. Story 6.2: the handler
+// is now pass-through — the leak check module produces "ok"/"leak_detected"
+// directly (no translation needed).
 func fillLeakStatus(prg *svc.Program, resp *ipc.Response) {
 	scheduler := prg.LeakScheduler()
 	if scheduler == nil {
@@ -272,10 +285,12 @@ func fillLeakStatus(prg *svc.Program, resp *ipc.Response) {
 	result, checkAt := scheduler.LastResult()
 	if result == nil {
 		resp.LeakStatus = ipc.StatusLeakPending
-	} else {
-		resp.LeakStatus = result.Status
-		resp.LeakLastCheck = checkAt.Format(time.RFC3339)
+		return
 	}
+	resp.LeakStatus = result.Status
+	resp.LeakLastCheck = checkAt.Format(time.RFC3339)
+	resp.LeakExpectedIP = result.ExpectedIP
+	resp.LeakReason = result.LeakReason
 }
 
 func handleConnect(prg *svc.Program) ipc.Response {
@@ -399,14 +414,6 @@ func handleUIDisconnect(prg *svc.Program) ipc.Response {
 	return ipc.Response{Status: ipc.StatusOK}
 }
 
-func handleSTUNStatus(prg *svc.Program) ipc.Response {
-	status := ipc.StatusSTUNInactive
-	if prg.STUNActive() {
-		status = ipc.StatusSTUNActive
-	}
-	return ipc.Response{Status: status}
-}
-
 func handleLeakCheck(prg *svc.Program) ipc.Response {
 	tc := prg.TunnelClient()
 	if tc == nil {
@@ -416,42 +423,32 @@ func handleLeakCheck(prg *svc.Program) ipc.Response {
 		return ipc.Response{Status: ipc.StatusError, Error: "tunnel_not_connected"}
 	}
 
-	// Get the VPS public IP by relaying a STUN Binding Request through the
-	// tunnel. The VPS forwards it to the STUN server, which sees the VPS IP.
-	// This is the correct reference — it's the IP that SHOULD appear in all
-	// STUN checks if the interception is working properly.
-	getPublicIP := func(ctx context.Context) (net.IP, error) {
-		req := leakcheck.BuildBindingRequest()
-		resp, err := tc.SendSTUNRelay(ctx, req, "stun.l.google.com:19302")
-		if err != nil {
-			// Retry once for transient QUIC stream errors.
-			select {
-			case <-ctx.Done():
-				return nil, fmt.Errorf("leakcheck: tunnel stun relay: %w", err)
-			case <-time.After(500 * time.Millisecond):
-			}
-			req = leakcheck.BuildBindingRequest()
-			resp, err = tc.SendSTUNRelay(ctx, req, "stun.l.google.com:19302")
-			if err != nil {
-				return nil, fmt.Errorf("leakcheck: tunnel stun relay: %w", err)
-			}
-		}
-		return leakcheck.ParseXORMappedAddress(resp)
+	// Story 6.2: the scheduler owns the correctly-configured checker (with a
+	// RelayIPResolver backed by DoH). Triggering it here runs one check
+	// synchronously and refreshes LastResult, which fillLeakStatus reads.
+	scheduler := prg.LeakScheduler()
+	if scheduler == nil {
+		return ipc.Response{Status: ipc.StatusError, Error: "leak_scheduler_not_running"}
 	}
-	checker := leakcheck.NewWebRTCLeakChecker(getPublicIP)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	report, err := checker.RunFullCheck(ctx)
-	if err != nil {
-		return ipc.Response{Status: ipc.StatusError, Error: err.Error()}
+	scheduler.TriggerCheck(ctx)
+
+	result, _ := scheduler.LastResult()
+	if result == nil {
+		return ipc.Response{Status: ipc.StatusError, Error: "leak_check_no_result"}
 	}
 
-	return ipc.Response{
-		Status: report.Status,
-		IP:     report.STUNIP,
+	resp := ipc.Response{
+		Status:         result.Status,
+		IP:             result.STUNIP,
+		LeakStatus:     result.Status,
+		LeakExpectedIP: result.ExpectedIP,
+		LeakReason:     result.LeakReason,
 	}
+	return resp
 }
 
 func handleCheckUpdate(prg *svc.Program) ipc.Response {
@@ -826,6 +823,62 @@ func handleSetKillSwitchMode(prg *svc.Program, req ipc.Request, _ Options) ipc.R
 		return ipc.Response{Status: ipc.StatusError, Error: err.Error()}
 	}
 	return ipc.Response{Status: ipc.StatusOK, KillSwitchMode: req.Value}
+}
+
+// handleTriggerRecovery runs a manual RecoverFromAnomaly sequence
+// (Story 6.3 AC9). Intended for operator debugging: an authenticated
+// levoile-ctl request forces a full kill-switch-preserving reconnect
+// without waiting for the leakcheck or TUN watchdog to fire.
+//
+// Authentication: always required (req.Auth must match the machine-local
+// ctl token). Unlike handleSetKillSwitchMode which accepts UI traffic on
+// empty Auth, trigger_recovery is intentionally ctl-only — the UI has
+// no reason to expose this, and bypassing the token would let any
+// loopback client force reconnect loops.
+//
+// Concurrency: if a recovery is already running, we short-circuit with
+// AnomalyActive=true so the operator knows their trigger piggybacked on
+// the in-flight sequence (H2/M2 review fix — was silently reporting OK).
+//
+// Lifecycle: the background goroutine derives its context from the
+// service lifecycle ctx (prg.Context()), not context.Background(). If
+// the service shuts down mid-recovery, the ctx cancels and recoverTUN
+// aborts cleanly instead of racing with shutdown().
+func handleTriggerRecovery(prg *svc.Program, req ipc.Request) ipc.Response {
+	if req.Auth == "" || !prg.VerifyCtlToken(req.Auth) {
+		return ipc.Response{Status: ipc.StatusError, Error: svc.ErrCtlAuthFailed.Error()}
+	}
+
+	tc := prg.TunnelClient()
+	if tc == nil || tc.State().Get() != tunnel.StateConnected {
+		return ipc.Response{Status: ipc.StatusError, Error: "tunnel_not_connected"}
+	}
+
+	// M2 fix: surface "already running" as a separate response so the
+	// operator doesn't get a false "déclenchée" confirmation when their
+	// trigger was effectively a no-op. The race with the goroutine below
+	// is acceptable: in the rare case another trigger acquires the mutex
+	// between this check and the TryLock, we'll emit StatusOK with
+	// AnomalyActive=false — indistinguishable from a successful launch,
+	// which is the user-visible truth anyway.
+	if prg.AnomalyActive() {
+		return ipc.Response{Status: ipc.StatusOK, AnomalyActive: true, AnomalyReason: prg.AnomalyReason()}
+	}
+
+	// Fire-and-forget so the IPC reply doesn't block for the ~10-30s of
+	// real recovery work. The parent context is the service lifecycle so
+	// shutdown cleanly cancels the recovery (H1 fix).
+	parent := prg.Context()
+	if parent == nil {
+		parent = context.Background()
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(parent, 60*time.Second)
+		defer cancel()
+		_ = prg.RecoverFromAnomaly(ctx, anomaly.ReasonManual)
+	}()
+
+	return ipc.Response{Status: ipc.StatusOK}
 }
 
 // FormatUptime formats a duration as "Xh Ym" or "Xm Ys".

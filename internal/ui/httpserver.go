@@ -46,6 +46,13 @@ type APIStatusResponse struct {
 	// without probing for presence.
 	ServiceReachable bool              `json:"service_reachable"`
 	ServiceStartHint *ServiceStartHint `json:"service_start_hint,omitempty"`
+	// AnomalyActive is true while the service is running an auto-recovery
+	// sequence (Story 6.3 — STUN leak detected or TUN watchdog fired). The
+	// frontend uses this to show the orange #anomaly-banner and (when the
+	// tray has access to the same field) to swap in IconAlert. When false,
+	// AnomalyReason is the empty string.
+	AnomalyActive bool   `json:"anomaly_active,omitempty"`
+	AnomalyReason string `json:"anomaly_reason,omitempty"`
 }
 
 // HTTPServer serves frontend assets and exposes a REST JSON API that proxies to the service via IPC.
@@ -288,6 +295,8 @@ func (s *HTTPServer) handleStatus(w http.ResponseWriter, r *http.Request) {
 		FailoverAlert:      resp.FailoverAlert,
 		CurrentCountryCode: resp.CurrentCountryCode,
 		ServiceReachable:   reachable,
+		AnomalyActive:      resp.AnomalyActive,
+		AnomalyReason:      resp.AnomalyReason,
 	}
 	// Normalize: when service is unreachable, KillSwitchMode is empty —
 	// surface "normal" so the frontend defaults to safe rendering rather
@@ -327,9 +336,15 @@ func (s *HTTPServer) handleDisconnect(w http.ResponseWriter, r *http.Request) {
 }
 
 // APILeakStatusResponse is the JSON response for GET /api/leak-status.
+// Story 6.2: Status uses "ok" / "leak_detected" / "pending" (renamed from
+// "pass" / "fail"). ExpectedIP and Reason are populated pass-through from
+// the IPC layer so the webview can display the reference IP and an
+// explanation when a leak is detected.
 type APILeakStatusResponse struct {
-	Status    string `json:"status"` // pass / fail / pending
-	LastCheck string `json:"last_check,omitempty"`
+	Status     string `json:"status"` // ok / leak_detected / pending
+	LastCheck  string `json:"last_check,omitempty"`
+	ExpectedIP string `json:"expected_ip,omitempty"`
+	Reason     string `json:"reason,omitempty"`
 }
 
 // handleLeakStatus returns the cached leak-check result. Uses ActionGetStatus
@@ -343,8 +358,10 @@ func (s *HTTPServer) handleLeakStatus(w http.ResponseWriter, r *http.Request) {
 	resp := s.sendIPC(r.Context(), ipc.ActionGetStatus, "")
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(APILeakStatusResponse{
-		Status:    resp.LeakStatus,
-		LastCheck: resp.LeakLastCheck,
+		Status:     resp.LeakStatus,
+		LastCheck:  resp.LeakLastCheck,
+		ExpectedIP: resp.LeakExpectedIP,
+		Reason:     resp.LeakReason,
 	})
 }
 

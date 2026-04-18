@@ -9,25 +9,47 @@ import (
 	"time"
 )
 
-// TestRunFullCheck_PublicIPError verifies that RunFullCheck returns an error
-// when the PublicIPFunc fails (e.g., tunnel relay error).
-func TestRunFullCheck_PublicIPError(t *testing.T) {
+// TestRunFullCheck_ExpectedIPError verifies that RunFullCheck returns an error
+// when the ExpectedIPFunc fails (e.g., DoH resolve failure).
+func TestRunFullCheck_ExpectedIPError(t *testing.T) {
 	t.Parallel()
 
-	getPublicIP := func(ctx context.Context) (net.IP, error) {
-		return nil, errors.New("tunnel relay failed")
+	getExpectedIP := func(ctx context.Context) (net.IP, error) {
+		return nil, errors.New("doh upstream down")
 	}
-	checker := NewWebRTCLeakChecker(getPublicIP)
+	checker := NewWebRTCLeakChecker(getExpectedIP)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
 	_, err := checker.RunFullCheck(ctx)
 	if err == nil {
-		t.Fatal("[P0] RunFullCheck() should return error when getPublicIP fails")
+		t.Fatal("[P0] RunFullCheck() should return error when getExpectedIP fails")
 	}
-	if got := err.Error(); got != "leakcheck: get public ip: tunnel relay failed" {
-		t.Errorf("[P0] error = %q, want 'leakcheck: get public ip: tunnel relay failed'", got)
+	if got := err.Error(); got != "leakcheck: resolve relay ip: doh upstream down" {
+		t.Errorf("[P0] error = %q, want 'leakcheck: resolve relay ip: doh upstream down'", got)
+	}
+}
+
+// TestRunFullCheck_NilExpectedIP verifies that an ExpectedIPFunc returning
+// a nil IP produces a clear error rather than a silent false OK.
+func TestRunFullCheck_NilExpectedIP(t *testing.T) {
+	t.Parallel()
+
+	getExpectedIP := func(ctx context.Context) (net.IP, error) {
+		return nil, nil
+	}
+	checker := NewWebRTCLeakChecker(getExpectedIP)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	_, err := checker.RunFullCheck(ctx)
+	if err == nil {
+		t.Fatal("expected error when ExpectedIPFunc returns nil, got none")
+	}
+	if got := err.Error(); got != "leakcheck: empty expected ip" {
+		t.Errorf("error = %q, want 'leakcheck: empty expected ip'", got)
 	}
 }
 
@@ -101,8 +123,8 @@ func TestRunFullCheck_PartialFailures(t *testing.T) {
 		t.Fatalf("[P1] RunFullCheck() error = %v, want nil (partial success)", err)
 	}
 
-	if report.Status != "pass" {
-		t.Errorf("[P1] Status = %q, want 'pass'", report.Status)
+	if report.Status != statusOK {
+		t.Errorf("[P1] Status = %q, want %q", report.Status, statusOK)
 	}
 	if len(report.Results) != 2 {
 		t.Errorf("[P1] results count = %d, want 2", len(report.Results))

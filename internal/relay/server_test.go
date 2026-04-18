@@ -266,7 +266,6 @@ func setupTestServerWithCF(t *testing.T, insecure bool) (addr string, cleanup fu
 	srv := NewServer(addr, certPath, keyPath)
 	srv.CFIPValidator = NewCloudflareIPValidator(insecure, nil)
 	srv.Handler = NewDoHHandler([]string{"https://1.1.1.1/dns-query"}, nil)
-	srv.STUNHandler = NewSTUNHandler()
 	srv.SigningKey = priv
 	srv.RegistryFile = registryPath
 
@@ -314,7 +313,6 @@ func TestServer_RejectsNonCFSource_AllEndpoints(t *testing.T) {
 		{"ip", "GET", "/ip"},
 		{"dns-query", "GET", "/dns-query"},
 		{"verify", "POST", "/verify"},
-		{"stun-relay", "GET", "/stun-relay"},
 		{"registry", "GET", "/.well-known/relay-registry.json"},
 	}
 

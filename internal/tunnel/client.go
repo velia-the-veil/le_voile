@@ -41,11 +41,9 @@ const (
 	// pre-release via the procedure in docs/testing/dpi-verification.md.
 	connectTimeout     = 5 * time.Second
 	dohTimeout         = 8 * time.Second
-	stunRelayTimeout   = 5 * time.Second
 	nonceSize          = 32
-	maxCertChainLength = 3   // reject certificate chains longer than this
-	maxDoHResponseSize = 64 * 1024  // 64 KB — well above the 65535-byte DNS UDP limit
-	maxSTUNResponseSize = 1600      // slightly above typical 1500-byte STUN messages
+	maxCertChainLength = 3             // reject certificate chains longer than this
+	maxDoHResponseSize = 64 * 1024     // 64 KB — well above the 65535-byte DNS UDP limit
 )
 
 // verifyRequest is the JSON body sent to the relay /verify endpoint.
@@ -333,41 +331,6 @@ func (c *Client) SendDoHQuery(ctx context.Context, dnsPayload []byte) ([]byte, e
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxDoHResponseSize))
 	if err != nil {
 		return nil, fmt.Errorf("tunnel: send doh: read response: %w", err)
-	}
-
-	return body, nil
-}
-
-// SendSTUNRelay sends a STUN packet through the tunnel to be relayed by the VPS.
-func (c *Client) SendSTUNRelay(ctx context.Context, stunPacket []byte, targetAddr string) ([]byte, error) {
-	if c.state.Get() != StateConnected {
-		return nil, ErrNotConnected
-	}
-
-	ctx, cancel := context.WithTimeout(ctx, stunRelayTimeout)
-	defer cancel()
-
-	url := c.relayURL("/stun-relay")
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(stunPacket))
-	if err != nil {
-		return nil, fmt.Errorf("tunnel: send stun relay: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/stun-message")
-	req.Header.Set("X-Stun-Target", targetAddr)
-
-	resp, err := c.getHTTPClient().Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("tunnel: send stun relay: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("tunnel: send stun relay: server returned status %d", resp.StatusCode)
-	}
-
-	body, err := io.ReadAll(io.LimitReader(resp.Body, maxSTUNResponseSize))
-	if err != nil {
-		return nil, fmt.Errorf("tunnel: send stun relay: read response: %w", err)
 	}
 
 	return body, nil
