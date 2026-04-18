@@ -52,7 +52,7 @@ var configMu = &config.Mu
 // silent no-op (returns nil). Save errors are surfaced so SelectCountry can
 // report them to the UI — losing a preference on disk is a real user-facing
 // failure, losing a Load on a partial setup is not.
-func persistPreferredCountry(cfgPath, countryCode string) error {
+func persistPreferredCountry(cfgPath, countryCode string, key []byte) error {
 	configMu.Lock()
 	defer configMu.Unlock()
 	cfg, err := config.Load(cfgPath)
@@ -60,7 +60,7 @@ func persistPreferredCountry(cfgPath, countryCode string) error {
 		return nil
 	}
 	cfg.Client.PreferredCountry = countryCode
-	return cfg.Save(cfgPath)
+	return cfg.SaveAndSign(cfgPath, key)
 }
 
 // Options configures behavior differences between installed and portable modes.
@@ -71,10 +71,37 @@ type Options struct {
 
 	// SetStartupTypeFn changes OS service startup type. Nil in portable mode.
 	SetStartupTypeFn func(bool) error
+
+	// IntegrityKey is the 32-byte machine-local HMAC key used to re-sign
+	// config.toml after every mutation (Story 7.5 / NFR9j). Nil disables the
+	// re-signing step (tests, legacy bootstraps). Production call-sites wire
+	// this from cmd/client.main after config.LoadOrCreateKey.
+	IntegrityKey []byte
 }
 
 // Handle dispatches an IPC request to the appropriate service component.
 func Handle(prg *svc.Program, req ipc.Request, opts Options) ipc.Response {
+	// Story 7.5 / NFR9j — when startup integrity verification failed, refuse
+	// any mutating action. GetStatus stays open so the UI can fetch the
+	// integrity_failed flag and render the recovery banner. Read-only probes
+	// (leakcheck, update status, registry) also stay open: they don't persist
+	// anything and the UI still needs them to show accurate state.
+	if prg.IntegrityFailed() {
+		switch req.Action {
+		case ipc.ActionConnect,
+			ipc.ActionSetAutoStart,
+			ipc.ActionSetBlocklist,
+			ipc.ActionSetHTTPProxy,
+			ipc.ActionSelectCountry,
+			ipc.ActionSetAllowIPv6Leak,
+			ipc.ActionSetKillSwitchMode:
+			return ipc.Response{
+				Status:          ipc.StatusError,
+				Error:           "integrity_failed",
+				IntegrityFailed: true,
+			}
+		}
+	}
 	switch req.Action {
 	case ipc.ActionGetStatus:
 		return handleGetStatus(prg)
@@ -174,6 +201,9 @@ func handleGetStatus(prg *svc.Program) ipc.Response {
 		// state: the watchdog may fire even when preflight rejected the tunnel.
 		resp.AnomalyActive = prg.AnomalyActive()
 		resp.AnomalyReason = prg.AnomalyReason()
+		// Story 7.5 — propagate the config-integrity flag on every branch so
+		// the UI banner stays visible even during concurrent-VPN lockdown.
+		resp.IntegrityFailed = prg.IntegrityFailed()
 		return resp
 	}
 	tc := prg.TunnelClient()
@@ -203,6 +233,7 @@ func handleGetStatus(prg *svc.Program) ipc.Response {
 		resp.UISupervision = uiSupervisionFromSnapshot(prg.UIWatchdogSnapshot())
 		resp.AnomalyActive = prg.AnomalyActive()
 		resp.AnomalyReason = prg.AnomalyReason()
+		resp.IntegrityFailed = prg.IntegrityFailed()
 		return resp
 	}
 	state := tc.State().Get()
@@ -270,6 +301,9 @@ func handleGetStatus(prg *svc.Program) ipc.Response {
 	// while a RecoverFromAnomaly sequence is in flight.
 	resp.AnomalyActive = prg.AnomalyActive()
 	resp.AnomalyReason = prg.AnomalyReason()
+	// Story 7.5 — config integrity flag is surfaced on every get_status so
+	// the UI can render the recovery banner without a separate endpoint.
+	resp.IntegrityFailed = prg.IntegrityFailed()
 	return resp
 }
 
@@ -369,7 +403,7 @@ func handleSetAutoStart(prg *svc.Program, req ipc.Request, opts Options) ipc.Res
 		return ipc.Response{Status: ipc.StatusError, Error: err.Error()}
 	}
 	cfg.Client.AutoStart = autoStart
-	if err := cfg.Save(cfgPath); err != nil {
+	if err := cfg.SaveAndSign(cfgPath, opts.IntegrityKey); err != nil {
 		configMu.Unlock()
 		return ipc.Response{Status: ipc.StatusError, Error: err.Error()}
 	}
@@ -533,7 +567,7 @@ func handleSetBlocklist(prg *svc.Program, req ipc.Request, opts Options) ipc.Res
 		return ipc.Response{Status: ipc.StatusError, Error: err.Error()}
 	}
 	cfg.Blocklist.Enabled = enabled
-	if err := cfg.Save(cfgPath); err != nil {
+	if err := cfg.SaveAndSign(cfgPath, opts.IntegrityKey); err != nil {
 		configMu.Unlock()
 		return ipc.Response{Status: ipc.StatusError, Error: err.Error()}
 	}
@@ -566,7 +600,7 @@ func handleSetHTTPProxy(prg *svc.Program, req ipc.Request, opts Options) ipc.Res
 		return ipc.Response{Status: ipc.StatusError, Error: err.Error()}
 	}
 	cfg.HTTPProxy.Enabled = enabled
-	if err := cfg.Save(cfgPath); err != nil {
+	if err := cfg.SaveAndSign(cfgPath, opts.IntegrityKey); err != nil {
 		configMu.Unlock()
 		return ipc.Response{Status: ipc.StatusError, Error: err.Error()}
 	}
@@ -708,7 +742,7 @@ func handleSelectCountry(prg *svc.Program, req ipc.Request, opts Options) ipc.Re
 	}
 
 	if cfgPath := opts.ConfigPathFn(); cfgPath != "" {
-		if err := persistPreferredCountry(cfgPath, countryCode); err != nil {
+		if err := persistPreferredCountry(cfgPath, countryCode, opts.IntegrityKey); err != nil {
 			return ipc.Response{Status: ipc.StatusError, Error: fmt.Sprintf("ipchandler: save config: %v", err)}
 		}
 	}
@@ -761,14 +795,14 @@ func handleSetAllowIPv6Leak(prg *svc.Program, req ipc.Request, opts Options) ipc
 		}
 		oldAllow := cfg.Firewall.AllowIPv6Leak
 		cfg.Firewall.AllowIPv6Leak = allow
-		if err := cfg.Save(cfgPath); err != nil {
+		if err := cfg.SaveAndSign(cfgPath, opts.IntegrityKey); err != nil {
 			configMu.Unlock()
 			return ipc.Response{Status: ipc.StatusError, Error: err.Error()}
 		}
 		// Config saved — now update firewall. On failure, rollback config.
 		if err := prg.SetAllowIPv6Leak(allow); err != nil {
 			cfg.Firewall.AllowIPv6Leak = oldAllow
-			_ = cfg.Save(cfgPath)
+			_ = cfg.SaveAndSign(cfgPath, opts.IntegrityKey)
 			configMu.Unlock()
 			return ipc.Response{Status: ipc.StatusError, Error: err.Error()}
 		}

@@ -2,6 +2,7 @@
 package config
 
 import (
+	"bytes"
 	"fmt"
 	"net/url"
 	"os"
@@ -113,6 +114,14 @@ type UpdateConfig struct {
 	RateLimitKBps int    `toml:"rate_limit_kbps"`
 	GitHubOwner   string `toml:"github_owner"`
 	GitHubRepo    string `toml:"github_repo"`
+	// AllowWhenPackaged forces auto-update even when the binary was installed
+	// by a system package manager (dpkg/rpm/pacman). Default false — package
+	// manager is considered authoritative to avoid version conflicts.
+	AllowWhenPackaged bool `toml:"allow_when_packaged"`
+	// MaxInstallRetries caps the number of times the installer will retry
+	// applying a given staged update before abandoning it and re-downloading
+	// on the next check. Default 3 (0 is treated as unlimited — not recommended).
+	MaxInstallRetries int `toml:"max_install_retries"`
 }
 
 // RelayConfig holds relay connection settings.
@@ -146,6 +155,49 @@ type STUNConfig struct {
 	LeakcheckInterval string `toml:"leakcheck_interval,omitempty"`
 }
 
+// Bootstrap writes the embedded config.example.toml skeleton to path when
+// the file does not exist. Idempotent: a second call with an existing
+// config is a no-op. Applies restrictive perms (0600 / protected DACL) and
+// creates parent dirs (0700) as needed. Used by the service on first start
+// so a fresh install always has a signed, tightened skeleton before Load
+// is called (NFR9j, Story 7.5 AC3).
+//
+// Callers: cmd/client/main.go only. The UI MUST NOT call Bootstrap — only
+// the service owns the config file lifecycle.
+func Bootstrap(path string) error {
+	if _, err := os.Stat(path); err == nil {
+		return nil
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("config: bootstrap stat: %w", err)
+	}
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return fmt.Errorf("config: bootstrap mkdir: %w", err)
+	}
+	tmp, err := os.CreateTemp(dir, "config-bootstrap-*.tmp")
+	if err != nil {
+		return fmt.Errorf("config: bootstrap create temp: %w", err)
+	}
+	tmpName := tmp.Name()
+	if _, err := tmp.Write(exampleTOML); err != nil {
+		tmp.Close()
+		os.Remove(tmpName)
+		return fmt.Errorf("config: bootstrap write: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		os.Remove(tmpName)
+		return fmt.Errorf("config: bootstrap close: %w", err)
+	}
+	if err := os.Rename(tmpName, path); err != nil {
+		os.Remove(tmpName)
+		return fmt.Errorf("config: bootstrap rename: %w", err)
+	}
+	if err := applyRestrictedPerms(path); err != nil {
+		return fmt.Errorf("config: bootstrap tighten perms: %w", err)
+	}
+	return nil
+}
+
 // Load reads a TOML configuration file. If the file does not exist,
 // it returns a default configuration.
 func Load(path string) (*Config, error) {
@@ -153,11 +205,13 @@ func Load(path string) (*Config, error) {
 		Client: ClientConfig{AutoStart: true},
 		STUN:   STUNConfig{DefaultServer: "stun.l.google.com:19302"},
 		Update: UpdateConfig{
-			Enabled:       true,
-			CheckInterval: "6h",
-			RateLimitKBps: 512,
-			GitHubOwner:   "velia-the-veil",
-			GitHubRepo:    "le_voile",
+			Enabled:           true,
+			CheckInterval:     "6h",
+			RateLimitKBps:     500,
+			GitHubOwner:       "velia-the-veil",
+			GitHubRepo:        "le_voile",
+			AllowWhenPackaged: false,
+			MaxInstallRetries: 3,
 		},
 		Blocklist: BlocklistConfig{
 			Enabled:        false,
@@ -237,31 +291,60 @@ func Load(path string) (*Config, error) {
 
 // Save writes the configuration to a TOML file atomically, creating parent
 // directories if necessary. It writes to a temp file first and renames on
-// success to prevent corruption on crash.
+// success to prevent corruption on crash. After the rename succeeds, a
+// restrictive permission mask (0600 + 0700 dir on Unix, protected DACL on
+// Windows) is re-applied — os.Rename preserves the source DACL/mode on
+// Windows, so tightening must happen on the final path (NFR9j).
 func (c *Config) Save(path string) error {
+	_, err := c.saveBytes(path)
+	return err
+}
+
+// saveBytes is the shared encode+write+tighten core used by Save and
+// SaveAndSign. It returns the encoded TOML bytes so SaveAndSign can hand
+// them directly to SignBytes, avoiding a re-read of the on-disk file
+// between the rename and the HMAC computation. That re-read would open a
+// TOCTOU window: an attacker at the same privilege level as the service
+// could overwrite the file in that split second and have the legitimate
+// Sign path HMAC the malicious bytes (defense in depth for NFR9j — the
+// DACL/0600 perms already block most attackers).
+func (c *Config) saveBytes(path string) ([]byte, error) {
+	var buf bytes.Buffer
+	if err := toml.NewEncoder(&buf).Encode(c); err != nil {
+		return nil, fmt.Errorf("config: encode: %w", err)
+	}
+	encoded := buf.Bytes()
+
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return fmt.Errorf("config: %w", err)
+		return nil, fmt.Errorf("config: %w", err)
 	}
 
 	tmp, err := os.CreateTemp(dir, "config-*.tmp")
 	if err != nil {
-		return fmt.Errorf("config: create temp: %w", err)
+		return nil, fmt.Errorf("config: create temp: %w", err)
 	}
 	tmpName := tmp.Name()
 
-	if err := toml.NewEncoder(tmp).Encode(c); err != nil {
+	if _, err := tmp.Write(encoded); err != nil {
 		tmp.Close()
 		os.Remove(tmpName)
-		return fmt.Errorf("config: encode: %w", err)
+		return nil, fmt.Errorf("config: write temp: %w", err)
 	}
 	if err := tmp.Close(); err != nil {
 		os.Remove(tmpName)
-		return fmt.Errorf("config: close temp: %w", err)
+		return nil, fmt.Errorf("config: close temp: %w", err)
 	}
 	if err := os.Rename(tmpName, path); err != nil {
 		os.Remove(tmpName)
-		return fmt.Errorf("config: rename: %w", err)
+		return nil, fmt.Errorf("config: rename: %w", err)
 	}
-	return nil
+	if err := applyRestrictedPerms(path); err != nil {
+		// Do not remove the freshly-written config — losing user data on a
+		// perm-tightening failure would be worse than a temporarily loose ACL.
+		// Caller is expected to log the warning; the integrity HMAC covers
+		// tampering even if perms drift.
+		return nil, fmt.Errorf("config: tighten perms: %w", err)
+	}
+	return encoded, nil
 }

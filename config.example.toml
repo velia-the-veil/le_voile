@@ -1,7 +1,36 @@
 # Le Voile - Example configuration (copy to config.toml and fill in your values)
+#
+# ⚠ NE PAS ÉDITER `config.toml` À LA MAIN (NFR9j / Story 7.5)
+#
+# Le service signe `config.toml` au démarrage via HMAC-SHA256 (clé machine-local
+# 0600 / ACL user-only). Toute modification externe déclenche un refus de
+# démarrer + un bandeau d'alerte UI. Éditez vos préférences via :
+#   • l'UI Le Voile (pays, kill switch, toggles)
+#   • `levoile-ctl` pour les commandes avancées
+#
+# Si vous avez besoin de régénérer une config propre (après corruption, essai
+# manuel, backup), procédure hors-band :
+#   Linux   : sudo systemctl stop levoile.service
+#             sudo rm /etc/levoile/config.toml /etc/levoile/config.toml.hmac
+#             sudo systemctl start levoile.service
+#   Windows : arrêt de « Le Voile Service » (services.msc)
+#             suppression de %AppData%\LeVoile\config.toml + .hmac
+#             redémarrage du service
+# Au prochain démarrage, ce squelette (embarqué dans le binaire) est copié et
+# signé automatiquement.
+#
+# Déploiement admin / CI : pour pré-configurer une flotte, remplacez
+# `config.example.toml` dans l'arbre source (ou patchez le binaire)
+# AVANT le premier démarrage — le bootstrap copiera vos valeurs et signera.
+
+# [relay] section — intentionally left empty in the bootstrap skeleton.
+# The service will fail fast at startup ("relay public key is required")
+# rather than attempt a phantom tunnel against placeholder values.
+# Fill these in manually, or use the installer/package which ships a
+# pre-configured config.toml with registry-validated relay defaults.
 [relay]
-domain = "your-relay-domain.example.com"
-public_key_ed25519 = "YOUR_ED25519_PUBLIC_KEY_BASE64"
+domain = ""
+public_key_ed25519 = ""
 # insecure = true  # Uncomment for development only — NEVER in production
 
 # DNS resolver côté relais (story 3.5) — résolution interne avec blocklist.
@@ -63,3 +92,17 @@ allow_ipv6_leak = false
 # Override complet de la liste des serveurs STUN (ordre = ordre d'essai).
 # Si vide, utilise les défauts : Google x2 + Cloudflare.
 # servers = ["stun.l.google.com:19302", "stun1.l.google.com:19302", "stun.cloudflare.com:3478"]
+
+# Story 8.1 — Auto-update via GitHub releases (vérification périodique +
+# téléchargement signé Ed25519 + rollback automatique au redémarrage).
+# Toutes les valeurs ci-dessous sont les défauts ; la section peut être
+# omise ou commentée pour les conserver.
+[update]
+enabled = true
+github_owner = "velia-the-veil"
+github_repo = "le_voile"
+# Intervalle entre deux vérifications GitHub. Toute durée Go acceptée.
+check_interval = "6h"
+# Rate limit du téléchargement en kilo-octets par seconde (1 KBps = 1024 B/s).
+# Défaut 500 KBps = ~512 KB/s effectif (politesse réseau + non perceptible).
+rate_limit_kbps = 500

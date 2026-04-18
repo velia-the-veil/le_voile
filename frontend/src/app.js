@@ -123,6 +123,23 @@ async function pollStatus() {
     }
 }
 
+// integrityRecoveryHint builds the OS-specific recovery instructions shown
+// under the integrity-failed banner (Story 7.5 / NFR9j). No in-process reset
+// is offered by design, so the user needs the concrete paths to delete.
+function integrityRecoveryHint() {
+    var ua = (navigator.userAgent || '').toLowerCase();
+    var platform = (navigator.platform || '').toLowerCase();
+    var isWindows = platform.indexOf('win') === 0 || ua.indexOf('windows') !== -1;
+    var isLinux = platform.indexOf('linux') === 0 || ua.indexOf('linux') !== -1;
+    if (isWindows) {
+        return "Recuperation : arretez le service 'levoile-service' (services.msc), supprimez %AppData%\\LeVoile\\config.toml et config.toml.hmac, puis redemarrez le service.";
+    }
+    if (isLinux) {
+        return "Recuperation : sudo systemctl stop levoile.service && sudo rm /etc/levoile/config.toml /etc/levoile/config.toml.hmac && sudo systemctl start levoile.service";
+    }
+    return "Recuperation : arretez le service Le Voile, supprimez config.toml et config.toml.hmac dans le dossier de configuration, puis redemarrez le service.";
+}
+
 // clientSideServiceHint builds a degraded hint when the HTTP server is itself
 // unreachable. Prefer the backend hint whenever available — this is only a
 // fallback for the edge case where /api/status itself fails.
@@ -331,6 +348,22 @@ function updateUI(s) {
     var ksBanner = document.getElementById('killswitch-banner');
     if (ksBanner) {
         ksBanner.style.display = (s.killswitch_mode === 'degraded') ? '' : 'none';
+    }
+
+    // Story 7.5 / NFR9j — config integrity banner (highest priority).
+    // No reset button by design: recovery is hors-band only.
+    var intBanner = document.getElementById('integrity-banner');
+    if (intBanner) {
+        intBanner.style.display = s.integrity_failed ? '' : 'none';
+        if (s.integrity_failed) {
+            var hint = document.getElementById('integrity-recovery-hint');
+            if (hint && !hint.textContent) {
+                hint.textContent = integrityRecoveryHint();
+            }
+            if (dom.btnConnect) {
+                dom.btnConnect.className = 'btn hidden';
+            }
+        }
     }
 
     // Test link

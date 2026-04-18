@@ -332,6 +332,85 @@ func TestProgram_RollbackAccessors(t *testing.T) {
 	}
 }
 
+// TestTryInstallStagedUpdate_AbandonsAfterMaxRetries verifies the install-retry
+// cap (Story 8.2 Task 6). When the persisted retry counter already meets or
+// exceeds the configured maximum, tryInstallStagedUpdate must clear the staged
+// payload and return without attempting Install() again, so we don't loop on
+// every boot.
+func TestTryInstallStagedUpdate_AbandonsAfterMaxRetries(t *testing.T) {
+	var buf bytes.Buffer
+	oldStderr := serviceStderr
+	serviceStderr = &buf
+	defer func() { serviceStderr = oldStderr }()
+
+	stagingDir := t.TempDir()
+
+	// Pre-write a retry counter at the cap.
+	if err := updater.WriteInstallRetries(stagingDir, 3); err != nil {
+		t.Fatalf("seed retries: %v", err)
+	}
+
+	// Create fake staged files so HasStagedUpdate returns non-nil.
+	binaryName := "le_voile_" + runtime.GOOS + "_" + runtime.GOARCH
+	if runtime.GOOS == "windows" {
+		binaryName += ".exe"
+	}
+	stagedBinary := filepath.Join(stagingDir, binaryName)
+	if err := os.WriteFile(stagedBinary, []byte("fake staged binary"), 0o644); err != nil {
+		t.Fatalf("write staged binary: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(stagingDir, "staged_version.txt"), []byte("9.9.9"), 0o600); err != nil {
+		t.Fatalf("write staged version: %v", err)
+	}
+	// checksums + signature files must exist (they're path references).
+	os.WriteFile(filepath.Join(stagingDir, "checksums.txt"), []byte("x"), 0o600)
+	os.WriteFile(filepath.Join(stagingDir, "checksums.txt.sig"), []byte("x"), 0o600)
+
+	cfg := Config{
+		RelayDomain:             "test.example.com",
+		RelayPubKey:             "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+		UpdateEnabled:           true,
+		UpdateStagingDir:        stagingDir,
+		UpdateMaxInstallRetries: 3,
+	}
+	prg := NewProgram(cfg)
+
+	// tryInstallStagedUpdate must abandon the staged payload.
+	prg.tryInstallStagedUpdate(context.Background())
+
+	// Staged binary should be wiped.
+	if _, err := os.Stat(stagedBinary); !os.IsNotExist(err) {
+		t.Errorf("expected staged binary removed, err=%v", err)
+	}
+	// Retry counter should be cleared.
+	n, err := updater.ReadInstallRetries(stagingDir)
+	if err != nil {
+		t.Fatalf("ReadInstallRetries: %v", err)
+	}
+	if n != 0 {
+		t.Errorf("expected retry counter cleared after abandon, got %d", n)
+	}
+	if !bytes.Contains(buf.Bytes(), []byte("abandoned after")) {
+		t.Errorf("expected 'abandoned after' log line, got: %s", buf.String())
+	}
+}
+
+// TestScheduleServiceRestart_NoSvc_NoOp verifies that the rollback restart path
+// is a no-op when the program has no kardianos service reference attached
+// (portable mode, direct invocation, or test harness). This guards against a
+// nil-pointer panic on the rollback code path.
+func TestScheduleServiceRestart_NoSvc_NoOp(t *testing.T) {
+	cfg := Config{
+		RelayDomain: "test.example.com",
+		RelayPubKey: "dGVzdA==",
+	}
+	prg := NewProgram(cfg)
+	// prg.svc is nil (never Start()ed under a service.Service); scheduleServiceRestart
+	// must return immediately without starting a goroutine or panicking.
+	prg.scheduleServiceRestart()
+	// If we reach this line the function returned cleanly.
+}
+
 func TestService_TryRollbackIfNeeded_NoInstall(t *testing.T) {
 	var buf bytes.Buffer
 	oldStderr := serviceStderr

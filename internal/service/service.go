@@ -67,6 +67,13 @@ type Config struct {
 	UpdateRepo        string // GitHub repo
 	UpdateStagingDir  string // staging directory path
 	UpdatePubKey      string // Ed25519 public key for update signature verification (falls back to RelayPubKey if empty)
+	// UpdateAllowWhenPackaged, when true, forces auto-update even when the binary
+	// was installed by a system package manager. Default false (package manager
+	// is authoritative to prevent version conflicts).
+	UpdateAllowWhenPackaged bool
+	// UpdateMaxInstallRetries caps retries of install per staged version before
+	// abandoning it and re-downloading on the next check. Default 3.
+	UpdateMaxInstallRetries int
 	BlocklistEnabled  bool
 	BlocklistInterval time.Duration
 
@@ -252,6 +259,13 @@ type Program struct {
 	// (NFR9c). Empty value = ctl auth disabled (UI/IPC paths still work).
 	// Story 5.9.
 	ctlToken []byte
+
+	// integrityFailed is true when startup HMAC verification of config.toml
+	// failed (Story 7.5 / NFR9j). When set, the IPC handler refuses Connect
+	// and any config-mutating RPC. Only recovery is out-of-band (stop +
+	// delete config + .hmac + restart → Bootstrap regenerates a signed
+	// skeleton). No in-process reset path is exposed by design.
+	integrityFailed atomic.Bool
 
 	// Story 6.3 — anomaly auto-recovery state.
 	// anomalyActive is true while a RecoverFromAnomaly sequence is running.
@@ -450,6 +464,22 @@ func (p *Program) ConcurrentVPNError() *preflight.ErrConcurrentVPN {
 	}
 	e, _ := v.(*preflight.ErrConcurrentVPN)
 	return e
+}
+
+// SetIntegrityFailed marks the config-integrity state (Story 7.5 / NFR9j).
+// When true, the IPC handler rejects Connect and any config-mutating action
+// with an "integrity_failed" error so the only exit path is the documented
+// out-of-band recovery (stop service → delete config + .hmac → restart).
+// Set once at startup by cmd/client after integrity.Verify.
+func (p *Program) SetIntegrityFailed(failed bool) {
+	p.integrityFailed.Store(failed)
+}
+
+// IntegrityFailed reports whether startup config-integrity verification
+// detected tampering. Used by the IPC handler to gate actions and by the
+// UI to show a permanent warning banner.
+func (p *Program) IntegrityFailed() bool {
+	return p.integrityFailed.Load()
 }
 
 // SetIPCServer registers IPC start/stop callbacks to be called during lifecycle.
@@ -1502,6 +1532,12 @@ func (p *Program) run() {
 
 	// --- 7. Updater start (if enabled) ---
 	if p.config.UpdateEnabled && p.config.UpdateStagingDir != "" {
+		// Detect package-managed binary so we can short-circuit the loop.
+		// The installer was created earlier in tryInstallStagedUpdate().
+		packageManaged := false
+		if p.installer != nil && !p.config.UpdateAllowWhenPackaged {
+			packageManaged = p.installer.IsPackageManaged()
+		}
 		upd, err := updater.NewUpdater(updater.UpdaterConfig{
 			Owner:                p.config.UpdateOwner,
 			Repo:                 p.config.UpdateRepo,
@@ -1509,6 +1545,7 @@ func (p *Program) run() {
 			StagingDir:           p.config.UpdateStagingDir,
 			CheckInterval:        p.config.UpdateInterval,
 			RateLimitBytesPerSec: p.config.UpdateRateLimit,
+			PackageManaged:       packageManaged,
 		})
 		if err != nil {
 			fmt.Fprintf(serviceStderr, "service: updater init: %v\n", err)
@@ -1764,12 +1801,68 @@ func (p *Program) tryInstallStagedUpdate(ctx context.Context) {
 		return
 	}
 
+	// Skip install when the binary is package-managed (deb/rpm/pacman) unless
+	// explicitly overridden. The system package manager is authoritative for
+	// version upgrades — writing a new binary on top would conflict on the
+	// next `apt/dnf/pacman upgrade` cycle.
+	if inst.IsPackageManaged() && !p.config.UpdateAllowWhenPackaged {
+		// NFR22a: log only the binary's parent directory (system path like
+		// /usr/bin), never the full resolved path which could expose a
+		// non-default install layout.
+		fmt.Fprintf(serviceStderr,
+			"updater: install: skipped — binary is package-managed (%s), use system package manager to upgrade\n",
+			filepath.Dir(inst.ExecutablePath()))
+		// Remove the staged payload so we don't repeat this log on every boot.
+		_ = os.Remove(staged.BinaryPath)
+		_ = os.Remove(staged.ChecksumPath)
+		_ = os.Remove(staged.SignaturePath)
+		if staged.VersionFile != "" {
+			_ = os.Remove(staged.VersionFile)
+		}
+		return
+	}
+
+	// Check install-retry counter: abandon the staged payload if previous
+	// attempts have already failed past the configured cap. This prevents an
+	// infinite retry loop when the staged binary is structurally broken
+	// (e.g. incompatible CPU arch, missing dependency, disk-full at target).
+	maxRetries := p.config.UpdateMaxInstallRetries
+	if maxRetries <= 0 {
+		maxRetries = 3
+	}
+	retries, retriesErr := updater.ReadInstallRetries(p.config.UpdateStagingDir)
+	if retriesErr != nil {
+		fmt.Fprintf(serviceStderr, "service: read install retries: %v\n", retriesErr)
+	}
+	if retries >= maxRetries {
+		fmt.Fprintf(serviceStderr,
+			"updater: install: abandoned after %d retries, staged payload cleared (will re-download on next check)\n",
+			retries)
+		_ = os.Remove(staged.BinaryPath)
+		_ = os.Remove(staged.ChecksumPath)
+		_ = os.Remove(staged.SignaturePath)
+		if staged.VersionFile != "" {
+			_ = os.Remove(staged.VersionFile)
+		}
+		_ = updater.ClearInstallRetries(p.config.UpdateStagingDir)
+		return
+	}
+
 	if err := inst.Install(ctx, staged); err != nil {
 		fmt.Fprintf(serviceStderr, "service: install update: %v\n", err)
 		p.updateMu.Lock()
 		p.lastInstallError = err.Error()
 		p.updateMu.Unlock()
+		// Bump the retry counter so repeated boots don't loop forever.
+		if werr := updater.WriteInstallRetries(p.config.UpdateStagingDir, retries+1); werr != nil {
+			fmt.Fprintf(serviceStderr, "service: write install retries: %v\n", werr)
+		}
 		return
+	}
+
+	// Install succeeded — clear any prior retry counter for this staged payload.
+	if err := updater.ClearInstallRetries(p.config.UpdateStagingDir); err != nil {
+		fmt.Fprintf(serviceStderr, "service: clear install retries: %v\n", err)
 	}
 
 	// Mark that a rollback is possible until tunnel confirms working
@@ -1847,6 +1940,12 @@ func (p *Program) tryRollbackIfNeeded(ctx context.Context, tunnelErr error) bool
 
 // scheduleServiceRestart arranges for the OS service to restart after run() exits.
 // Called after a successful rollback so the restored binary is loaded by the service manager.
+//
+// Platform mapping (provided by kardianos/service.Service.Restart):
+//   - Linux (systemd): shells out to `systemctl restart <name>.service`
+//   - Linux (SysV / OpenRC): shells out to `service <name> restart` / `rc-service <name> restart`
+//   - Windows: SCM StopService + StartService via advapi32
+//
 // If no service reference is available (tests, portable mode), this is a no-op; the OS
 // service manager's configured restart policy (e.g., Windows SCM auto-restart) applies.
 func (p *Program) scheduleServiceRestart() {

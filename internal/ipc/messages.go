@@ -157,6 +157,13 @@ type Response struct {
 	// preflight.ErrConcurrentVPN.
 	ConcurrentVPN bool `json:"concurrent_vpn,omitempty"`
 
+	// IntegrityFailed is true when the service detected external tampering
+	// with config.toml at startup (HMAC-SHA256 mismatch, NFR9j / Story 7.5).
+	// The UI must show a permanent red banner and hide connect/disconnect
+	// actions. No in-process reset is offered — recovery is hors-band:
+	// stop service + delete config + .hmac + restart.
+	IntegrityFailed bool `json:"integrity_failed,omitempty"`
+
 	// FirewallAltered is true when the WFP/nftables watchdog (Story 2.7) has
 	// detected external tampering with kill-switch rules.
 	FirewallAltered bool `json:"firewall_altered,omitempty"`

@@ -1,0 +1,103 @@
+# Story 7.4 — CI pipeline : tests, security gates, snapshot signing smoke test.
+#
+# Cette workflow NE fait PAS de release réelle. Par choix délibéré (NFR22g),
+# la master key de signature ne vit que sur la machine du mainteneur — jamais
+# dans les secrets GitHub. Les vraies releases se font via `make release-sign`
+# en local (scripts/release-sign.sh), puis upload manuel ou via `gh release`.
+#
+# Ce pipeline valide que le chemin de release compile, teste, et produit bien
+# des signatures valides via une clé Ed25519 éphémère jetable générée à chaque
+# run. Il bloque les PRs qui casseraient le flow de signature.
+name: release-ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: go test + vet
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.x"
+          cache: true
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: go test -race
+        run: go test -race -count=1 ./cmd/... ./internal/...
+
+  security:
+    name: security gates (NFR22d/e/f)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.x"
+          cache: true
+
+      - name: install govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+
+      - name: govulncheck
+        run: govulncheck ./...
+
+      - name: install gosec
+        run: go install github.com/securego/gosec/v2/cmd/gosec@latest
+
+      - name: gosec -severity medium
+        run: gosec -severity medium -quiet ./...
+
+  snapshot-signing:
+    name: release snapshot + signature smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: [test]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.x"
+          cache: true
+
+      - name: install goreleaser
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          install-only: true
+          version: "~> v2"
+
+      - name: run signing smoke test
+        run: bash scripts/test-release-signing.sh
+        # Aucun secret utilisé — la clé est éphémère jetable.
+
+      - name: upload snapshot artifacts (debug only)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: goreleaser-dist-failed
+          path: |
+            dist/**/*
+          retention-days: 3

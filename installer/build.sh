@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Build Le Voile Windows installer.
-# Prerequisites: goreleaser, makensis
+# Prerequisites: goreleaser, makensis, internal/tun/wintun/wintun.dll (run `make wintun` if missing).
 # IMPORTANT: Inject the relay Ed25519 public key in config-default.toml before distribution builds.
 set -euo pipefail
 
@@ -8,6 +8,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 BUILD_DIR="$SCRIPT_DIR/build"
 VERSION="${1:-0.0.0-dev}"
+WINTUN_SRC="$PROJECT_ROOT/internal/tun/wintun/wintun.dll"
 
 echo "=== Le Voile Installer Build (v$VERSION) ==="
 
@@ -19,6 +20,12 @@ for cmd in goreleaser makensis; do
   fi
 done
 
+# Story 7.1 — wintun.dll must be present for NSIS to bundle it into Program Files.
+if [[ ! -f "$WINTUN_SRC" ]]; then
+  echo "ERROR: $WINTUN_SRC missing. Run 'make wintun' (or bash scripts/fetch-wintun.sh) first." >&2
+  exit 1
+fi
+
 # Step 1: Build binaries with GoReleaser
 echo "--- Building binaries with GoReleaser ---"
 cd "$PROJECT_ROOT"
@@ -29,17 +36,23 @@ echo "--- Preparing build directory ---"
 rm -rf "$BUILD_DIR"
 mkdir -p "$BUILD_DIR/icons"
 
-# Copy binaries from GoReleaser output
+# Copy binaries from GoReleaser output (Story 7.1 — preserve canonical names).
 cp dist/service_windows_amd64_v1/levoile-service.exe "$BUILD_DIR/"
-cp dist/ui_windows_amd64_v1/levoile-ui.exe "$BUILD_DIR/levoile-desktop.exe"
+cp dist/ui_windows_amd64_v1/levoile-ui.exe "$BUILD_DIR/"
+cp dist/ctl-windows_windows_amd64_v1/levoile-ctl.exe "$BUILD_DIR/"
 
-# Copy assets
-cp "$PROJECT_ROOT/assets/icons/"*.ico "$BUILD_DIR/icons/"
+# Copy Wintun DLL (Story 7.1 — bundled into Program Files for auditability).
+cp "$WINTUN_SRC" "$BUILD_DIR/wintun.dll"
+
+# Copy status icons (Story 5.x — UI tray icons live next to the UI source).
+cp "$PROJECT_ROOT/internal/ui/icons/connected.ico" "$BUILD_DIR/icons/"
+cp "$PROJECT_ROOT/internal/ui/icons/connecting.ico" "$BUILD_DIR/icons/"
+cp "$PROJECT_ROOT/internal/ui/icons/disconnected.ico" "$BUILD_DIR/icons/"
 cp "$SCRIPT_DIR/config-default.toml" "$BUILD_DIR/"
 
 # Step 3: Compile NSIS installer
 echo "--- Compiling NSIS installer ---"
 cd "$SCRIPT_DIR"
-makensis /DAPP_VERSION="$VERSION" levoile.nsi
+makensis -DAPP_VERSION="$VERSION" levoile.nsi
 
 echo "=== Build complete: installer/LeVoile-Setup.exe ==="

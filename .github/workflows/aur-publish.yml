@@ -1,0 +1,270 @@
+name: aur-publish
+
+# Publication semi-automatique du paquet AUR `levoile` (story 7.3).
+#
+# Triggers :
+#   - release:published : publication réelle sur AUR à chaque nouvelle release
+#     GitHub. `dry_run` est évalué à "" (falsy) → push activé par défaut.
+#   - workflow_dispatch : déclenchement manuel pour valider la pipeline. Le
+#     champ `dry_run` par défaut à true — commit signé localement, pas de push.
+#
+# Sécurité :
+#   - `permissions: contents: read` (strict minimum — l'Action ne modifie pas
+#     le repo principal, seulement le repo AUR distant via SSH).
+#   - Clé SSH + clé GPG récupérées en secrets chiffrés ; aucun echo.
+#   - known_hosts pré-vérifié offline (pas de ssh-keyscan en runtime, vulnérable
+#     au MITM au premier run).
+#   - Passphrase GPG injectée via env var + --passphrase-fd 0 (jamais écrite sur
+#     disque, jamais dans argv — cf. review H3).
+#   - Cleanup systématique via `if: always()` final.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version sans préfixe v (ex: 0.1.0)'
+        type: string
+        required: true
+      dry_run:
+        description: 'Dry-run : commit signé localement sans push AUR'
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+# Série les publications AUR — un push raté en cours de traitement ne doit pas
+# être écrasé par la release suivante. Pas de cancel-in-progress.
+concurrency:
+  group: aur-publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Update AUR repo levoile
+    runs-on: ubuntu-latest
+    # Image Arch officielle — dispose de makepkg, pacman, et des conventions
+    # utilisateurs Arch attendues par les hooks de scripts pacman. Plus léger
+    # que d'installer pacman-contrib sur Ubuntu.
+    container:
+      image: archlinux:base-devel
+    timeout-minutes: 10
+
+    steps:
+      - name: Install tooling
+        run: |
+          pacman -Sy --noconfirm --needed git openssh gnupg curl
+
+      - name: Checkout repo principal
+        uses: actions/checkout@v4
+
+      - name: Resolve version tag
+        id: ver
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "release" ]; then
+            raw="${{ github.event.release.tag_name }}"
+            raw="${raw#v}"
+          else
+            raw="${{ inputs.version }}"
+          fi
+          if [ -z "$raw" ]; then
+            echo "ERROR: version non résolue (dispatch sans input ? release sans tag_name ?)" >&2
+            exit 1
+          fi
+          echo "pkgver=$raw" >> "$GITHUB_OUTPUT"
+          echo "[ver] pkgver=$raw" >&2
+
+      - name: Fetch .deb artefacts et calcul SHA256
+        id: sha
+        env:
+          PKGVER: ${{ steps.ver.outputs.pkgver }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          base="https://github.com/${REPO}/releases/download/v${PKGVER}"
+          curl --fail --location --silent --show-error \
+            -o /tmp/amd64.deb "${base}/levoile_${PKGVER}_amd64.deb"
+          curl --fail --location --silent --show-error \
+            -o /tmp/arm64.deb "${base}/levoile_${PKGVER}_arm64.deb"
+          sha_amd64=$(sha256sum /tmp/amd64.deb | awk '{print $1}')
+          sha_arm64=$(sha256sum /tmp/arm64.deb | awk '{print $1}')
+          echo "sha_amd64=$sha_amd64" >> "$GITHUB_OUTPUT"
+          echo "sha_arm64=$sha_arm64" >> "$GITHUB_OUTPUT"
+          echo "[sha] amd64=$sha_amd64" >&2
+          echo "[sha] arm64=$sha_arm64" >&2
+
+      - name: Create aurbuilder user (makepkg refuse EUID 0)
+        run: |
+          set -euo pipefail
+          # `base-devel` inclut le group `wheel` et sudo. useradd doit réussir
+          # ou on arrête la chaîne — pas de `|| true` qui masquerait l'erreur.
+          if ! id aurbuilder >/dev/null 2>&1; then
+            useradd -m -G wheel aurbuilder
+          fi
+          echo "[user] aurbuilder prêt ($(id aurbuilder))"
+
+      - name: Update PKGBUILD et régénérer .SRCINFO
+        env:
+          PKGVER: ${{ steps.ver.outputs.pkgver }}
+          SHA_AMD64: ${{ steps.sha.outputs.sha_amd64 }}
+          SHA_ARM64: ${{ steps.sha.outputs.sha_arm64 }}
+        run: |
+          set -euo pipefail
+          # Édition depuis la racine du workspace — sed regex idempotente
+          # (re-run possible sans régression).
+          sed -i -E "s|^pkgver=.*|pkgver=${PKGVER}|" packaging/arch/PKGBUILD
+          sed -i "s|REPLACE_ME_AMD64|${SHA_AMD64}|g" packaging/arch/PKGBUILD
+          sed -i "s|REPLACE_ME_ARM64|${SHA_ARM64}|g" packaging/arch/PKGBUILD
+
+          # makepkg --printsrcinfo doit tourner en user non-root ET dans le
+          # répertoire contenant le PKGBUILD. sudo préserve le CWD → on passe
+          # par un cd explicite dans le sous-shell (pas de double cd par
+          # rapport au workspace root).
+          chown -R aurbuilder: packaging/arch
+          sudo -u aurbuilder bash -c 'cd packaging/arch && makepkg --printsrcinfo > .SRCINFO'
+          chown -R root: packaging/arch
+
+          echo "[srcinfo] premiers 30 lignes régénérées :"
+          head -30 packaging/arch/.SRCINFO >&2
+
+      - name: Import GPG key
+        env:
+          GPG_PRIV: ${{ secrets.AUR_GPG_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "${GPG_PRIV:-}" ]; then
+            echo "ERROR: secret AUR_GPG_PRIVATE_KEY vide" >&2
+            exit 1
+          fi
+          mkdir -p ~/.gnupg
+          chmod 700 ~/.gnupg
+          # Heredoc quoted ('EOF') → pas d'interpolation, pas de secret.
+          cat > ~/.gnupg/gpg.conf <<'EOF'
+          use-agent
+          pinentry-mode loopback
+          EOF
+          cat > ~/.gnupg/gpg-agent.conf <<'EOF'
+          allow-loopback-pinentry
+          EOF
+          gpgconf --kill gpg-agent || true
+          printf '%s' "$GPG_PRIV" | gpg --batch --import
+          key_id=$(gpg --list-secret-keys --with-colons | awk -F: '/^sec:/{print $5;exit}')
+          if [ -z "$key_id" ]; then
+            echo "ERROR: aucune clé secrète importée" >&2
+            exit 1
+          fi
+          echo "GPG_KEY_ID=$key_id" >> "$GITHUB_ENV"
+          echo "[gpg] clé importée : $key_id"
+
+      - name: Setup SSH pour AUR
+        env:
+          SSH_PRIV: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+          SSH_HOSTS: ${{ secrets.AUR_SSH_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          if [ -z "${SSH_PRIV:-}" ] || [ -z "${SSH_HOSTS:-}" ]; then
+            echo "ERROR: secrets AUR_SSH_PRIVATE_KEY / AUR_SSH_KNOWN_HOSTS manquants" >&2
+            exit 1
+          fi
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          # `tr -d '\r'` normalise les CRLF éventuels (secret collé depuis
+          # Windows clipboard — OpenSSH rejetterait la clé avec CR). Pas de
+          # printf '\n' final : `tr` préserve le newline final de la clé armor.
+          printf '%s' "$SSH_PRIV"  | tr -d '\r' > ~/.ssh/aur
+          printf '%s' "$SSH_HOSTS" | tr -d '\r' > ~/.ssh/known_hosts
+          # Garantir un newline final pour known_hosts (ssh-keygen -F l'exige).
+          [ "$(tail -c1 ~/.ssh/known_hosts | wc -l)" -eq 0 ] && echo >> ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/aur
+          chmod 644 ~/.ssh/known_hosts
+          cat > ~/.ssh/config <<'EOF'
+          Host aur.archlinux.org
+              IdentityFile ~/.ssh/aur
+              IdentitiesOnly yes
+              User aur
+              StrictHostKeyChecking yes
+              UserKnownHostsFile ~/.ssh/known_hosts
+          EOF
+          chmod 600 ~/.ssh/config
+          # Smoke test : l'URL AUR est résoluble + la clé hôte matche le pinning.
+          ssh-keygen -F aur.archlinux.org >/dev/null || {
+            echo "ERROR: aur.archlinux.org absent du known_hosts — vérifier le secret." >&2
+            exit 1
+          }
+
+      - name: Clone AUR et commit signé
+        env:
+          PKGVER: ${{ steps.ver.outputs.pkgver }}
+          # Secret exporté comme variable d'environnement, jamais inline dans
+          # une commande → pas d'exposition argv (/proc/*/cmdline) ni fichier.
+          GPG_PASS: ${{ secrets.AUR_GPG_PASSPHRASE }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          set -euo pipefail
+          git config --global user.name  "Velia the Veil (AUR bot)"
+          git config --global user.email "aur-release@levoile.dev"
+          git config --global user.signingkey "$GPG_KEY_ID"
+          git config --global commit.gpgsign true
+          git config --global init.defaultBranch master
+
+          # Wrapper GPG sans interpolation de secret — la passphrase est lue
+          # depuis $GPG_PASS à l'exécution (variable d'env héritée du step).
+          # Heredoc quoted 'EOF' → le fichier contient des `$GPG_PASS` littéraux
+          # que le shell expand seulement au moment de lancer gpg.
+          cat > /tmp/gpg-sign-wrapper.sh <<'EOF'
+          #!/bin/sh
+          # Lit la passphrase depuis l'env (jamais en argv) via --passphrase-fd 0.
+          exec sh -c 'printf "%s" "$GPG_PASS" | gpg --batch --yes --pinentry-mode loopback --passphrase-fd 0 "$@"' _ "$@"
+          EOF
+          chmod 700 /tmp/gpg-sign-wrapper.sh
+          git config --global gpg.program /tmp/gpg-sign-wrapper.sh
+
+          # Sanity check : la passphrase débloque bien la clé avant le commit.
+          # `--passphrase-fd 0` lit depuis stdin → jamais en argv.
+          printf '%s' "$GPG_PASS" | gpg --batch --yes --pinentry-mode loopback \
+              --passphrase-fd 0 --local-user "$GPG_KEY_ID" \
+              --clearsign <<< "sanity" >/dev/null
+
+          # Clone du repo AUR (devra avoir été créé au préalable avec un push
+          # initial manuel — cf. docs/aur-release.md §6).
+          git clone ssh://aur@aur.archlinux.org/levoile.git /tmp/aur
+
+          cp packaging/arch/PKGBUILD        /tmp/aur/PKGBUILD
+          cp packaging/arch/.SRCINFO        /tmp/aur/.SRCINFO
+          cp packaging/arch/levoile.install /tmp/aur/levoile.install
+
+          cd /tmp/aur
+          git add PKGBUILD .SRCINFO levoile.install
+
+          if git diff --cached --quiet; then
+            echo "[aur] aucun changement — exit propre."
+            exit 0
+          fi
+
+          git commit -S -m "Release v${PKGVER}"
+
+          # Vérification obligatoire de la signature — sinon on refuse le push.
+          if ! git log --show-signature -1 2>&1 | grep -q "Good signature"; then
+            echo "ERROR: le dernier commit n'est pas signé GPG." >&2
+            git log --show-signature -1 >&2
+            exit 1
+          fi
+          echo "[aur] commit signé vérifié."
+
+          if [ "${DRY_RUN:-false}" = "true" ]; then
+            echo "[aur] DRY RUN — pas de push."
+            git log --oneline -3
+          else
+            git push origin master
+            echo "[aur] release v${PKGVER} publiée sur AUR."
+          fi
+
+      - name: Cleanup secrets
+        if: always()
+        run: |
+          # gpgconf --kill all tue les agents en mémoire avant de wipe les fichiers.
+          gpgconf --kill all 2>/dev/null || true
+          rm -rf ~/.gnupg ~/.ssh /tmp/gpg-sign-wrapper.sh /tmp/aur /tmp/*.deb || true

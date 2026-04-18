@@ -345,6 +345,25 @@ html, body {
     border-bottom: 1px solid rgba(0, 0, 0, 0.25);
 }
 
+/* Story 7.5 / NFR9j — sticky banner for detected config tampering. Higher
+   z-index than the kill-switch banner so it stacks on top when both fire.
+   Two-line layout: headline + smaller recovery hint with the OS-specific
+   paths rendered by app.js on startup. */
+.integrity-failed-banner {
+    position: sticky; top: 0; z-index: 250;
+    background: #7a1c1c; color: #fff;
+    font-family: 'Rajdhani', sans-serif; font-weight: 700; font-size: 13px;
+    letter-spacing: 0.4px;
+    padding: 10px 16px; text-align: center;
+    border-bottom: 1px solid rgba(0, 0, 0, 0.45);
+    line-height: 1.4;
+}
+.integrity-recovery-hint {
+    display: block; margin-top: 4px;
+    font-family: 'Inter', sans-serif; font-weight: 400; font-size: 11px;
+    letter-spacing: 0.2px; color: rgba(255, 255, 255, 0.88);
+}
+
 /* Reusable modal extras — add .modal-hint for a secondary line under the main
    .modal-text, and .modal-checkbox for a left-aligned "don't ask again"-style
    opt-out inside any .modal container. Used by the quit-confirm modal. */

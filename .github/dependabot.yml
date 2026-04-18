@@ -1,0 +1,51 @@
+version: 2
+
+# Le Voile — Dependabot config.
+#
+# Pourquoi : en solo dev, je n'ai aucun autre signal humain pour savoir qu'une
+# dépendance vient d'être mise à jour ou qu'une faille a été divulguée. Complément
+# du job `govulncheck` dans release-ci (détection) : Dependabot fait la
+# remediation (PRs automatiques vers les versions patchées).
+#
+# Cadence : hebdo le lundi matin — assez réactif pour les CVEs critiques sans
+# noyer la file de PRs pour des bumps mineurs chaque jour.
+
+updates:
+  # Modules Go (client + relais + tooling release)
+  - package-ecosystem: "gomod"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "08:00"
+      timezone: "Europe/Paris"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "go"
+    groups:
+      # Les bumps patch / minor dans la stdlib x/* sont fusionnés en une
+      # seule PR pour limiter le bruit. Les majors et les deps critiques
+      # (quic-go, BurntSushi/toml, webview) restent en PRs séparées pour
+      # un review attentif.
+      golang-x:
+        patterns:
+          - "golang.org/x/*"
+        update-types:
+          - "patch"
+          - "minor"
+    # Les binaires tools (genkey/signpkg/verifypkg) partagent le même go.mod
+    # donc couverts par la seule entrée racine.
+
+  # Workflows GitHub Actions (actions/checkout, setup-go, goreleaser-action…)
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "08:00"
+      timezone: "Europe/Paris"
+    open-pull-requests-limit: 3
+    labels:
+      - "dependencies"
+      - "ci"

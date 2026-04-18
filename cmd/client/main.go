@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -14,9 +15,11 @@ import (
 	"github.com/velia-the-veil/le_voile/internal/browser"
 	"github.com/velia-the-veil/le_voile/internal/config"
 	"github.com/velia-the-veil/le_voile/internal/ctlauth"
+	"github.com/velia-the-veil/le_voile/internal/firewall"
 	"github.com/velia-the-veil/le_voile/internal/ipc"
 	"github.com/velia-the-veil/le_voile/internal/ipchandler"
 	svc "github.com/velia-the-veil/le_voile/internal/service"
+	"github.com/velia-the-veil/le_voile/internal/tun"
 )
 
 var version string
@@ -105,8 +108,11 @@ func resolveConfig(cfgPath, flagDomain, flagPubKey string, flagInsecure bool) (r
 		rc.relayDomain = defaultRelayDomain
 	}
 
-	if rc.relayPubKey == "" {
-		return resolvedConfig{}, fmt.Errorf("client: relay public key is required (set in config file or via -relay-pubkey flag)")
+	if rc.relayPubKey == "" || rc.relayPubKey == "YOUR_ED25519_PUBLIC_KEY_BASE64" {
+		return resolvedConfig{}, fmt.Errorf(
+			"client: relay public key is required — remplissez relay.public_key_ed25519 dans %s, passez -relay-pubkey, ou utilisez un paquet d'installation qui fournit une config signée",
+			cfgPath,
+		)
 	}
 
 	// Resolve update config.
@@ -188,12 +194,62 @@ func resolveConfig(cfgPath, flagDomain, flagPubKey string, flagInsecure bool) (r
 }
 
 // newServiceConfig returns the kardianos/service configuration.
+//
+// Option block configures SCM auto-restart on crash (Story 7.1 AC2 + NFR15) —
+// kardianos/service translates these into `sc failure LeVoile reset= 10
+// actions= restart/5000` at install time. Without this, a crashed service
+// stays down until manual restart, defeating the kill-switch guarantee.
 func newServiceConfig() *service.Config {
 	return &service.Config{
 		Name:        svc.ServiceName,
 		DisplayName: "Le Voile",
 		Description: "VPN minimaliste zero-log",
+		Option: service.KeyValue{
+			"OnFailure":              "restart",
+			"OnFailureDelayDuration": "5s",
+			"OnFailureResetPeriod":   10,
+		},
 	}
+}
+
+// cleanupFirewall is a package-level seam so tests can stub out the WFP/nft
+// call without going near the real OS APIs (which require elevation).
+var cleanupFirewall = func(ctx context.Context) (int, error) {
+	return firewall.New(nil, firewall.Options{}).CleanupOrphans(ctx)
+}
+
+// cleanupTun is a package-level seam so tests can stub out the TUN/Wintun
+// adapter destruction without needing CAP_NET_ADMIN / LocalSystem.
+var cleanupTun = func() error {
+	return tun.CleanupOrphan(tun.DefaultName)
+}
+
+// runCleanup forces removal of orphan firewall filters (WFP provider on
+// Windows / nftables ruleset on Linux) and the TUN/Wintun adapter named
+// levoile0. Both operations are idempotent — they return success when there
+// is nothing to clean. Used by NSIS uninstall (Story 7.1) to recover from
+// crashed-service scenarios where shutdown() never ran.
+func runCleanup() int {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	exit := 0
+
+	if n, err := cleanupFirewall(ctx); err != nil {
+		fmt.Fprintf(os.Stderr, "client: cleanup firewall: %v\n", err)
+		exit = 1
+	} else {
+		fmt.Printf("Firewall cleanup: %d orphan filter(s) removed.\n", n)
+	}
+
+	if err := cleanupTun(); err != nil {
+		fmt.Fprintf(os.Stderr, "client: cleanup TUN: %v\n", err)
+		exit = 1
+	} else {
+		fmt.Printf("TUN cleanup: interface %q removed if present.\n", tun.DefaultName)
+	}
+
+	return exit
 }
 
 // handleServiceCommand handles install/uninstall/start/stop sub-commands.
@@ -248,17 +304,62 @@ func main() {
 		case "install", "uninstall", "start", "stop":
 			handleServiceCommand(args[0])
 			return
+		case "cleanup":
+			// Story 7.1 — force-cleanup of WFP filters + Wintun adapter for
+			// uninstall robustness. Runs without service config, idempotent.
+			os.Exit(runCleanup())
 		case "run":
 			// Explicit run mode — falls through to full service setup below.
 		default:
 			fmt.Fprintf(os.Stderr, "client: unknown command: %s\n", args[0])
-			fmt.Fprintln(os.Stderr, "Available commands: install, uninstall, start, stop, run")
+			fmt.Fprintln(os.Stderr, "Available commands: install, uninstall, start, stop, cleanup, run")
 			os.Exit(1)
 		}
 	}
 
-	// Resolve config (only needed for run mode).
+	// Resolve config (only needed for run mode). Bootstrap a signed skeleton
+	// on first run so Load always sees a file — embed-based default from
+	// config.example.toml. NFR9j / Story 7.5 AC3.
 	cfgPath := config.DiscoverPath(*configFlag)
+	if err := config.Bootstrap(cfgPath); err != nil {
+		fmt.Fprintf(os.Stderr, "client: config bootstrap: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Story 7.5 — verify config integrity before touching resolved settings.
+	// A mismatch does NOT exit the process: the service starts in a locked
+	// mode (Connect refused, kill switch state preserved) so the UI can
+	// surface the alert banner. First run / legacy upgrade autoheals by
+	// writing a fresh HMAC sidecar.
+	integrityFailed := false
+	keyPath, keyErr := config.IntegrityKeyPath()
+	if keyErr != nil {
+		fmt.Fprintf(os.Stderr, "client: integrity key path: %v\n", keyErr)
+		os.Exit(1)
+	}
+	integrityKey, keyErr := config.LoadOrCreateKey(keyPath)
+	if keyErr != nil {
+		fmt.Fprintf(os.Stderr, "client: integrity key init: %v\n", keyErr)
+		os.Exit(1)
+	}
+	switch err := config.Verify(cfgPath, integrityKey); {
+	case err == nil:
+		// OK — signed config matches on-disk contents.
+	case errors.Is(err, config.ErrHMACAbsent):
+		// Legacy install or first run after Bootstrap — write a fresh sidecar.
+		if signErr := config.Sign(cfgPath, integrityKey); signErr != nil {
+			fmt.Fprintf(os.Stderr, "client: integrity sign (legacy migration): %v\n", signErr)
+			os.Exit(1)
+		}
+	case errors.Is(err, config.ErrIntegrityMismatch):
+		// Log WARNING without config contents or path (NFR22a).
+		fmt.Fprintln(os.Stderr, "client: WARN config integrity mismatch — tunnel + mutations locked until hors-band recovery")
+		integrityFailed = true
+	default:
+		fmt.Fprintf(os.Stderr, "client: integrity verify: %v\n", err)
+		os.Exit(1)
+	}
+
 	rc, err := resolveConfig(cfgPath, *relayDomainFlag, *relayPubKeyFlag, *insecureFlag)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -309,6 +410,7 @@ func main() {
 	opts := ipchandler.Options{
 		ConfigPathFn:     func() string { return config.DiscoverPath("") },
 		SetStartupTypeFn: setServiceStartupType,
+		IntegrityKey:     integrityKey,
 	}
 	ipcListener := ipc.NewPlatformListener()
 	ipcServer := ipc.NewServer(ipcListener)
@@ -320,12 +422,16 @@ func main() {
 		func() { ipcServer.Stop() },
 	)
 
+	// Story 7.5 — propagate the integrity verdict to the service so the IPC
+	// handler can gate Connect + mutations while the UI surfaces the banner.
+	prg.SetIntegrityFailed(integrityFailed)
+
 	// Story 5.9 — wire kill-switch persistence + ctl token. Persistence is
 	// best-effort (nil callback skips it). Token init is best-effort: if it
 	// fails (no perms, missing /etc/levoile), the service still runs but
 	// levoile-ctl auth rejects all requests.
 	prg.SetKillSwitchPersister(func(enabled bool) error {
-		return persistFirewallEnabled(config.DiscoverPath(""), enabled)
+		return persistFirewallEnabled(config.DiscoverPath(""), enabled, integrityKey)
 	})
 	if tokenPath := ctlauth.DefaultPath(); tokenPath != "" {
 		if tok, err := ctlauth.LoadOrCreate(tokenPath); err != nil {
@@ -355,7 +461,7 @@ func main() {
 // select_country) cannot lose updates (Story 5.9 H2 fix). Best-effort: when
 // cfgPath is empty (portable mode without a config file), persistence is
 // silently skipped — runtime state still flips.
-func persistFirewallEnabled(cfgPath string, enabled bool) error {
+func persistFirewallEnabled(cfgPath string, enabled bool, integrityKey []byte) error {
 	if cfgPath == "" {
 		return nil
 	}
@@ -366,7 +472,7 @@ func persistFirewallEnabled(cfgPath string, enabled bool) error {
 		return fmt.Errorf("client: load config for killswitch persist: %w", err)
 	}
 	cfg.Firewall.EnableKillSwitch = enabled
-	if err := cfg.Save(cfgPath); err != nil {
+	if err := cfg.SaveAndSign(cfgPath, integrityKey); err != nil {
 		return fmt.Errorf("client: save config for killswitch persist: %w", err)
 	}
 	return nil

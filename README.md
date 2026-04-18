@@ -1,5 +1,99 @@
 # le_voile
 
+## Installation
+
+### Windows
+
+Installateur NSIS signé (story 7.1) — télécharger `LeVoile-Setup-*.exe` depuis
+la page [Releases](https://github.com/velia-the-veil/le_voile/releases) et
+exécuter. Le service SCM + l'UI tray + la DLL Wintun sont configurés automatiquement.
+
+### Linux
+
+**Debian / Ubuntu** (`.deb`) :
+
+```bash
+curl -fLO https://github.com/velia-the-veil/le_voile/releases/latest/download/levoile_<version>_amd64.deb
+sudo apt install ./levoile_<version>_amd64.deb
+```
+
+**Fedora / RHEL** (`.rpm`) :
+
+```bash
+sudo dnf install https://github.com/velia-the-veil/le_voile/releases/latest/download/levoile-<version>.x86_64.rpm
+```
+
+**Alpine** (`.apk`) :
+
+```bash
+curl -fLO https://github.com/velia-the-veil/le_voile/releases/latest/download/levoile_<version>_linux_amd64.apk
+sudo apk add --allow-untrusted ./levoile_<version>_linux_amd64.apk
+```
+
+**Arch Linux** (AUR, story 7.3) :
+
+```bash
+yay -S levoile
+# ou
+paru -S levoile
+```
+
+Procédure mainteneur AUR : [docs/aur-release.md](docs/aur-release.md).
+
+## Vérifier l'intégrité d'un téléchargement (Story 7.4)
+
+Chaque artefact publié sur la page Releases est accompagné :
+- d'un fichier `<artefact>.sig` — signature Ed25519 détachée (64 octets bruts)
+- du `checksums.txt` + `checksums.txt.sig`
+- de la clé publique master `levoile-release.pub.pem` (et `.pub` base64)
+
+La master key Ed25519 vit exclusivement sur la machine hors-ligne du mainteneur
+(NFR22g). Elle ne transite jamais par GitHub Actions ou un autre tiers.
+
+### Option A — via `levoile-verify` (bundled)
+
+Chaque archive contient `levoile-verify` (Linux/Windows). La clé publique est
+embarquée dans le binaire au build — aucune interaction réseau n'est nécessaire :
+
+```bash
+# Après avoir téléchargé LeVoile_1.2.3_linux_amd64.tar.gz et .sig
+tar xf LeVoile_1.2.3_linux_amd64.tar.gz
+cd LeVoile_1.2.3_linux_amd64
+./levoile-verify ../LeVoile_1.2.3_linux_amd64.tar.gz ../LeVoile_1.2.3_linux_amd64.tar.gz.sig
+# Sortie attendue : ok: ...tar.gz (verified with embedded current)
+```
+
+### Option B — via `openssl` (toute distro)
+
+> Nécessite bash (Git Bash, WSL ou Linux/macOS). En PowerShell natif, utiliser Option A ou recopier la commande sans les variables `$VER`.
+
+```bash
+VER=1.2.3
+BASE="https://github.com/velia-the-veil/le_voile/releases/download/v${VER}"
+curl -LO "${BASE}/levoile_${VER}_amd64.deb"
+curl -LO "${BASE}/levoile_${VER}_amd64.deb.sig"
+curl -LO "${BASE}/levoile-release.pub.pem"
+
+openssl pkeyutl -verify -pubin -inkey levoile-release.pub.pem \
+    -rawin -in "levoile_${VER}_amd64.deb" \
+    -sigfile "levoile_${VER}_amd64.deb.sig"
+# Sortie : "Signature Verified Successfully"
+```
+
+### Option C — AUR (automatique)
+
+Le PKGBUILD exécute `verify()` avant l'installation. `yay -S levoile` refuse
+d'installer si la signature est invalide — aucune action manuelle requise.
+
+### Si la vérification échoue
+
+**Ne pas installer.** Ouvrir une issue sur le repo avec le hash du fichier et
+votre réseau (pays, opérateur) — cela aide à détecter une compromission amont
+ou un MITM local.
+
+Documentation complète (génération, rotation, threat model) :
+[docs/release-signing.md](docs/release-signing.md).
+
 ## Mode dégradé du kill switch (Story 5.9)
 
 Le kill switch firewall (nftables Linux / WFP Windows) bloque tout trafic

@@ -189,7 +189,7 @@ func TestConfig_UpdateDefaults(t *testing.T) {
 	if want := "6h"; cfg.Update.CheckInterval != want {
 		t.Errorf("Update.CheckInterval: got %q, want %q", cfg.Update.CheckInterval, want)
 	}
-	if want := 512; cfg.Update.RateLimitKBps != want {
+	if want := 500; cfg.Update.RateLimitKBps != want {
 		t.Errorf("Update.RateLimitKBps: got %d, want %d", cfg.Update.RateLimitKBps, want)
 	}
 	if want := "velia-the-veil"; cfg.Update.GitHubOwner != want {

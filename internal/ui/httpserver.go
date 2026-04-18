@@ -53,6 +53,11 @@ type APIStatusResponse struct {
 	// AnomalyReason is the empty string.
 	AnomalyActive bool   `json:"anomaly_active,omitempty"`
 	AnomalyReason string `json:"anomaly_reason,omitempty"`
+	// IntegrityFailed is true when the service detected external tampering
+	// with config.toml at startup (HMAC mismatch — NFR9j / Story 7.5). The
+	// frontend shows a permanent recovery banner and hides connect actions
+	// while this is true. No in-process reset is exposed by design.
+	IntegrityFailed bool `json:"integrity_failed,omitempty"`
 }
 
 // HTTPServer serves frontend assets and exposes a REST JSON API that proxies to the service via IPC.
@@ -297,6 +302,7 @@ func (s *HTTPServer) handleStatus(w http.ResponseWriter, r *http.Request) {
 		ServiceReachable:   reachable,
 		AnomalyActive:      resp.AnomalyActive,
 		AnomalyReason:      resp.AnomalyReason,
+		IntegrityFailed:    resp.IntegrityFailed,
 	}
 	// Normalize: when service is unreachable, KillSwitchMode is empty —
 	// surface "normal" so the frontend defaults to safe rendering rather

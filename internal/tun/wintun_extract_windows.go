@@ -14,12 +14,16 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-// ensureWintunDLL extrait wintun.dll vers %ProgramData%/LeVoile/ si absent
-// ou si son SHA-256 diffère de la version embarquée, puis la pré-charge
-// dans le processus via LoadLibraryEx(LOAD_WITH_ALTERED_SEARCH_PATH). Cette
-// approche évite de modifier le DLL search path global du processus (ce que
-// SetDllDirectory ferait — incompatible avec d'autres LoadLibrary indirects
-// comme kardianos/service, go-winio, quic-go).
+// ensureWintunDLL résout et pré-charge wintun.dll dans le processus via
+// LoadLibraryEx(LOAD_WITH_ALTERED_SEARCH_PATH). Cette approche évite de
+// modifier le DLL search path global du processus (ce que SetDllDirectory
+// ferait — incompatible avec d'autres LoadLibrary indirects comme
+// kardianos/service, go-winio, quic-go).
+//
+// Priorité de résolution (Story 7.1) :
+//  1. <dir(os.Executable())>\wintun.dll — installée par NSIS dans Program Files
+//  2. %ProgramData%\LeVoile\wintun.dll — cache d'une extraction précédente
+//  3. Embed → extraction vers (2) puis chargement
 //
 // Une fois la DLL préchargée, wireguard/tun l'utilisera directement par nom
 // sans relancer de résolution.
@@ -34,6 +38,16 @@ var (
 // comme début du search path, sans toucher au search path global.
 const loadWithAlteredSearchPath = 0x00000008
 
+// exeDir is a package-level seam so tests can simulate the install layout
+// without spawning a fake executable. Default returns dir(os.Executable()).
+var exeDir = func() string {
+	exe, err := os.Executable()
+	if err != nil {
+		return ""
+	}
+	return filepath.Dir(exe)
+}
+
 func ensureWintunDLL() error {
 	extractOnce.Do(func() {
 		extractErr = doEnsureWintunDLL()
@@ -41,19 +55,50 @@ func ensureWintunDLL() error {
 	return extractErr
 }
 
-func doEnsureWintunDLL() error {
-	if len(embeddedWintunDLL) == 0 {
-		return errors.New("tun: wintun.dll not embedded — place the signed DLL at internal/tun/wintun/wintun.dll before build (see README)")
+// loadDLL pre-loads a wintun.dll from an absolute path. Returns nil if it
+// loaded successfully, an error otherwise. The handle is intentionally not
+// released — the DLL must stay resident for the life of the process.
+//
+// Package-level seam so tests can verify the resolution-priority order
+// (Story 7.1) without actually calling LoadLibraryEx on a real DLL file.
+var loadDLL = func(path string) error {
+	if _, err := windows.LoadLibraryEx(path, 0, loadWithAlteredSearchPath); err != nil {
+		return fmt.Errorf("tun: LoadLibraryEx %s: %w", path, err)
 	}
+	return nil
+}
+
+func doEnsureWintunDLL() error {
+	// (1) NSIS-installed DLL alongside the executable (Program Files\LeVoile).
+	// Most Windows production paths land here. No filesystem write needed.
+	if dir := exeDir(); dir != "" {
+		candidate := filepath.Join(dir, "wintun.dll")
+		if _, err := os.Stat(candidate); err == nil {
+			return loadDLL(candidate)
+		}
+	}
+
+	// (2) Cached extraction from a previous run.
 	programData := os.Getenv("PROGRAMDATA")
 	if programData == "" {
 		programData = `C:\ProgramData`
 	}
 	dir := filepath.Join(programData, "LeVoile")
+	dst := filepath.Join(dir, "wintun.dll")
+
+	if len(embeddedWintunDLL) == 0 {
+		// No embed: the cached file is our last hope. If absent, hard fail.
+		if _, err := os.Stat(dst); err == nil {
+			return loadDLL(dst)
+		}
+		return errors.New("tun: wintun.dll not found (expected at <exe dir>\\wintun.dll, %ProgramData%\\LeVoile\\wintun.dll, or embedded)")
+	}
+
+	// (3) Embed → write to cache (atomic) → load. Only writes when missing
+	// or hash mismatch — avoids touching disk on every start.
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("tun: mkdir %s: %w", dir, err)
 	}
-	dst := filepath.Join(dir, "wintun.dll")
 
 	need := true
 	if f, err := os.Open(dst); err == nil {
@@ -79,11 +124,5 @@ func doEnsureWintunDLL() error {
 		}
 	}
 
-	// Pré-charge wintun.dll sans modifier le DLL search path global. Le
-	// handle est intentionnellement non libéré — la DLL doit rester résidente
-	// pour la vie du processus (wireguard/tun la réutilisera par nom).
-	if _, err := windows.LoadLibraryEx(dst, 0, loadWithAlteredSearchPath); err != nil {
-		return fmt.Errorf("tun: LoadLibraryEx %s: %w", dst, err)
-	}
-	return nil
+	return loadDLL(dst)
 }

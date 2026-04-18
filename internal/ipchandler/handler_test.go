@@ -836,7 +836,7 @@ func TestPersistPreferredCountry(t *testing.T) {
 		t.Fatalf("seed: %v", err)
 	}
 
-	if err := persistPreferredCountry(cfgPath, "gb"); err != nil {
+	if err := persistPreferredCountry(cfgPath, "gb", nil); err != nil {
 		t.Fatalf("persistPreferredCountry: %v", err)
 	}
 
@@ -851,7 +851,7 @@ func TestPersistPreferredCountry(t *testing.T) {
 	// A second call overwrites the previous value — the preference is not
 	// accumulated, it's replaced. Users changing country mid-session expect
 	// the latest click to win.
-	if err := persistPreferredCountry(cfgPath, "us"); err != nil {
+	if err := persistPreferredCountry(cfgPath, "us", nil); err != nil {
 		t.Fatalf("second persist: %v", err)
 	}
 	loaded, _ = config.Load(cfgPath)
@@ -865,7 +865,7 @@ func TestPersistPreferredCountry(t *testing.T) {
 // helper must swallow the error and return nil — the user's country switch
 // should not be blocked by a broken config on disk.
 func TestPersistPreferredCountry_MissingConfigNoOp(t *testing.T) {
-	if err := persistPreferredCountry(filepath.Join(t.TempDir(), "does-not-exist.toml"), "de"); err != nil {
+	if err := persistPreferredCountry(filepath.Join(t.TempDir(), "does-not-exist.toml"), "de", nil); err != nil {
 		t.Errorf("missing config: got %v, want nil (best-effort)", err)
 	}
 }

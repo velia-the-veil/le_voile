@@ -7,6 +7,14 @@
     <link rel="stylesheet" href="src/style.css">
 </head>
 <body>
+    <!-- Story 7.5 / NFR9j — permanent banner when startup HMAC verification
+         of config.toml failed (external tampering). Takes precedence over the
+         kill-switch banner so the user sees the fatal state first. Recovery
+         is hors-band only: no reset button by design. -->
+    <div class="integrity-failed-banner" id="integrity-banner" style="display:none;" role="alert">
+        &#9888; Configuration altérée — Le Voile est figé en sécurité.
+        <span class="integrity-recovery-hint" id="integrity-recovery-hint"></span>
+    </div>
     <!-- Story 5.9 — permanent banner shown whenever killswitch_mode === "degraded".
          Sticky-top, always visible across panels. Kept inviolable: no close button. -->
     <div class="killswitch-degraded-banner" id="killswitch-banner" style="display:none;" role="alert">

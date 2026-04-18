@@ -114,16 +114,16 @@ development_status:
   # Epic 7: Distribution & Installation Cross-Platform Signee
   # 7.1 (NSIS Windows) et 7.5 (config TOML) existants. 7.2/7.3/7.4 = NOUVEAU (packaging Linux + signature paquets).
   epic-7: in-progress
-  7-1-installeur-nsis-windows-service-scm-ui-autostart-wintun-dll: ready-for-dev
-  7-2-paquets-linux-deb-rpm-apk-via-goreleaser-nfpm: ready-for-dev
-  7-3-pkgbuild-aur-publication-github-action: ready-for-dev
-  7-4-signature-ed25519-de-tous-les-paquets-de-distribution: backlog
-  7-5-configuration-toml-persistee-avec-paths-cross-platform: ready-for-dev
+  7-1-installeur-nsis-windows-service-scm-ui-autostart-wintun-dll: done
+  7-2-paquets-linux-deb-rpm-apk-via-goreleaser-nfpm: done
+  7-3-pkgbuild-aur-publication-github-action: done
+  7-4-signature-ed25519-de-tous-les-paquets-de-distribution: done
+  7-5-configuration-toml-persistee-avec-paths-cross-platform: done
   epic-7-retrospective: optional
 
   # Epic 8: Auto-Update Securise avec Rollback
   # Largement existant (ancien Epic 6). A valider + ajout systemctl restart pour Linux.
   epic-8: in-progress
-  8-1-verification-periodique-des-releases-github: ready-for-dev
-  8-2-telechargement-signe-application-rollback-automatique: ready-for-dev
+  8-1-verification-periodique-des-releases-github: in-progress
+  8-2-telechargement-signe-application-rollback-automatique: review
   epic-8-retrospective: optional
