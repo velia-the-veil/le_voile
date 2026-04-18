@@ -20,6 +20,15 @@
     <div class="killswitch-degraded-banner" id="killswitch-banner" style="display:none;" role="alert">
         &#9888; Mode dégradé — protection désactivée
     </div>
+    <!-- Story 8.1 AC9 — non-blocking update notice, fixed at the bottom edge so
+         it never steals vertical space from the main UI. Toggled by app.js
+         based on /api/update-status. The "Plus tard" link is in-memory only
+         (no localStorage / no server pref): the user MUST be reminded each
+         time the window opens until the service is restarted. -->
+    <div class="update-ready-banner" id="update-banner" style="display:none;" role="status" aria-live="polite">
+        <span id="update-banner-text"></span>
+        <a href="#" id="update-dismiss" onclick="dismissUpdateBanner(event)">Plus tard</a>
+    </div>
     <div class="titlebar">
         <div class="titlebar-left">
             <span class="titlebar-v" id="titlebar-v">V</span>

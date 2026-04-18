@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -114,6 +115,42 @@ func (e *testUpdaterEnv) newUpdater(t *testing.T, currentVersion string) *Update
 		return transport.RoundTrip(req)
 	})
 
+	return upd
+}
+
+// newUpdaterWithLogger mirrors newUpdater but routes structured log output to
+// the caller-provided writer. Used by Story 8.1 AC11 logging tests.
+func (e *testUpdaterEnv) newUpdaterWithLogger(t *testing.T, currentVersion string, logger io.Writer) *Updater {
+	t.Helper()
+
+	orig := Version
+	Version = currentVersion
+	t.Cleanup(func() { Version = orig })
+
+	upd, err := NewUpdater(UpdaterConfig{
+		Owner:                "velia-the-veil",
+		Repo:                 "le_voile",
+		PubKeyBase64:         e.pub,
+		StagingDir:           e.stagingDir,
+		CheckInterval:        100 * time.Millisecond,
+		RateLimitBytesPerSec: 0,
+		Logger:               logger,
+	})
+	if err != nil {
+		t.Fatalf("new updater: %v", err)
+	}
+	srvURL, _ := url.Parse(e.server.URL)
+	transport := e.server.Client().Transport
+	upd.checker.httpClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		req.URL.Scheme = srvURL.Scheme
+		req.URL.Host = srvURL.Host
+		return transport.RoundTrip(req)
+	})
+	upd.downloader.httpClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		req.URL.Scheme = srvURL.Scheme
+		req.URL.Host = srvURL.Host
+		return transport.RoundTrip(req)
+	})
 	return upd
 }
 
@@ -248,6 +285,172 @@ func TestUpdater_SkipsFailedVersion(t *testing.T) {
 	}
 	if failedVer != "2.0.0" {
 		t.Errorf("failed version should still be %q, got %q", "2.0.0", failedVer)
+	}
+}
+
+// TestSanitizePII_ScrubsUserHome is the NFR22a regression suite for the
+// log sanitizer introduced in Story 8.2. Every input that could leak a
+// user-identifying path segment from an OS-wrapped error must come out with
+// "$HOME" instead of the original username.
+func TestSanitizePII_ScrubsUserHome(t *testing.T) {
+	cases := []struct {
+		name string
+		in   any
+		want string
+	}{
+		{
+			"linux /home path in error",
+			fmt.Errorf("open /home/akerimus/.config/levoile/updates/failed_version.txt: permission denied"),
+			"open $HOME/.config/levoile/updates/failed_version.txt: permission denied",
+		},
+		{
+			"macOS /Users path in string",
+			"open /Users/alice/Library/Application Support/levoile: denied",
+			"open $HOME/Library/Application Support/levoile: denied",
+		},
+		{
+			"windows C:\\Users path in error",
+			fmt.Errorf(`open C:\Users\bob\AppData\Local\LeVoile\updates\failed_version.txt: The system cannot find the file specified.`),
+			`open $HOME\AppData\Local\LeVoile\updates\failed_version.txt: The system cannot find the file specified.`,
+		},
+		{
+			"root home (service mode probe leak)",
+			"open /root/.config/levoile: permission denied",
+			"open $HOME/.config/levoile: permission denied",
+		},
+		{
+			"no user path, untouched",
+			"cycle start",
+			"cycle start",
+		},
+		{
+			"version string, untouched",
+			"version=2.0.0",
+			"version=2.0.0",
+		},
+		{
+			"system path /var/lib not touched",
+			"open /var/lib/levoile/updates/failed_version.txt: permission denied",
+			"open /var/lib/levoile/updates/failed_version.txt: permission denied",
+		},
+		{
+			"nil error safe",
+			error(nil),
+			"<nil>", // fmt later renders as <nil>; we verify no panic
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Pass empty homeDir — the regex alone must cover these cases.
+			// The cached-homeDir path is exercised by TestUpdater_Logger_ScrubsPII.
+			got := sanitizePII(tc.in, "")
+			// For error types compare via Error(); for strings direct; nil passes through.
+			switch v := got.(type) {
+			case error:
+				if v == nil {
+					return // nothing to verify
+				}
+				if v.Error() != tc.want {
+					t.Errorf("sanitizePII(%v) = %q, want %q", tc.in, v.Error(), tc.want)
+				}
+			case string:
+				if v != tc.want {
+					t.Errorf("sanitizePII(%v) = %q, want %q", tc.in, v, tc.want)
+				}
+			default:
+				if tc.in == nil {
+					return
+				}
+				t.Errorf("unexpected sanitized type %T", got)
+			}
+		})
+	}
+}
+
+// TestSanitizePII_HomeDirFallback exercises the secondary-pass literal
+// substitution via the cached homeDir arg. Covers non-standard home layouts
+// the regex alone cannot match (snap-confined dirs, rootless containers,
+// custom /mnt/homes layouts). Story 8.2 L1 cache-at-construction fix.
+func TestSanitizePII_HomeDirFallback(t *testing.T) {
+	out := sanitizePII("open /mnt/nas/homes/akerimus/cfg: denied", "/mnt/nas/homes/akerimus")
+	got, ok := out.(string)
+	if !ok {
+		t.Fatalf("expected string, got %T", out)
+	}
+	if !strings.Contains(got, "$HOME") {
+		t.Errorf("expected $HOME placeholder from homeDir fallback, got: %q", got)
+	}
+	if strings.Contains(got, "akerimus") {
+		t.Errorf("PII leak despite homeDir fallback: %q", got)
+	}
+}
+
+// TestUpdater_Logger_ScrubsPII verifies end-to-end that the Logger writer
+// receives sanitized lines: a simulated filesystem error containing a
+// user-home path must emerge with "$HOME" in the log buffer, never the
+// original username. Guards against accidental reversion of logf's
+// sanitizePII wrapping.
+func TestUpdater_Logger_ScrubsPII(t *testing.T) {
+	var buf strings.Builder
+
+	env := setupTestUpdaterEnv(t, "payload", "1.0.0")
+	defer env.server.Close()
+
+	upd := env.newUpdaterWithLogger(t, "0.9.0", &buf)
+	// Inject an error whose message contains a synthetic user-home path by
+	// calling logf directly — this is the surface the package-internal call
+	// sites feed. (Crafting a real os.ReadFile error with a controlled path
+	// would require root or a fake FS.)
+	upd.logf("read failed-version err=%v",
+		fmt.Errorf("open /home/test-user/.config/levoile/updates/failed_version.txt: permission denied"))
+
+	got := buf.String()
+	if strings.Contains(got, "/home/test-user") {
+		t.Errorf("PII leak: logger output contains /home/test-user\nline=%q", got)
+	}
+	if !strings.Contains(got, "$HOME") {
+		t.Errorf("expected $HOME placeholder, got: %q", got)
+	}
+}
+
+// TestUpdater_PackageManaged_ShortCircuits confirms that when PackageManaged=true
+// the updater refuses to contact GitHub or download anything, returning
+// ErrPackageManaged directly. Avoids burning bandwidth on a payload the system
+// will refuse to install.
+func TestUpdater_PackageManaged_ShortCircuits(t *testing.T) {
+	env := setupTestUpdaterEnv(t, "binary content v2", "2.0.0")
+	defer env.server.Close()
+
+	// Build updater with PackageManaged=true. We intentionally don't redirect
+	// HTTP transport here — if the short-circuit fails the real GitHub host
+	// would be hit, which is itself a defect.
+	orig := Version
+	Version = "1.0.0"
+	t.Cleanup(func() { Version = orig })
+
+	upd, err := NewUpdater(UpdaterConfig{
+		Owner:          "velia-the-veil",
+		Repo:           "le_voile",
+		PubKeyBase64:   env.pub,
+		StagingDir:     env.stagingDir,
+		CheckInterval:  100 * time.Millisecond,
+		PackageManaged: true,
+	})
+	if err != nil {
+		t.Fatalf("new updater: %v", err)
+	}
+
+	staged, err := upd.CheckAndDownload(context.Background())
+	if err != ErrPackageManaged {
+		t.Errorf("expected ErrPackageManaged, got %v", err)
+	}
+	if staged != nil {
+		t.Errorf("expected no staged update, got %+v", staged)
+	}
+
+	// Start() should also bail out immediately with ErrPackageManaged.
+	if err := upd.Start(context.Background()); err != ErrPackageManaged {
+		t.Errorf("Start: expected ErrPackageManaged, got %v", err)
 	}
 }
 

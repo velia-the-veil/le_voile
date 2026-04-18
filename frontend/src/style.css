@@ -364,6 +364,29 @@ html, body {
     letter-spacing: 0.2px; color: rgba(255, 255, 255, 0.88);
 }
 
+/* Story 8.1 AC9 — non-blocking auto-update banner. Code review H1 fix:
+   originally placed `position: fixed; bottom: 0`, which overlaid the bottom
+   32 px of the panel area and obscured #btn-connect. Switched to sticky-top
+   (matching .killswitch-degraded-banner / .integrity-failed-banner) so the
+   banner pushes content down instead of covering it. Lower z-index than the
+   destructive banners so it never stacks on top of a kill-switch warning. */
+.update-ready-banner {
+    position: sticky; top: 0; z-index: 180;
+    display: flex; align-items: center; justify-content: space-between;
+    background: #cfe3ff; color: #0a3a7a;
+    font-family: 'Inter', sans-serif; font-weight: 500; font-size: 13px;
+    padding: 6px 16px; max-height: 32px;
+    border-bottom: 1px solid rgba(10, 58, 122, 0.18);
+}
+.update-ready-banner.rollback {
+    background: #ffe0c0; color: #6a3a00;
+    border-bottom-color: rgba(106, 58, 0, 0.18);
+}
+.update-ready-banner a#update-dismiss {
+    color: inherit; text-decoration: underline;
+    font-weight: 600; cursor: pointer; margin-left: 12px;
+}
+
 /* Reusable modal extras — add .modal-hint for a secondary line under the main
    .modal-text, and .modal-checkbox for a left-aligned "don't ask again"-style
    opt-out inside any .modal container. Used by the quit-confirm modal. */

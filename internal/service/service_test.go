@@ -7,8 +7,11 @@ import (
 	"path/filepath"
 	"runtime"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/kardianos/service"
 
 	"github.com/velia-the-veil/le_voile/internal/browser"
 	"github.com/velia-the-veil/le_voile/internal/tunnel"
@@ -397,18 +400,85 @@ func TestTryInstallStagedUpdate_AbandonsAfterMaxRetries(t *testing.T) {
 
 // TestScheduleServiceRestart_NoSvc_NoOp verifies that the rollback restart path
 // is a no-op when the program has no kardianos service reference attached
-// (portable mode, direct invocation, or test harness). This guards against a
-// nil-pointer panic on the rollback code path.
+// (portable mode, direct invocation, or test harness). Guards against a
+// nil-pointer panic AND a goroutine leak on the rollback code path.
 func TestScheduleServiceRestart_NoSvc_NoOp(t *testing.T) {
 	cfg := Config{
 		RelayDomain: "test.example.com",
 		RelayPubKey: "dGVzdA==",
 	}
 	prg := NewProgram(cfg)
-	// prg.svc is nil (never Start()ed under a service.Service); scheduleServiceRestart
-	// must return immediately without starting a goroutine or panicking.
+
+	// Capture goroutine count before — any subsequent increase indicates the
+	// early-return was bypassed and a stray goroutine was spawned to wait on
+	// p.done (which in this test would block forever).
+	goroutinesBefore := runtime.NumGoroutine()
 	prg.scheduleServiceRestart()
-	// If we reach this line the function returned cleanly.
+	// Give the scheduler a chance to spawn (it wouldn't, but this tightens
+	// the race: if the early-return ever regresses we want a deterministic fail).
+	time.Sleep(20 * time.Millisecond)
+	goroutinesAfter := runtime.NumGoroutine()
+
+	if goroutinesAfter > goroutinesBefore {
+		t.Errorf("scheduleServiceRestart with nil svc spawned a goroutine (%d → %d)",
+			goroutinesBefore, goroutinesAfter)
+	}
+}
+
+// fakeService is a minimal kardianos service.Service stand-in that records
+// Restart() invocations. Only the methods the scheduler path touches are
+// implemented — the rest panic so any unexpected call is loud.
+type fakeService struct {
+	restartCalls atomic.Int32
+	restartErr   error
+}
+
+func (f *fakeService) Run() error                  { panic("fakeService.Run not expected") }
+func (f *fakeService) Start() error                { panic("fakeService.Start not expected") }
+func (f *fakeService) Stop() error                 { panic("fakeService.Stop not expected") }
+func (f *fakeService) Restart() error {
+	f.restartCalls.Add(1)
+	return f.restartErr
+}
+func (f *fakeService) Install() error              { panic("fakeService.Install not expected") }
+func (f *fakeService) Uninstall() error            { panic("fakeService.Uninstall not expected") }
+func (f *fakeService) Status() (service.Status, error) {
+	return service.StatusUnknown, nil
+}
+func (f *fakeService) Logger(errs chan<- error) (service.Logger, error) { return nil, nil }
+func (f *fakeService) SystemLogger(errs chan<- error) (service.Logger, error) {
+	return nil, nil
+}
+func (f *fakeService) String() string   { return "fakeService" }
+func (f *fakeService) Platform() string { return "fake" }
+
+// TestScheduleServiceRestart_WithSvc_RestartsAfterDone verifies the happy
+// path: when a kardianos Service is attached and run() closes p.done, the
+// scheduler fires exactly one Restart(). Complements the no-op test above.
+func TestScheduleServiceRestart_WithSvc_RestartsAfterDone(t *testing.T) {
+	cfg := Config{
+		RelayDomain: "test.example.com",
+		RelayPubKey: "dGVzdA==",
+	}
+	prg := NewProgram(cfg)
+	fake := &fakeService{}
+	prg.svc = fake
+	prg.done = make(chan struct{})
+
+	prg.scheduleServiceRestart()
+
+	// The goroutine is parked on <-p.done. Close it to release the wait.
+	close(prg.done)
+
+	// Poll briefly for the Restart call (goroutine scheduling is async).
+	deadline := time.Now().Add(500 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		if fake.restartCalls.Load() == 1 {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Errorf("Restart() not called within 500ms (got %d calls)", fake.restartCalls.Load())
 }
 
 func TestService_TryRollbackIfNeeded_NoInstall(t *testing.T) {

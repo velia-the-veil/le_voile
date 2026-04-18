@@ -158,6 +158,103 @@ func TestAppJSContract_Story56(t *testing.T) {
 	}
 }
 
+// TestAppJSContract_Story81 locks the structural invariants of the auto-update
+// banner introduced in Story 8.1 AC9. Since there is no JS test harness, the
+// only way to prevent a silent regression (poller deleted, banner never
+// shown, dismiss state spilled to localStorage) is to assert the source
+// pattern itself.
+func TestAppJSContract_Story81(t *testing.T) {
+	data, err := fs.ReadFile(Assets, "src/app.js")
+	if err != nil {
+		t.Fatalf("read src/app.js: %v", err)
+	}
+	src := string(data)
+
+	cases := []struct {
+		name    string
+		needles []string
+		reason  string
+	}{
+		{
+			name:    "polling wired into init",
+			needles: []string{"startUpdateStatusPolling()", "setInterval(pollUpdateStatus"},
+			reason:  "AC9 — banner state must refresh without user action",
+		},
+		{
+			name:    "endpoint via local HTTP server only",
+			needles: []string{"'/api/update-status'"},
+			reason:  "AC9 — frontend MUST NOT call GitHub directly (NFR9 — no leak outside tunnel)",
+		},
+		{
+			name:    "in-memory dismiss only (no localStorage)",
+			needles: []string{"sessionDismissedUpdateVersion"},
+			reason:  "feedback_ui_prefs_pattern — user must be reminded each session, no persistence",
+		},
+		{
+			name:    "rollback dismiss tracked separately (review M2)",
+			needles: []string{"sessionDismissedRollback", "lastSeenRollbackToken"},
+			reason:  "code review M2 — rollback dismiss must stick across the 5 s repoll",
+		},
+		{
+			name:    "rollback variant stub for 8.2",
+			needles: []string{"'rollback'", "rollback_reason", "Mise à jour échouée"},
+			reason:  "AC9 — orange variant must already render so Story 8.2 has nothing to add UI-side",
+		},
+		{
+			name:    "tray click forces banner re-show",
+			needles: []string{"'update_available'"},
+			reason:  "AC8 — tray entry click clears the per-session dismiss so the user actually sees it",
+		},
+	}
+
+	// Guard against any actual call site (`localStorage.setItem`, `.getItem`,
+	// `.removeItem`, `window.localStorage`). Mentions in comments are fine.
+	for _, callSite := range []string{
+		"localStorage.setItem",
+		"localStorage.getItem",
+		"localStorage.removeItem",
+		"window.localStorage",
+	} {
+		if strings.Contains(src, callSite) {
+			t.Errorf("update banner (and rest of UI) must NOT use localStorage; found %q in src/app.js", callSite)
+		}
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, needle := range tc.needles {
+				if !strings.Contains(src, needle) {
+					t.Errorf("missing invariant %q — %s", needle, tc.reason)
+				}
+			}
+		})
+	}
+}
+
+// TestIndexHTMLContract_Story81 locks the DOM nodes consumed by the update
+// banner JS. A silent rename of #update-banner / #update-banner-text /
+// #update-dismiss would make the banner render to nowhere.
+func TestIndexHTMLContract_Story81(t *testing.T) {
+	data, err := fs.ReadFile(Assets, "index.html")
+	if err != nil {
+		t.Fatalf("read index.html: %v", err)
+	}
+	src := string(data)
+
+	for _, id := range []string{
+		`id="update-banner"`,
+		`id="update-banner-text"`,
+		`id="update-dismiss"`,
+	} {
+		if !strings.Contains(src, id) {
+			t.Errorf("index.html missing required element %s — update banner would never render", id)
+		}
+	}
+	if !strings.Contains(src, `onclick="dismissUpdateBanner(event)"`) {
+		t.Error("update-dismiss missing onclick handler — Plus tard link would be inert")
+	}
+}
+
 // TestIndexHTMLContract_Story56 locks the presence of the fallback DOM nodes.
 // The three ids are consumed by app.js; a silent rename of any of them would
 // make showServiceDownScreen a no-op and the fallback screen blank.

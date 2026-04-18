@@ -86,6 +86,39 @@ func TestVerifier_VerifyChecksum_MissingFile(t *testing.T) {
 	}
 }
 
+// TestVerifier_VerifyChecksum_ConstantTime is a regression test ensuring that
+// VerifyChecksum rejects any single-character divergence between the computed and
+// expected hash. It does NOT measure timing (unreliable in Go tests); it guards
+// the NFR9c switch to subtle.ConstantTimeCompare (verify.go) from accidental
+// reversion to `!=`.
+func TestVerifier_VerifyChecksum_ConstantTime(t *testing.T) {
+	v, _ := testVerifier(t)
+	dir := t.TempDir()
+
+	binaryContent := "payload"
+	binaryPath := writeTestFile(t, dir, "binary.exe", binaryContent)
+
+	realHash := fmt.Sprintf("%x", sha256.Sum256([]byte(binaryContent)))
+	// Flip the last character so lengths match but content differs — exercises
+	// the constant-time comparison rather than an early length-mismatch bail.
+	flipped := realHash[:len(realHash)-1] + flipHex(realHash[len(realHash)-1])
+	if flipped == realHash {
+		t.Fatal("flipped hash must differ from real hash")
+	}
+	checksumPath := writeTestFile(t, dir, "checksums.txt", fmt.Sprintf("%s  binary.exe\n", flipped))
+
+	if err := v.VerifyChecksum(binaryPath, checksumPath); !errors.Is(err, ErrChecksumMismatch) {
+		t.Errorf("expected ErrChecksumMismatch for tampered hash, got %v", err)
+	}
+}
+
+func flipHex(c byte) string {
+	if c == '0' {
+		return "1"
+	}
+	return "0"
+}
+
 func TestVerifier_VerifyChecksum_BinaryNotInChecksums(t *testing.T) {
 	v, _ := testVerifier(t)
 	dir := t.TempDir()

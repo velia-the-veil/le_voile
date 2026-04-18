@@ -41,6 +41,9 @@ type resolvedConfig struct {
 	updateOwner       string
 	updateRepo        string
 	updateStagingDir  string
+	// Story 8.2 — package-manager override + retry abandon cap.
+	updateAllowWhenPackaged bool
+	updateMaxInstallRetries int
 	blocklistEnabled  bool
 	blocklistInterval time.Duration
 
@@ -134,6 +137,9 @@ func resolveConfig(cfgPath, flagDomain, flagPubKey string, flagInsecure bool) (r
 		}
 		rc.updateStagingDir = stagingDir
 	}
+	// Story 8.2 — package-manager override + retry abandon cap.
+	rc.updateAllowWhenPackaged = cfg.Update.AllowWhenPackaged
+	rc.updateMaxInstallRetries = cfg.Update.MaxInstallRetries
 
 	// Resolve blocklist config.
 	rc.blocklistEnabled = cfg.Blocklist.Enabled
@@ -379,6 +385,8 @@ func main() {
 		UpdateOwner:       rc.updateOwner,
 		UpdateRepo:        rc.updateRepo,
 		UpdateStagingDir:  rc.updateStagingDir,
+		UpdateAllowWhenPackaged: rc.updateAllowWhenPackaged,
+		UpdateMaxInstallRetries: rc.updateMaxInstallRetries,
 		BlocklistEnabled:        rc.blocklistEnabled,
 		BlocklistInterval:       rc.blocklistInterval,
 		RegistryEnabled:             rc.registryEnabled,

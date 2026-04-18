@@ -167,3 +167,59 @@ func TestFailedVersion_AtomicWrite(t *testing.T) {
 		t.Error("tmp file should not exist after successful write")
 	}
 }
+
+func TestInstallRetries_WriteRead(t *testing.T) {
+	dir := t.TempDir()
+
+	// Missing file → 0, no error.
+	n, err := ReadInstallRetries(dir)
+	if err != nil {
+		t.Fatalf("ReadInstallRetries (absent): %v", err)
+	}
+	if n != 0 {
+		t.Errorf("expected 0 for missing file, got %d", n)
+	}
+
+	if err := WriteInstallRetries(dir, 2); err != nil {
+		t.Fatalf("WriteInstallRetries: %v", err)
+	}
+	n, err = ReadInstallRetries(dir)
+	if err != nil {
+		t.Fatalf("ReadInstallRetries: %v", err)
+	}
+	if n != 2 {
+		t.Errorf("expected 2, got %d", n)
+	}
+
+	// Overwrite (simulate increment across boots).
+	if err := WriteInstallRetries(dir, 3); err != nil {
+		t.Fatalf("WriteInstallRetries (2nd): %v", err)
+	}
+	n, _ = ReadInstallRetries(dir)
+	if n != 3 {
+		t.Errorf("expected 3 after overwrite, got %d", n)
+	}
+
+	// Clear should be idempotent.
+	if err := ClearInstallRetries(dir); err != nil {
+		t.Fatalf("ClearInstallRetries: %v", err)
+	}
+	if err := ClearInstallRetries(dir); err != nil {
+		t.Fatalf("ClearInstallRetries (idempotent): %v", err)
+	}
+	n, _ = ReadInstallRetries(dir)
+	if n != 0 {
+		t.Errorf("expected 0 after clear, got %d", n)
+	}
+}
+
+func TestInstallRetries_ReadMalformed(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, installRetriesFile)
+	if err := os.WriteFile(path, []byte("not-a-number"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if _, err := ReadInstallRetries(dir); err == nil {
+		t.Error("expected parse error for malformed content")
+	}
+}

@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"crypto/ed25519"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -52,7 +53,8 @@ func (v *Verifier) VerifyChecksum(binaryPath, checksumPath string) error {
 		return fmt.Errorf("updater: verify checksum: %w", err)
 	}
 
-	if actualHash != expectedHash {
+	// NFR9c: constant-time comparison to prevent timing attacks on checksum verification.
+	if subtle.ConstantTimeCompare([]byte(actualHash), []byte(expectedHash)) != 1 {
 		return ErrChecksumMismatch
 	}
 	return nil
@@ -60,6 +62,7 @@ func (v *Verifier) VerifyChecksum(binaryPath, checksumPath string) error {
 
 // VerifySignature verifies that checksums.txt is signed with the relay's Ed25519 key.
 // The signature file contains the base64-encoded Ed25519 signature.
+// NFR9c: the underlying ed25519.Verify (Go stdlib) is constant-time by construction.
 func (v *Verifier) VerifySignature(checksumPath, signaturePath string) error {
 	checksumData, err := os.ReadFile(checksumPath)
 	if err != nil {

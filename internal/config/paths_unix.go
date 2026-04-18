@@ -43,9 +43,22 @@ func StagingDir() (string, error) {
 }
 
 // isServiceMode reports whether the binary is running as a system service.
-// On Unix, the system service runs as root (euid 0).
+//
+// Two independent signals so we stay correct even when packaging moves to a
+// non-root systemd user (e.g. `User=levoile` with CAP_NET_ADMIN via
+// AmbientCapabilities): euid==0 catches the traditional root service, and
+// the systemd env vars INVOCATION_ID / NOTIFY_SOCKET catch the non-root
+// case (set by systemd for every unit instance — see systemd.exec(5)).
+//
+// Either signal alone is sufficient; matching both is not required.
 func isServiceMode() bool {
-	return os.Geteuid() == 0
+	if os.Geteuid() == 0 {
+		return true
+	}
+	if os.Getenv("INVOCATION_ID") != "" || os.Getenv("NOTIFY_SOCKET") != "" {
+		return true
+	}
+	return false
 }
 
 // ServicePath returns the system-wide configuration path used when the

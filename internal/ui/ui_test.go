@@ -467,3 +467,247 @@ func TestTriggerUIEvent_ReadAndClear(t *testing.T) {
 		t.Errorf("second take = %q, want empty (read-and-clear)", got)
 	}
 }
+
+// --- Story 8.1 (AC8): tray "Mise à jour disponible" notification -----------
+
+// mockUpdateMenu records calls so tests can assert visibility + title.
+type mockUpdateMenu struct {
+	mu      sync.Mutex
+	title   string
+	tooltip string
+	visible bool
+	calls   int // total state-mutating calls (SetTitle/SetTooltip/Show/Hide)
+}
+
+func (m *mockUpdateMenu) SetTitle(t string) {
+	m.mu.Lock()
+	m.title = t
+	m.calls++
+	m.mu.Unlock()
+}
+func (m *mockUpdateMenu) SetTooltip(t string) {
+	m.mu.Lock()
+	m.tooltip = t
+	m.calls++
+	m.mu.Unlock()
+}
+func (m *mockUpdateMenu) Show() {
+	m.mu.Lock()
+	m.visible = true
+	m.calls++
+	m.mu.Unlock()
+}
+func (m *mockUpdateMenu) Hide() {
+	m.mu.Lock()
+	m.visible = false
+	m.calls++
+	m.mu.Unlock()
+}
+func (m *mockUpdateMenu) snapshot() (string, string, bool, int) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.title, m.tooltip, m.visible, m.calls
+}
+
+// AC8 #1 — first "update_ready" detection populates the menu and shows it.
+func TestUpdateTrayState_UpdateAvailable_FirstDetection(t *testing.T) {
+	api := &mockSystrayAPI{}
+	menu := &mockUpdateMenu{}
+	u := &UI{
+		api:        api,
+		client:     NewSafeIPCClient(&mockIPCClient{}),
+		menuUpdate: menu,
+	}
+
+	resp := ipc.Response{
+		Status:        ipc.StatusConnected,
+		IP:            "1.2.3.4",
+		Country:       "Islande",
+		UpdateStatus:  ipc.StatusUpdateReady,
+		UpdateVersion: "1.4.2",
+	}
+	u.updateTrayState(resp)
+
+	title, tooltip, visible, _ := menu.snapshot()
+	if want := "Mise à jour disponible : v1.4.2"; title != want {
+		t.Errorf("menu title = %q, want %q", title, want)
+	}
+	if want := "Téléchargée et vérifiée — sera appliquée au prochain redémarrage du service"; tooltip != want {
+		t.Errorf("menu tooltip = %q, want %q", tooltip, want)
+	}
+	if !visible {
+		t.Error("expected menu visible=true after first detection")
+	}
+	u.mu.Lock()
+	got := u.lastShownUpdateVersion
+	u.mu.Unlock()
+	if got != "1.4.2" {
+		t.Errorf("lastShownUpdateVersion = %q, want 1.4.2", got)
+	}
+}
+
+// AC8 #2 — repolling with the same version is idempotent: no further calls.
+func TestUpdateTrayState_UpdateAvailable_NoDuplicateOnSameVersion(t *testing.T) {
+	api := &mockSystrayAPI{}
+	menu := &mockUpdateMenu{}
+	u := &UI{
+		api:        api,
+		client:     NewSafeIPCClient(&mockIPCClient{}),
+		menuUpdate: menu,
+	}
+
+	resp := ipc.Response{
+		Status:        ipc.StatusConnected,
+		IP:            "1.2.3.4",
+		Country:       "Islande",
+		UpdateStatus:  ipc.StatusUpdateReady,
+		UpdateVersion: "1.4.2",
+	}
+	u.updateTrayState(resp)
+	_, _, _, callsAfterFirst := menu.snapshot()
+
+	// Second call — exact same response.
+	u.updateTrayState(resp)
+	_, _, visible, callsAfterSecond := menu.snapshot()
+
+	if callsAfterSecond != callsAfterFirst {
+		t.Errorf("expected no menu mutations on duplicate state, got %d → %d calls", callsAfterFirst, callsAfterSecond)
+	}
+	if !visible {
+		t.Error("menu should remain visible across duplicate updates")
+	}
+}
+
+// AC8 #3 — when UpdateStatus disappears (e.g. version installed) the menu hides.
+func TestUpdateTrayState_UpdateAvailable_HidesWhenStatusClears(t *testing.T) {
+	api := &mockSystrayAPI{}
+	menu := &mockUpdateMenu{}
+	u := &UI{
+		api:        api,
+		client:     NewSafeIPCClient(&mockIPCClient{}),
+		menuUpdate: menu,
+	}
+
+	// First: update_ready.
+	u.updateTrayState(ipc.Response{
+		Status:        ipc.StatusConnected,
+		Country:       "Islande",
+		UpdateStatus:  ipc.StatusUpdateReady,
+		UpdateVersion: "1.4.2",
+	})
+	if _, _, visible, _ := menu.snapshot(); !visible {
+		t.Fatal("precondition: menu should be visible after first update_ready")
+	}
+
+	// Second: status cleared.
+	u.updateTrayState(ipc.Response{
+		Status:  ipc.StatusConnected,
+		Country: "Islande",
+	})
+	_, _, visible, _ := menu.snapshot()
+	if visible {
+		t.Error("expected menu hidden after UpdateStatus clears")
+	}
+	u.mu.Lock()
+	got := u.lastShownUpdateVersion
+	u.mu.Unlock()
+	if got != "" {
+		t.Errorf("lastShownUpdateVersion = %q, want empty after clear", got)
+	}
+}
+
+// AC8 #4 — a NEW version (e.g. after a rollback skip then later release) updates the menu.
+func TestUpdateTrayState_UpdateAvailable_NewVersionRefreshesMenu(t *testing.T) {
+	api := &mockSystrayAPI{}
+	menu := &mockUpdateMenu{}
+	u := &UI{
+		api:        api,
+		client:     NewSafeIPCClient(&mockIPCClient{}),
+		menuUpdate: menu,
+	}
+
+	u.updateTrayState(ipc.Response{
+		Status:        ipc.StatusConnected,
+		UpdateStatus:  ipc.StatusUpdateReady,
+		UpdateVersion: "1.4.2",
+	})
+	u.updateTrayState(ipc.Response{
+		Status:        ipc.StatusConnected,
+		UpdateStatus:  ipc.StatusUpdateReady,
+		UpdateVersion: "1.4.3",
+	})
+
+	title, _, visible, _ := menu.snapshot()
+	if want := "Mise à jour disponible : v1.4.3"; title != want {
+		t.Errorf("menu title = %q, want %q", title, want)
+	}
+	if !visible {
+		t.Error("expected menu visible after version bump")
+	}
+	u.mu.Lock()
+	got := u.lastShownUpdateVersion
+	u.mu.Unlock()
+	if got != "1.4.3" {
+		t.Errorf("lastShownUpdateVersion = %q, want 1.4.3", got)
+	}
+}
+
+// Code review M5 — when an update was visible and the next poll surfaces a
+// rollback (Story 8.2 boundary), the tray entry must hide. Story 8.1 owns
+// the entry; rollback UX lives in the webview banner. This test pins the
+// boundary so a future Story 8.2 change can't silently leak the tray menu
+// into rollback territory.
+func TestUpdateTrayState_UpdateAvailable_HidesOnRollbackTransition(t *testing.T) {
+	api := &mockSystrayAPI{}
+	menu := &mockUpdateMenu{}
+	u := &UI{
+		api:        api,
+		client:     NewSafeIPCClient(&mockIPCClient{}),
+		menuUpdate: menu,
+	}
+
+	// Step 1: update_ready surfaces normally.
+	u.updateTrayState(ipc.Response{
+		Status:        ipc.StatusConnected,
+		UpdateStatus:  ipc.StatusUpdateReady,
+		UpdateVersion: "1.4.2",
+	})
+	if _, _, visible, _ := menu.snapshot(); !visible {
+		t.Fatal("precondition: menu visible after update_ready")
+	}
+
+	// Step 2: next poll reports rollback for that same version.
+	u.updateTrayState(ipc.Response{
+		Status:          ipc.StatusConnected,
+		UpdateStatus:    ipc.StatusRollback,
+		RollbackVersion: "1.4.2",
+		RollbackReason:  "tunnel timeout post-restart",
+	})
+	_, _, visible, _ := menu.snapshot()
+	if visible {
+		t.Error("expected menu hidden once UpdateStatus transitions to rollback")
+	}
+	u.mu.Lock()
+	got := u.lastShownUpdateVersion
+	u.mu.Unlock()
+	if got != "" {
+		t.Errorf("lastShownUpdateVersion = %q, want empty after rollback transition", got)
+	}
+}
+
+// AC8 — when no menu is wired (tests / packaging without update menu), state
+// updates are still safe.
+func TestUpdateTrayState_UpdateAvailable_NoMenuWiredIsNoop(t *testing.T) {
+	api := &mockSystrayAPI{}
+	u := &UI{
+		api:    api,
+		client: NewSafeIPCClient(&mockIPCClient{}),
+	}
+	// menuUpdate is nil — must not panic.
+	u.updateTrayState(ipc.Response{
+		Status:        ipc.StatusConnected,
+		UpdateStatus:  ipc.StatusUpdateReady,
+		UpdateVersion: "1.4.2",
+	})
+	// If we reach here without panic, the noop guard works.
+}

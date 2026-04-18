@@ -29,6 +29,13 @@ const (
 	exitGeneric = 1
 	exitUsage   = 2
 	exitAuth    = 3
+	// exitDisabled is the dedicated code returned when the requested feature
+	// is disabled by the operator config (Story 8.1 AC10 — `[update] enabled =
+	// false`). Shares the numeric value of exitUsage because both signal
+	// "operator must change setup before this command can succeed", but the
+	// alias keeps source-side intent explicit and lets us bump the value
+	// without touching call sites if the contract diverges later.
+	exitDisabled = 2
 )
 
 // dialIPC is var-injectable for tests so we can swap in a fake transport.
@@ -77,6 +84,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return runStatus(stdout, stderr)
 	case "trigger-recovery", "recover":
 		return runTriggerRecovery(stdout, stderr)
+	case "update":
+		return runUpdate(args[1:], stdout, stderr)
 	default:
 		fmt.Fprintf(stderr, "levoile-ctl: commande inconnue : %q\n", args[0])
 		printUsage(stderr)
@@ -92,6 +101,7 @@ Commandes :
   killswitch on        Réactiver le kill switch (mode normal — protection complète)
   trigger-recovery     Forcer une reconnexion complète kill-switch-préservée (debug / incident)
   recover              Alias de trigger-recovery
+  update check         Forcer une vérification immédiate des releases GitHub (Story 8.1)
   status               Afficher l'état actuel du tunnel et du kill switch
   help                 Afficher ce message
 
@@ -143,6 +153,85 @@ func runKillSwitch(args []string, stdout, stderr io.Writer) int {
 	}
 	_ = resp
 	return exitOK
+}
+
+// runUpdate dispatches `levoile-ctl update <verb>`. Story 8.1 AC10 — only
+// `check` is supported in this story; further verbs (`status`, `apply`)
+// are reserved for Story 8.2.
+func runUpdate(args []string, stdout, stderr io.Writer) int {
+	if len(args) == 0 {
+		fmt.Fprintln(stderr, "levoile-ctl update : verbe requis (check)")
+		return exitUsage
+	}
+	switch args[0] {
+	case "check":
+		// Code review M3: reject extra positional arguments instead of
+		// silently ignoring them, matching the killswitch-style validation.
+		// `--force` etc. would otherwise look like a successful run.
+		if len(args) > 1 {
+			fmt.Fprintf(stderr, "levoile-ctl update check : argument(s) en trop : %v\n", args[1:])
+			return exitUsage
+		}
+		return runUpdateCheck(stdout, stderr)
+	default:
+		fmt.Fprintf(stderr, "levoile-ctl update : verbe inconnu %q (attendu check)\n", args[0])
+		return exitUsage
+	}
+}
+
+// runUpdateCheck triggers a synchronous CheckAndDownload via IPC. The service
+// caps its own work at 2 min (handleCheckUpdate) — we allow 5 min on the
+// client side as a safety margin for slow rate-limited downloads of the
+// signed release artifacts.
+func runUpdateCheck(stdout, stderr io.Writer) int {
+	token, err := loadToken()
+	if err != nil {
+		if errors.Is(err, ctlauth.ErrTokenAbsent) {
+			fmt.Fprintln(stderr, "levoile-ctl : token machine-local absent — démarrez le service Le Voile une fois pour le générer.")
+		} else {
+			fmt.Fprintf(stderr, "levoile-ctl : lecture du token impossible : %v\n", err)
+		}
+		return exitAuth
+	}
+
+	resp, code := sendIPCWithTimeout(ipc.Request{
+		Action: ipc.ActionCheckUpdate,
+		Auth:   ctlauth.Hex(token),
+	}, 5*time.Minute, stderr)
+	if code != exitOK {
+		// Translate updates_disabled to its dedicated exit code.
+		if resp.Status == ipc.StatusError && resp.Error == "updates_disabled" {
+			fmt.Fprintln(stderr, "levoile-ctl : mises à jour désactivées dans config.toml ([update] enabled = false)")
+			return exitDisabled
+		}
+		return code
+	}
+
+	switch resp.UpdateStatus {
+	case ipc.StatusUpdateReady:
+		ver := resp.UpdateVersion
+		if ver == "" {
+			ver = "?"
+		}
+		fmt.Fprintf(stdout, "mise à jour disponible : v%s (téléchargée + vérifiée, prête au prochain redémarrage)\n", ver)
+		return exitOK
+	case ipc.StatusUpToDate:
+		fmt.Fprintln(stdout, "déjà à jour")
+		return exitOK
+	default:
+		// Code review H3: anything other than update_ready/up_to_date is an
+		// anomaly (e.g. service returned `downloading`, `installed`, empty,
+		// or a future status the CLI doesn't know about). Returning exit 0
+		// would mislead scripts into thinking the check completed cleanly.
+		// Surface the unknown status to stderr and exit non-zero so callers
+		// can branch on the failure.
+		status := resp.UpdateStatus
+		if status == "" {
+			status = "réponse vide"
+		}
+		fmt.Fprintf(stderr, "levoile-ctl update check : statut inattendu %q\n", status)
+		return exitGeneric
+	}
 }
 
 // runTriggerRecovery forces a manual auto-recovery sequence by sending
@@ -203,10 +292,16 @@ func runStatus(stdout, stderr io.Writer) int {
 	return exitOK
 }
 
-// sendIPC dials, sends, and closes. Translates network/IPC errors into the
-// matching exit code and a French stderr line. Returns the parsed response on
-// success.
+// sendIPC dials, sends, and closes with the default 10 s timeout suitable
+// for snappy interactive commands.
 func sendIPC(req ipc.Request, stderr io.Writer) (ipc.Response, int) {
+	return sendIPCWithTimeout(req, 10*time.Second, stderr)
+}
+
+// sendIPCWithTimeout is the variant used by long-running commands such as
+// `update check` which trigger a download (Story 8.1 AC10). Translates
+// network/IPC errors into the matching exit code and a French stderr line.
+func sendIPCWithTimeout(req ipc.Request, timeout time.Duration, stderr io.Writer) (ipc.Response, int) {
 	client, err := dialIPC()
 	if err != nil {
 		fmt.Fprintf(stderr, "levoile-ctl : connexion au service impossible : %v\n", err)
@@ -214,7 +309,7 @@ func sendIPC(req ipc.Request, stderr io.Writer) (ipc.Response, int) {
 	}
 	defer client.Close()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	resp, err := client.SendContext(ctx, req)
 	if err != nil {

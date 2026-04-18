@@ -216,6 +216,172 @@ func TestRun_KillSwitch_DialFailure(t *testing.T) {
 	}
 }
 
+// --- Story 8.1 AC10: `levoile-ctl update check` ---------------------------
+
+// `update` with no verb → usage exit.
+func TestRun_Update_MissingVerb(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"update"}, &stdout, &stderr)
+	if code != exitUsage {
+		t.Errorf("exit = %d, want %d", code, exitUsage)
+	}
+}
+
+// `update bogus` → usage exit.
+func TestRun_Update_UnknownVerb(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"update", "bogus"}, &stdout, &stderr)
+	if code != exitUsage {
+		t.Errorf("exit = %d, want %d", code, exitUsage)
+	}
+}
+
+// Happy path #1 — service returns "update_ready" with a version. Exit 0,
+// stdout carries the new version + restart hint, IPC carried the auth token.
+func TestRun_Update_Check_UpdateReady(t *testing.T) {
+	fake := &fakeIPC{resp: ipc.Response{
+		Status:        ipc.StatusOK,
+		UpdateStatus:  ipc.StatusUpdateReady,
+		UpdateVersion: "1.4.2",
+	}}
+	tokenRaw := bytes.Repeat([]byte{0x42}, 32)
+	setupFake(t, fake, tokenRaw)
+
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"update", "check"}, &stdout, &stderr)
+	if code != exitOK {
+		t.Errorf("exit = %d, want 0; stderr=%q", code, stderr.String())
+	}
+	if fake.lastReq.Action != ipc.ActionCheckUpdate {
+		t.Errorf("ipc action = %q, want %q", fake.lastReq.Action, ipc.ActionCheckUpdate)
+	}
+	if fake.lastReq.Auth != ctlauth.Hex(tokenRaw) {
+		t.Errorf("ipc auth = %q, want hex token", fake.lastReq.Auth)
+	}
+	out := stdout.String()
+	if !strings.Contains(out, "v1.4.2") {
+		t.Errorf("stdout missing version; got %q", out)
+	}
+	if !strings.Contains(out, "redémarrage") {
+		t.Errorf("stdout missing restart hint; got %q", out)
+	}
+}
+
+// Happy path #2 — already up to date.
+func TestRun_Update_Check_UpToDate(t *testing.T) {
+	fake := &fakeIPC{resp: ipc.Response{
+		Status:       ipc.StatusOK,
+		UpdateStatus: ipc.StatusUpToDate,
+	}}
+	setupFake(t, fake, bytes.Repeat([]byte{0x01}, 32))
+
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"update", "check"}, &stdout, &stderr)
+	if code != exitOK {
+		t.Errorf("exit = %d, want 0; stderr=%q", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "déjà à jour") {
+		t.Errorf("stdout missing 'déjà à jour'; got %q", stdout.String())
+	}
+}
+
+// AC10 — updates_disabled gets its own exit code (so scripts can branch).
+func TestRun_Update_Check_Disabled(t *testing.T) {
+	fake := &fakeIPC{resp: ipc.Response{
+		Status: ipc.StatusError,
+		Error:  "updates_disabled",
+	}}
+	setupFake(t, fake, bytes.Repeat([]byte{0x77}, 32))
+
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"update", "check"}, &stdout, &stderr)
+	if code != exitDisabled {
+		t.Errorf("exit = %d, want %d (disabled)", code, exitDisabled)
+	}
+	if !strings.Contains(stderr.String(), "désactivées") {
+		t.Errorf("stderr missing French disabled message; got %q", stderr.String())
+	}
+}
+
+// Server-side check failure (e.g. signature invalid, network) → exit 1.
+func TestRun_Update_Check_Failure(t *testing.T) {
+	fake := &fakeIPC{resp: ipc.Response{
+		Status: ipc.StatusError,
+		Error:  "updater: check and download: verify: signature invalid",
+	}}
+	setupFake(t, fake, bytes.Repeat([]byte{0x55}, 32))
+
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"update", "check"}, &stdout, &stderr)
+	if code != exitGeneric {
+		t.Errorf("exit = %d, want %d", code, exitGeneric)
+	}
+	if !strings.Contains(stderr.String(), "signature invalid") {
+		t.Errorf("stderr missing underlying error; got %q", stderr.String())
+	}
+}
+
+// Code review H3 — unknown UpdateStatus must NOT exit 0 (was a silent success
+// that would mislead automation scripts).
+func TestRun_Update_Check_UnknownStatus_ExitsGeneric(t *testing.T) {
+	fake := &fakeIPC{resp: ipc.Response{
+		Status:       ipc.StatusOK,
+		UpdateStatus: "downloading", // legitimate ipc constant we don't surface
+	}}
+	setupFake(t, fake, bytes.Repeat([]byte{0x33}, 32))
+
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"update", "check"}, &stdout, &stderr)
+	if code != exitGeneric {
+		t.Errorf("exit = %d, want %d (generic)", code, exitGeneric)
+	}
+	if !strings.Contains(stderr.String(), "statut inattendu") {
+		t.Errorf("stderr should explain the unknown status; got %q", stderr.String())
+	}
+}
+
+// Code review H3 — empty UpdateStatus is also surfaced as an anomaly.
+func TestRun_Update_Check_EmptyStatus_ExitsGeneric(t *testing.T) {
+	fake := &fakeIPC{resp: ipc.Response{Status: ipc.StatusOK}}
+	setupFake(t, fake, bytes.Repeat([]byte{0x33}, 32))
+
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"update", "check"}, &stdout, &stderr)
+	if code != exitGeneric {
+		t.Errorf("exit = %d, want %d", code, exitGeneric)
+	}
+	if !strings.Contains(stderr.String(), "réponse vide") {
+		t.Errorf("stderr should mention empty response; got %q", stderr.String())
+	}
+}
+
+// Code review M3 — extra arguments after `check` must trigger usage error.
+func TestRun_Update_Check_ExtraArgs_Usage(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"update", "check", "--force"}, &stdout, &stderr)
+	if code != exitUsage {
+		t.Errorf("exit = %d, want %d", code, exitUsage)
+	}
+	if !strings.Contains(stderr.String(), "argument(s) en trop") {
+		t.Errorf("stderr should explain the extra arg; got %q", stderr.String())
+	}
+}
+
+// Missing token → exitAuth, no IPC dispatched.
+func TestRun_Update_Check_TokenMissing(t *testing.T) {
+	fake := &fakeIPC{}
+	setupFake(t, fake, nil)
+
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"update", "check"}, &stdout, &stderr)
+	if code != exitAuth {
+		t.Errorf("exit = %d, want %d", code, exitAuth)
+	}
+	if fake.lastReq.Action != "" {
+		t.Errorf("expected NO IPC dispatch when token missing; got action=%q", fake.lastReq.Action)
+	}
+}
+
 // `status` prints tunnel + killswitch.
 func TestRun_Status_Happy(t *testing.T) {
 	fake := &fakeIPC{resp: ipc.Response{

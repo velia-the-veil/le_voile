@@ -120,7 +120,9 @@ type UpdateConfig struct {
 	AllowWhenPackaged bool `toml:"allow_when_packaged"`
 	// MaxInstallRetries caps the number of times the installer will retry
 	// applying a given staged update before abandoning it and re-downloading
-	// on the next check. Default 3 (0 is treated as unlimited — not recommended).
+	// on the next check. Default 3. Values ≤ 0 fall back to 3 — there is
+	// intentionally no "unlimited" mode to prevent boot-loop scenarios when
+	// a binary is structurally broken (wrong arch, missing linker dep, etc.).
 	MaxInstallRetries int `toml:"max_install_retries"`
 }
 

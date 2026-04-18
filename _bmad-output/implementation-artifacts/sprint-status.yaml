@@ -123,7 +123,7 @@ development_status:
 
   # Epic 8: Auto-Update Securise avec Rollback
   # Largement existant (ancien Epic 6). A valider + ajout systemctl restart pour Linux.
-  epic-8: in-progress
-  8-1-verification-periodique-des-releases-github: in-progress
-  8-2-telechargement-signe-application-rollback-automatique: review
+  epic-8: done
+  8-1-verification-periodique-des-releases-github: done
+  8-2-telechargement-signe-application-rollback-automatique: done
   epic-8-retrospective: optional

@@ -1546,6 +1546,10 @@ func (p *Program) run() {
 			CheckInterval:        p.config.UpdateInterval,
 			RateLimitBytesPerSec: p.config.UpdateRateLimit,
 			PackageManaged:       packageManaged,
+			// Story 8.1 AC11 — route updater events to syslog/Event Log via
+			// the same writer kardianos/service binds for the rest of the
+			// service. NFR22a: zero PII per emitted line.
+			Logger: serviceStderr,
 		})
 		if err != nil {
 			fmt.Fprintf(serviceStderr, "service: updater init: %v\n", err)
@@ -1826,6 +1830,8 @@ func (p *Program) tryInstallStagedUpdate(ctx context.Context) {
 	// attempts have already failed past the configured cap. This prevents an
 	// infinite retry loop when the staged binary is structurally broken
 	// (e.g. incompatible CPU arch, missing dependency, disk-full at target).
+	// Values ≤ 0 fall back to the 3-retry default — no "unlimited" mode
+	// by design (matches config.UpdateConfig.MaxInstallRetries contract).
 	maxRetries := p.config.UpdateMaxInstallRetries
 	if maxRetries <= 0 {
 		maxRetries = 3

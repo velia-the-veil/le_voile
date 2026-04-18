@@ -19,6 +19,10 @@ var (
 	ErrReadOnlyTarget = errors.New("updater: install: target is read-only")
 	// ErrBackupFailed indicates the backup of the current executable failed.
 	ErrBackupFailed = errors.New("updater: install: backup failed")
+	// ErrPackageManaged indicates the binary is installed by a system package
+	// manager (dpkg/rpm/pacman). Auto-update is skipped to avoid conflicts with
+	// the package manager's own update mechanism.
+	ErrPackageManaged = errors.New("updater: binary is package-managed, auto-update disabled")
 )
 
 const (
@@ -65,6 +69,45 @@ func NewInstallerWithPath(stagingDir, executablePath string, verifier *Verifier)
 // ExecutablePath returns the resolved path to the current executable.
 func (inst *Installer) ExecutablePath() string {
 	return inst.executablePath
+}
+
+// IsPackageManaged reports whether the binary appears to be installed by a
+// system package manager (dpkg/rpm/pacman/Homebrew). Heuristic on Linux/Darwin:
+//   - /usr/bin, /usr/local/bin, /usr/sbin     → dpkg/rpm/pacman
+//   - /opt/homebrew/bin                        → macOS Apple Silicon brew
+//   - /home/linuxbrew/.linuxbrew/bin           → Linuxbrew
+//
+// On Windows always returns false (no system package manager contract; NSIS
+// installer is handled by the updater's normal swap path).
+func (inst *Installer) IsPackageManaged() bool {
+	return isPackageManagedPath(inst.executablePath)
+}
+
+// packageManagedPrefixes is the set of path prefixes treated as "installed
+// by a system package manager" on Unix. Kept as a package-level var so tests
+// and downstream callers can reference the same source of truth.
+var packageManagedPrefixes = []string{
+	"/usr/bin/",
+	"/usr/local/bin/",
+	"/usr/sbin/",
+	"/opt/homebrew/bin/",           // Homebrew (macOS Apple Silicon default)
+	"/home/linuxbrew/.linuxbrew/bin/", // Linuxbrew (Linux)
+}
+
+// isPackageManagedPath is the pure path heuristic, factored out for testing.
+func isPackageManagedPath(exePath string) bool {
+	if runtime.GOOS == "windows" {
+		return false
+	}
+	// Normalize to forward-slash so the prefix check is stable across platforms
+	// during tests that feed synthetic paths.
+	p := filepath.ToSlash(exePath)
+	for _, prefix := range packageManagedPrefixes {
+		if strings.HasPrefix(p, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 // HasStagedUpdate checks if a staged binary exists in the staging directory.

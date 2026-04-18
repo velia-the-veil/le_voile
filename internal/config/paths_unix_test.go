@@ -26,6 +26,9 @@ func TestStagingDir_UserMode(t *testing.T) {
 		t.Skip("cannot test user-mode path from root; skipping")
 	}
 	t.Setenv("LEVOILE_STAGING_DIR", "")
+	// Clear systemd env so the M3 detection path doesn't flip us to service mode.
+	t.Setenv("INVOCATION_ID", "")
+	t.Setenv("NOTIFY_SOCKET", "")
 
 	dir, err := StagingDir()
 	if err != nil {
@@ -43,10 +46,12 @@ func TestStagingDir_UserMode(t *testing.T) {
 }
 
 func TestStagingDir_ServiceMode_SystemPath(t *testing.T) {
-	if os.Geteuid() != 0 {
-		t.Skip("service-mode path only resolves to /var/lib when euid==0; skipping (run as root to cover)")
-	}
+	// Service mode now triggers on euid==0 OR systemd env vars (M3).
+	// Exercise the path regardless of the invoking user by forcing the env
+	// signal, then assert the resolved path.
 	t.Setenv("LEVOILE_STAGING_DIR", "")
+	t.Setenv("INVOCATION_ID", "deadbeef1234deadbeef1234deadbeef")
+	t.Setenv("NOTIFY_SOCKET", "")
 
 	dir, err := StagingDir()
 	if err != nil {
@@ -58,9 +63,43 @@ func TestStagingDir_ServiceMode_SystemPath(t *testing.T) {
 }
 
 func TestIsServiceMode_FollowsEUID(t *testing.T) {
+	// Clear systemd env vars so we isolate the euid signal.
+	t.Setenv("INVOCATION_ID", "")
+	t.Setenv("NOTIFY_SOCKET", "")
 	got := isServiceMode()
 	want := os.Geteuid() == 0
 	if got != want {
 		t.Errorf("isServiceMode() = %v, want %v (euid=%d)", got, want, os.Geteuid())
+	}
+}
+
+// TestIsServiceMode_SystemdEnvTriggersEvenWhenNonRoot covers the
+// `User=levoile` systemd unit scenario: euid is non-zero but systemd
+// sets INVOCATION_ID (and NOTIFY_SOCKET if Type=notify) for every unit
+// it launches. Story 8.2 M3 hardening.
+func TestIsServiceMode_SystemdEnvTriggersEvenWhenNonRoot(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("only meaningful under non-root euid")
+	}
+
+	// INVOCATION_ID alone is sufficient.
+	t.Setenv("NOTIFY_SOCKET", "")
+	t.Setenv("INVOCATION_ID", "deadbeef1234deadbeef1234deadbeef")
+	if !isServiceMode() {
+		t.Error("INVOCATION_ID set but isServiceMode() returned false")
+	}
+
+	// NOTIFY_SOCKET alone is sufficient.
+	t.Setenv("INVOCATION_ID", "")
+	t.Setenv("NOTIFY_SOCKET", "/run/systemd/notify")
+	if !isServiceMode() {
+		t.Error("NOTIFY_SOCKET set but isServiceMode() returned false")
+	}
+
+	// Neither → user mode.
+	t.Setenv("INVOCATION_ID", "")
+	t.Setenv("NOTIFY_SOCKET", "")
+	if isServiceMode() {
+		t.Error("no systemd env and non-root euid: isServiceMode() should be false")
 	}
 }

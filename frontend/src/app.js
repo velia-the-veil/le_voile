@@ -58,6 +58,7 @@ function init() {
     startPolling();
     startRegistryPolling();
     startUIEventsPolling();
+    startUpdateStatusPolling();
     loadUIPrefs();
 
     // Retry if page failed to render (cold WebView2 runtime). Skip when the
@@ -730,7 +731,105 @@ async function pollUIEvents() {
         if (data && data.event === 'killswitch_modal') {
             openKillSwitchModal();
         }
+        if (data && data.event === 'update_available') {
+            // The tray click forces the banner to be re-shown even if the user
+            // had dismissed it for the session — the user explicitly asked to
+            // see the update affordance.
+            sessionDismissedUpdateVersion = '';
+            pollUpdateStatus();
+        }
     } catch (e) { /* server transient — try again next tick */ }
+}
+
+// === Story 8.1 AC9 — auto-update banner ===
+//
+// Polls /api/update-status on a slow (5 s) cadence — distinct from /api/status
+// so it stays predictable when the IPC layer flaps. The banner is purely a
+// UI affordance: no network call leaves the local HTTP server (the Go side
+// already talked to GitHub), and the dismiss state lives only in these
+// in-memory variables (no localStorage). The contract is "remind every time
+// the window opens", so the user can't forget a pending restart.
+//
+// Code review M2 fix: separate dismiss tokens for update-ready and rollback
+// so clicking "Plus tard" on a rollback banner actually sticks for the
+// session instead of re-rendering on the next 5 s poll.
+const UPDATE_POLL_INTERVAL = 5000;
+let updateStatusId = null;
+let sessionDismissedUpdateVersion = '';
+let sessionDismissedRollback = ''; // dismiss token for the rollback variant
+let lastSeenUpdateVersion = '';
+let lastSeenUpdateStatus = '';
+let lastSeenRollbackToken = ''; // version+reason concat — a unique key per rollback event
+
+function startUpdateStatusPolling() {
+    if (updateStatusId) clearInterval(updateStatusId);
+    pollUpdateStatus();
+    updateStatusId = setInterval(pollUpdateStatus, UPDATE_POLL_INTERVAL);
+}
+
+async function pollUpdateStatus() {
+    try {
+        var resp = await fetch('/api/update-status');
+        if (!resp.ok) return;
+        var data = await resp.json();
+        renderUpdateBanner(data);
+    } catch (e) { /* same as other pollers — silent retry next tick */ }
+}
+
+function renderUpdateBanner(data) {
+    var banner = document.getElementById('update-banner');
+    var text = document.getElementById('update-banner-text');
+    if (!banner || !text || !data) return;
+
+    var status = data.status || '';
+    lastSeenUpdateStatus = status;
+
+    if (status === 'update_ready' && data.version) {
+        lastSeenUpdateVersion = data.version;
+        if (sessionDismissedUpdateVersion === data.version) {
+            banner.style.display = 'none';
+            return;
+        }
+        banner.classList.remove('rollback');
+        text.textContent = 'Mise à jour v' + data.version + ' prête — redémarrez le service pour l\u2019appliquer.';
+        banner.style.display = 'flex';
+        return;
+    }
+
+    if (status === 'rollback') {
+        // Story 8.2 will deepen the rollback UX; for 8.1 we already render the
+        // warm-orange variant so the component is in place when 8.2 lands.
+        var reason = data.rollback_reason || 'cause inconnue';
+        // Code review M2: a rollback event is uniquely identified by the
+        // (version + reason) tuple. This means a fresh rollback for a different
+        // version (or same version with a different reason) re-shows the
+        // banner — which is desirable: each rollback is a distinct incident.
+        lastSeenRollbackToken = (data.rollback_version || '') + '|' + reason;
+        if (sessionDismissedRollback === lastSeenRollbackToken) {
+            banner.style.display = 'none';
+            return;
+        }
+        banner.classList.add('rollback');
+        text.textContent = 'Mise à jour échouée — ' + reason;
+        banner.style.display = 'flex';
+        return;
+    }
+
+    banner.style.display = 'none';
+}
+
+function dismissUpdateBanner(event) {
+    if (event && event.preventDefault) event.preventDefault();
+    // Code review M2 fix: dismiss for whichever variant is currently displayed.
+    // Originally only `update_ready` was tracked, so clicking "Plus tard" on a
+    // rollback banner hid the DOM but the next 5 s poll re-rendered it.
+    if (lastSeenUpdateStatus === 'update_ready' && lastSeenUpdateVersion) {
+        sessionDismissedUpdateVersion = lastSeenUpdateVersion;
+    } else if (lastSeenUpdateStatus === 'rollback' && lastSeenRollbackToken) {
+        sessionDismissedRollback = lastSeenRollbackToken;
+    }
+    var banner = document.getElementById('update-banner');
+    if (banner) banner.style.display = 'none';
 }
 
 // --- Quit confirmation -----------------------------------------------------

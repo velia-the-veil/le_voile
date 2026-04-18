@@ -9,8 +9,9 @@ import (
 )
 
 const (
-	rollbackStateFile  = "rollback_state.json"
-	failedVersionFile  = "failed_version.txt"
+	rollbackStateFile   = "rollback_state.json"
+	failedVersionFile   = "failed_version.txt"
+	installRetriesFile  = "install_retries.txt"
 )
 
 // RollbackState tracks whether a rollback is possible after a recent installation.
@@ -110,6 +111,58 @@ func ClearFailedVersion(dir string) error {
 	path := filepath.Join(dir, failedVersionFile)
 	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("updater: failed version: remove: %w", err)
+	}
+	return nil
+}
+
+// ReadInstallRetries reads the install-retry counter for a staged update.
+// Returns 0 if the file does not exist (not an error). The counter tracks how
+// many times Install() has failed on the currently-staged payload so we can
+// abandon it after a configurable cap rather than looping on every boot.
+func ReadInstallRetries(dir string) (int, error) {
+	path := filepath.Join(dir, installRetriesFile)
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 0, nil
+		}
+		return 0, fmt.Errorf("updater: install retries: read: %w", err)
+	}
+
+	s := strings.TrimSpace(string(data))
+	if s == "" {
+		return 0, nil
+	}
+	var n int
+	if _, err := fmt.Sscanf(s, "%d", &n); err != nil {
+		return 0, fmt.Errorf("updater: install retries: parse: %w", err)
+	}
+	return n, nil
+}
+
+// WriteInstallRetries persists the install-retry counter atomically.
+func WriteInstallRetries(dir string, n int) error {
+	path := filepath.Join(dir, installRetriesFile)
+	tmpPath := path + ".tmp"
+
+	if err := os.WriteFile(tmpPath, []byte(fmt.Sprintf("%d", n)), 0o600); err != nil {
+		return fmt.Errorf("updater: install retries: write tmp: %w", err)
+	}
+
+	if err := renameWithRetry(tmpPath, path); err != nil {
+		os.Remove(tmpPath)
+		return fmt.Errorf("updater: install retries: rename: %w", err)
+	}
+	return nil
+}
+
+// ClearInstallRetries removes install_retries.txt. Idempotent. Called after a
+// successful install or when the staged payload is abandoned.
+func ClearInstallRetries(dir string) error {
+	path := filepath.Join(dir, installRetriesFile)
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("updater: install retries: remove: %w", err)
 	}
 	return nil
 }

@@ -13,6 +13,60 @@ import (
 	"github.com/velia-the-veil/le_voile/internal/crypto"
 )
 
+// TestInstaller_IsPackageManaged verifies the heuristic used to decide whether
+// the binary was installed by a system package manager (dpkg/rpm/pacman).
+// The heuristic is pure-path — it does not touch the filesystem — so we feed
+// synthetic paths directly into isPackageManagedPath.
+func TestInstaller_IsPackageManaged(t *testing.T) {
+	cases := []struct {
+		name    string
+		path    string
+		wantMgd bool
+	}{
+		{"deb/usr/bin", "/usr/bin/le_voile", true},
+		{"rpm/usr/bin", "/usr/bin/le_voile_service", true},
+		{"usr/local/bin (make install)", "/usr/local/bin/le_voile", true},
+		{"usr/sbin", "/usr/sbin/le_voile", true},
+		{"opt (manual tarball)", "/opt/levoile/le_voile", false},
+		{"user install ~/.local/bin", "/home/user/.local/bin/le_voile", false},
+		{"portable /tmp", "/tmp/le_voile", false},
+		{"relative path", "./le_voile", false},
+		// Story 8.2 L2 — Homebrew coverage.
+		{"brew macOS Apple Silicon", "/opt/homebrew/bin/le_voile", true},
+		{"linuxbrew", "/home/linuxbrew/.linuxbrew/bin/le_voile", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if runtime.GOOS == "windows" {
+				// On Windows the heuristic always returns false regardless of input.
+				if isPackageManagedPath(tc.path) {
+					t.Errorf("isPackageManagedPath(%q) = true on Windows, want false", tc.path)
+				}
+				return
+			}
+			got := isPackageManagedPath(tc.path)
+			if got != tc.wantMgd {
+				t.Errorf("isPackageManagedPath(%q) = %v, want %v", tc.path, got, tc.wantMgd)
+			}
+		})
+	}
+}
+
+func TestInstaller_IsPackageManaged_WindowsAlwaysFalse(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows-only assertion")
+	}
+	for _, p := range []string{
+		`C:\Program Files\LeVoile\le_voile.exe`,
+		`C:\Windows\System32\le_voile.exe`,
+		`/usr/bin/le_voile`, // even POSIX-looking paths
+	} {
+		if isPackageManagedPath(p) {
+			t.Errorf("isPackageManagedPath(%q) = true on Windows, want false", p)
+		}
+	}
+}
+
 // testInstallerEnv sets up a test environment for installer tests.
 type testInstallerEnv struct {
 	stagingDir string

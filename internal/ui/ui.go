@@ -49,6 +49,17 @@ type SystrayMenuAPI interface {
 	Quit()
 }
 
+// updateMenuController is the minimal surface of a tray menu item used by
+// updateTrayState to drive the "Mise à jour disponible" entry (Story 8.1 AC8).
+// *systray.MenuItem satisfies it natively; tests inject a mock to assert
+// Show/Hide/SetTitle/SetTooltip without touching the real systray loop.
+type updateMenuController interface {
+	SetTitle(string)
+	SetTooltip(string)
+	Show()
+	Hide()
+}
+
 type defaultSystrayAPI struct{}
 
 func (defaultSystrayAPI) SetIcon(iconBytes []byte)  { systray.SetIcon(iconBytes) }
@@ -108,6 +119,16 @@ type UI struct {
 	menuOpen       *systray.MenuItem
 	menuKillSwitch *systray.MenuItem
 	menuQuit       *systray.MenuItem
+
+	// Story 8.1 AC8 — "Mise à jour disponible" tray entry. Hidden by default
+	// (Hide() called once in onReady), shown by updateTrayState when the IPC
+	// poll surfaces UpdateStatus="update_ready". `lastShownUpdateVersion`
+	// (under mu) prevents redundant SetTitle/Show calls when polling repeats
+	// the same version. menuUpdateClicked stays nil in tests; the menuHandler
+	// substitutes neverFiresChan, mirroring the menuKillSwitch pattern.
+	menuUpdate        updateMenuController
+	menuUpdateClicked chan struct{}
+	lastShownUpdateVersion string
 }
 
 // New creates a UI instance with real systray API.
@@ -158,6 +179,15 @@ func (u *UI) onReady() {
 
 	// Menu items — French UI.
 	u.menuOpen = u.menuAPI.AddMenuItem("Ouvrir la fenêtre", "")
+	// Story 8.1 AC8 — update notification entry. Created with a placeholder
+	// title and immediately hidden; updateTrayState reveals it when an update
+	// is staged. Inserted between "Ouvrir la fenêtre" and "Mode dégradé" so
+	// the destructive kill-switch entry stays at the bottom of the action
+	// group (visual hierarchy: passive notice → destructive action).
+	updateMenuItem := u.menuAPI.AddMenuItem("Mise à jour disponible", "")
+	updateMenuItem.Hide()
+	u.menuUpdate = updateMenuItem
+	u.menuUpdateClicked = updateMenuItem.ClickedCh
 	// Story 5.9 — destructive entry: opens the webview and asks the frontend
 	// to display the confirmation modal. The actual switch only happens after
 	// the user clicks "Continuer" in that modal (no optimistic state).
@@ -193,12 +223,16 @@ func (u *UI) onExit() {
 
 func (u *UI) menuHandler(ctx context.Context) {
 	for {
-		// menuKillSwitch may be nil in tests that don't construct it via the
-		// real onReady. Substitute the never-fires sentinel so the select
-		// keeps all branches balanced in production and tests.
+		// menuKillSwitch / menuUpdate may be nil in tests that don't construct
+		// them via the real onReady. Substitute the never-fires sentinel so
+		// the select keeps all branches balanced in production and tests.
 		killCh := neverFiresChan
 		if u.menuKillSwitch != nil {
 			killCh = u.menuKillSwitch.ClickedCh
+		}
+		updateCh := neverFiresChan
+		if u.menuUpdateClicked != nil {
+			updateCh = u.menuUpdateClicked
 		}
 		select {
 		case <-ctx.Done():
@@ -207,10 +241,23 @@ func (u *UI) menuHandler(ctx context.Context) {
 			u.handleOpenWebview()
 		case <-killCh:
 			u.handleKillSwitchMenu()
+		case <-updateCh:
+			u.handleUpdateMenu()
 		case <-u.menuQuit.ClickedCh:
 			u.handleQuit()
 		}
 	}
+}
+
+// handleUpdateMenu opens (or wakes) the webview so the user sees the
+// "update_ready" banner immediately and broadcasts a one-shot UI event the
+// frontend can consume to scroll/highlight the update affordance. Story 8.1
+// AC8 — non-intrusive: no OS-level notification, no IPC side-effect.
+func (u *UI) handleUpdateMenu() {
+	if u.httpServer != nil {
+		u.httpServer.TriggerUIEvent("update_available")
+	}
+	u.handleOpenWebview()
 }
 
 // neverFiresChan is a sentinel of the same type as systray.MenuItem.ClickedCh
@@ -462,6 +509,11 @@ func (u *UI) handleIPCError(ctx context.Context) {
 }
 
 func (u *UI) updateTrayState(resp ipc.Response) {
+	// Story 8.1 AC8 — drive the "Mise à jour disponible" entry from a
+	// dedicated path so its visibility tracks UpdateStatus/Version directly
+	// and never gets swallowed by the icon-debounce below.
+	u.applyUpdateMenu(resp)
+
 	// Build state key to detect changes — include killswitch mode so the
 	// degraded-mode override doesn't get debounced away when the tunnel
 	// state is unchanged (Story 5.9 AC3). Story 6.3: also include
@@ -546,6 +598,47 @@ func (u *UI) updateTrayState(resp ipc.Response) {
 			u.syncSysProxy(false, "")
 		}
 	}
+}
+
+// applyUpdateMenu mirrors the staged-update state surfaced by /api/get_status
+// onto the tray's "Mise à jour disponible" entry. Idempotent on identical
+// versions (gates on lastShownUpdateVersion) so repeated 2 s polls don't churn
+// the menu. No-op when no menu controller is wired (tests / packaging
+// scenarios). Story 8.1 AC8.
+//
+// Code review M4: single lock cycle — claims `lastShownUpdateVersion` upfront
+// and updates it before releasing mu. Eliminates the previous lock/unlock/lock
+// pattern that allowed two concurrent callers to both see prev != newVersion
+// and both call SetTitle. In production updateTrayState runs from a single
+// goroutine so this matters only as defensive design, but it's free.
+func (u *UI) applyUpdateMenu(resp ipc.Response) {
+	if u.menuUpdate == nil {
+		return
+	}
+	hasUpdate := resp.UpdateStatus == ipc.StatusUpdateReady && resp.UpdateVersion != ""
+
+	u.mu.Lock()
+	prev := u.lastShownUpdateVersion
+	switch {
+	case hasUpdate && resp.UpdateVersion != prev:
+		u.lastShownUpdateVersion = resp.UpdateVersion
+	case !hasUpdate && prev != "":
+		u.lastShownUpdateVersion = ""
+	default:
+		u.mu.Unlock()
+		return
+	}
+	u.mu.Unlock()
+
+	// Outside the lock: actual systray calls. Doing them under mu would risk
+	// blocking the polling loop on a slow native menu operation.
+	if hasUpdate {
+		u.menuUpdate.SetTitle(fmt.Sprintf("Mise à jour disponible : v%s", resp.UpdateVersion))
+		u.menuUpdate.SetTooltip("Téléchargée et vérifiée — sera appliquée au prochain redémarrage du service")
+		u.menuUpdate.Show()
+		return
+	}
+	u.menuUpdate.Hide()
 }
 
 func (u *UI) syncSysProxy(active bool, addr string) {
