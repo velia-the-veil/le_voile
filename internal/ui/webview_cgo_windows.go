@@ -95,9 +95,27 @@ func moveToBottomRight(hwnd uintptr, w, h int) {
 	procSetWindowPos.Call(hwnd, 0, uintptr(x), uintptr(y), uintptr(w), uintptr(h), swpNoZOrder)
 }
 
-// openWebview opens the webview window. Returns true if user requested quit.
-// showCh receives signals to show the window when hidden (from tray menu).
-func openWebview(addr string, setTerminate func(func()), clearTerminate func(), showCh <-chan struct{}) bool {
+// openWebview opens the webview window and blocks until it is closed. Returns
+// true iff the user requested application quit via ✕ (JS __close). The caller
+// translates that into handleQuit.
+//
+// showCh signals "show + bring to front" (tray left-click on a hidden window,
+// or menu "Ouvrir la fenêtre"). hideCh signals "hide to tray" (tray left-click
+// on a visible window). reportHidden is invoked on every visibility change so
+// the caller can keep its webviewHidden state in sync with handleTrayToggle.
+//
+// Rationale for ✕ = quit: the frontend shows a "Voulez-vous quitter ?"
+// confirmation modal on first close (with a "Ne plus montrer" checkbox
+// persisted in localStorage). Destroying then recreating the webview in the
+// same process was attempted and produced blank windows on WebView2 — see
+// feedback memory webview_lifecycle.
+func openWebview(addr string,
+	setTerminate func(func()),
+	clearTerminate func(),
+	showCh <-chan struct{},
+	hideCh <-chan struct{},
+	reportHidden func(bool),
+) bool {
 	w := webview.New(false)
 	if w == nil {
 		return false
@@ -124,12 +142,20 @@ func openWebview(addr string, setTerminate func(func()), clearTerminate func(), 
 		exec.Command("rundll32", "url.dll,FileProtocolHandler", url).Start()
 	})
 
-	// __minimize: hide window to tray (keep webview alive).
+	// __minimize: hide window to tray (keep webview alive). Dispatched to the
+	// webview main thread for consistency with the tray-toggle show/hide
+	// goroutines below — Bind callbacks already run on that thread, but going
+	// through Dispatch keeps the Win32 call site uniform. (Review L2.)
 	w.Bind("__minimize", func() {
-		procShowWindow.Call(hwnd, swHide)
+		w.Dispatch(func() {
+			procShowWindow.Call(hwnd, swHide)
+			reportHidden(true)
+		})
 	})
 
-	// __close: quit the entire application.
+	// __close: user confirmed quit via the modal → terminate webview; the
+	// caller (ui.handleOpenWebview goroutine) sees quitRequested=true and
+	// invokes handleQuit for a full app shutdown.
 	var quitRequested atomic.Bool
 	w.Bind("__close", func() {
 		quitRequested.Store(true)
@@ -155,14 +181,44 @@ func openWebview(addr string, setTerminate func(func()), clearTerminate func(), 
 		moveToBottomRight(hwnd, 420, 540)
 	})
 
-	// Listen for show signals from tray menu.
+	// Listen for show / hide signals until the webview event loop exits.
+	// A `done` channel closed by the outer defer tears down both goroutines
+	// cleanly — prevents the orphan-goroutine-per-open-cycle leak that the
+	// previous `for range showCh` pattern had.
+	done := make(chan struct{})
+	defer close(done)
+
 	go func() {
-		for range showCh {
-			if alive.Load() {
+		for {
+			select {
+			case <-done:
+				return
+			case <-showCh:
+				if !alive.Load() {
+					return
+				}
 				w.Dispatch(func() {
 					procShowWindow.Call(hwnd, swShow)
-					// Bring to foreground.
+					// SWP_NOMOVE|SWP_NOSIZE|SWP_SHOWWINDOW.
 					procSetWindowPos.Call(hwnd, 0, 0, 0, 0, 0, swpNoZOrder|0x0001|0x0002|0x0040)
+					reportHidden(false)
+				})
+			}
+		}
+	}()
+
+	go func() {
+		for {
+			select {
+			case <-done:
+				return
+			case <-hideCh:
+				if !alive.Load() {
+					return
+				}
+				w.Dispatch(func() {
+					procShowWindow.Call(hwnd, swHide)
+					reportHidden(true)
 				})
 			}
 		}

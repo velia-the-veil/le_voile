@@ -13,6 +13,7 @@ import (
 
 	"github.com/velia-the-veil/le_voile/internal/browser"
 	"github.com/velia-the-veil/le_voile/internal/config"
+	"github.com/velia-the-veil/le_voile/internal/ctlauth"
 	"github.com/velia-the-veil/le_voile/internal/ipc"
 	"github.com/velia-the-veil/le_voile/internal/ipchandler"
 	svc "github.com/velia-the-veil/le_voile/internal/service"
@@ -286,6 +287,10 @@ func main() {
 		AllowIPv6Leak:    rc.allowIPv6Leak,
 		CaptiveEnabled:   rc.captiveEnabled,
 		CaptiveProbeURLs: rc.captiveProbeURLs,
+
+		// Story 5.7 — supervise levoile-ui on Windows. Linux delegates to
+		// systemd user units, so the watchdog is a no-op there.
+		UIWatchdogEnabled: runtime.GOOS == "windows",
 	})
 
 	// Set up IPC server with handler that bridges to the service.
@@ -303,6 +308,21 @@ func main() {
 		func() { ipcServer.Stop() },
 	)
 
+	// Story 5.9 — wire kill-switch persistence + ctl token. Persistence is
+	// best-effort (nil callback skips it). Token init is best-effort: if it
+	// fails (no perms, missing /etc/levoile), the service still runs but
+	// levoile-ctl auth rejects all requests.
+	prg.SetKillSwitchPersister(func(enabled bool) error {
+		return persistFirewallEnabled(config.DiscoverPath(""), enabled)
+	})
+	if tokenPath := ctlauth.DefaultPath(); tokenPath != "" {
+		if tok, err := ctlauth.LoadOrCreate(tokenPath); err != nil {
+			fmt.Fprintf(os.Stderr, "client: ctl token init: %v (CLI auth disabled)\n", err)
+		} else {
+			prg.SetCtlToken(tok)
+		}
+	}
+
 	s, err := service.New(prg, newServiceConfig())
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "client: %v\n", err)
@@ -314,6 +334,30 @@ func main() {
 		fmt.Fprintf(os.Stderr, "client: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+// persistFirewallEnabled rewrites firewall.enable_killswitch in the TOML
+// config (Story 5.9). Used as the killSwitchPersist callback wired into the
+// service. Holds config.Mu for the full load → modify → save sequence so
+// concurrent IPC writers (set_blocklist, set_http_proxy, set_allow_ipv6_leak,
+// select_country) cannot lose updates (Story 5.9 H2 fix). Best-effort: when
+// cfgPath is empty (portable mode without a config file), persistence is
+// silently skipped — runtime state still flips.
+func persistFirewallEnabled(cfgPath string, enabled bool) error {
+	if cfgPath == "" {
+		return nil
+	}
+	config.Mu.Lock()
+	defer config.Mu.Unlock()
+	cfg, err := config.Load(cfgPath)
+	if err != nil {
+		return fmt.Errorf("client: load config for killswitch persist: %w", err)
+	}
+	cfg.Firewall.EnableKillSwitch = enabled
+	if err := cfg.Save(cfgPath); err != nil {
+		return fmt.Errorf("client: save config for killswitch persist: %w", err)
+	}
+	return nil
 }
 
 // setServiceStartupType changes the OS service startup type.

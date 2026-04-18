@@ -9,14 +9,27 @@ import (
 	webview "github.com/webview/webview_go"
 )
 
-// openWebview opens the webview window on Linux (WebKitGTK). Returns true if
-// the user clicked the close button (quit requested).
+// openWebview opens the webview window on Linux (WebKitGTK). Returns true iff
+// the user requested application quit via ✕ (JS __close).
 //
-// Compared to the Windows implementation, this variant intentionally omits the
+// Compared to the Windows implementation, this variant intentionally omits
 // native titlebar manipulation and bottom-right positioning — those rely on
-// Win32 APIs. On Linux, the GTK window manager handles placement and chrome;
-// fine-tuned styling can be layered in a follow-up story if needed.
-func openWebview(addr string, setTerminate func(func()), clearTerminate func(), showCh <-chan struct{}) bool {
+// Win32 APIs. On Linux, the GTK window manager handles placement and chrome.
+//
+// showCh / hideCh / reportHidden are accepted for signature parity with the
+// Windows build. On Linux they are ignored: WebKitGTK has no portable
+// equivalent to ShowWindow(SW_HIDE)/SW_SHOW, and libayatana-appindicator
+// rarely delivers SetOnTapped reliably anyway — users interact with the
+// window via its own titlebar and the tray context menu.
+func openWebview(addr string,
+	setTerminate func(func()),
+	clearTerminate func(),
+	showCh <-chan struct{},
+	hideCh <-chan struct{},
+	reportHidden func(bool),
+) bool {
+	_, _, _ = showCh, hideCh, reportHidden
+
 	w := webview.New(false)
 	if w == nil {
 		return false
@@ -62,13 +75,6 @@ func openWebview(addr string, setTerminate func(func()), clearTerminate func(), 
 			__openExternal(href);
 		}
 	}, true);`)
-
-	// showCh signals from tray menu to raise the window. On WebKitGTK the
-	// window is already visible; drain the channel to prevent blocking senders.
-	go func() {
-		for range showCh {
-		}
-	}()
 
 	w.Navigate("http://" + addr + "/")
 	w.Run()

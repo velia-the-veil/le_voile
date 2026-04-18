@@ -30,6 +30,7 @@ import (
 	"github.com/velia-the-veil/le_voile/internal/tun"
 	tunwatchdog "github.com/velia-the-veil/le_voile/internal/tun/watchdog"
 	"github.com/velia-the-veil/le_voile/internal/tunnel"
+	"github.com/velia-the-veil/le_voile/internal/uiwatchdog"
 	"github.com/velia-the-veil/le_voile/internal/updater"
 	"github.com/velia-the-veil/le_voile/internal/watchdog"
 )
@@ -104,6 +105,13 @@ type Config struct {
 	// l'établissement du tunnel (Story 2.8). Si false, skip du probe.
 	CaptiveEnabled  bool
 	CaptiveProbeURLs []string // overrides captive.DefaultProbeURLs if non-empty
+
+	// UIWatchdogEnabled active la supervision du processus levoile-ui
+	// (Story 5.7 — FR15b). Activé par défaut sur Windows ; ignoré sur
+	// Linux (systemd user gère). UIBinaryPath est le chemin absolu du
+	// binaire UI à respawner ; vide = chemin auto-derivé du service.
+	UIWatchdogEnabled bool
+	UIBinaryPath      string
 }
 
 // Program implements kardianos/service.Interface for lifecycle management.
@@ -224,6 +232,25 @@ type Program struct {
 	// preflightLastScan horodate le dernier scan pour throttler handleConnect
 	// (fix M3 — éviter un shell-out PowerShell à chaque clic rapide).
 	preflightLastScan time.Time
+
+	// uiWatchdog supervise le processus levoile-ui (Story 5.7). nil si
+	// UIWatchdogEnabled est false ou si l'OS délègue (Linux → systemd
+	// user). Démarré à la fin de run(), arrêté en tête de shutdown().
+	uiWatchdog *uiwatchdog.Watchdog
+
+	// killSwitchPersist persists firewall.enable_killswitch to the TOML.
+	// Set externally via SetKillSwitchPersister so that internal/service
+	// avoids depending on the cmd/client config-path discovery layer.
+	// When nil, runtime kill-switch toggles are not persisted (best-effort,
+	// callers should always wire it on production paths). Story 5.9.
+	killSwitchPersist func(enabled bool) error
+
+	// ctlToken authenticates levoile-ctl IPC requests. Loaded once at
+	// service init from a 0600/ACL-restricted file. Compared with
+	// crypto/subtle.ConstantTimeCompare to defend against timing oracles
+	// (NFR9c). Empty value = ctl auth disabled (UI/IPC paths still work).
+	// Story 5.9.
+	ctlToken []byte
 }
 
 // NewProgram creates a Program with the given configuration.
@@ -241,6 +268,35 @@ func (l *serviceLogger) Infof(format string, args ...any)  { fmt.Fprintf(service
 func (l *serviceLogger) Warnf(format string, args ...any)  { fmt.Fprintf(serviceStderr, "service: firewall: WARN "+format+"\n", args...) }
 func (l *serviceLogger) Errorf(format string, args ...any) { fmt.Fprintf(serviceStderr, "service: firewall: ERROR "+format+"\n", args...) }
 func (l *serviceLogger) Debugf(format string, args ...any) { fmt.Fprintf(serviceStderr, "service: firewall: DEBUG "+format+"\n", args...) }
+
+// uiWatchdogLogger adapts the watchdog's Logger interface to serviceStderr
+// so supervision events appear in the same stream as the rest of the
+// service. NFR22a — no PII (no PID, path, user name) is added by the
+// watchdog itself.
+type uiWatchdogLogger struct{}
+
+func (l *uiWatchdogLogger) Infof(format string, args ...any)  { fmt.Fprintf(serviceStderr, "service: ui watchdog: "+format+"\n", args...) }
+func (l *uiWatchdogLogger) Warnf(format string, args ...any)  { fmt.Fprintf(serviceStderr, "service: ui watchdog: WARN "+format+"\n", args...) }
+func (l *uiWatchdogLogger) Errorf(format string, args ...any) { fmt.Fprintf(serviceStderr, "service: ui watchdog: ERROR "+format+"\n", args...) }
+
+// deriveUIBinaryPath returns the conventional path of the levoile-ui
+// binary relative to the running service binary. Returns "" if the
+// service binary path cannot be determined.
+//
+// Resolves symlinks before taking the directory so that Linux layouts
+// where /usr/bin/levoile-service is a symlink to /opt/levoile/... still
+// land on the correct install directory. No-op on Windows where
+// os.Executable already returns the real path.
+func deriveUIBinaryPath() string {
+	self, err := os.Executable()
+	if err != nil {
+		return ""
+	}
+	if resolved, err := filepath.EvalSymlinks(self); err == nil {
+		self = resolved
+	}
+	return filepath.Join(filepath.Dir(self), uiBinaryName)
+}
 
 // firewallFactory permet d'injecter un Firewall mocké dans les tests.
 // Défaut : firewall.New.
@@ -491,6 +547,17 @@ func (p *Program) FailoverManager() *registry.FailoverManager {
 	return p.failoverMgr
 }
 
+// UIWatchdogSnapshot returns a point-in-time snapshot of the levoile-ui
+// supervisor state (Story 5.7). nil when supervision is disabled (Linux or
+// UIWatchdogEnabled=false) so IPC callers can omit the field entirely.
+func (p *Program) UIWatchdogSnapshot() *uiwatchdog.Snapshot {
+	if p.uiWatchdog == nil {
+		return nil
+	}
+	s := p.uiWatchdog.Snapshot()
+	return &s
+}
+
 // ResetCircuitBreaker clears the tripped state and resets the Reconnector
 // so subsequent StateDisconnected notifications resume the reconnect loop.
 // Called from the IPC Connect handler when the user asks to retry.
@@ -520,6 +587,14 @@ func (p *Program) ForTestSetTunnelClient(c *tunnel.Client) {
 // Do NOT call from production code.
 func (p *Program) ForTestSetDiscoverer(d *registry.Discoverer) {
 	p.discoverer = d
+}
+
+// ForTestInitContext wires a real cancellable lifecycle context onto the
+// program without running Start(). Tests use it to directly observe
+// whether a handler triggered Cancel / RequestStop by checking
+// p.Context().Err() after the call. Do NOT call from production code.
+func (p *Program) ForTestInitContext(parent context.Context) {
+	p.ctx, p.cancel = context.WithCancel(parent)
 }
 
 // Context returns the service lifecycle context.
@@ -1293,6 +1368,11 @@ func (p *Program) run() {
 	reconnOpts = append(reconnOpts, tunnel.WithCircuitBreakerHook(func(_ context.Context) {
 		p.tripCircuitBreaker(CircuitBreakerAlertMessage)
 	}))
+	// Story 5.9 — auto-restore the OS firewall after a successful reconnect
+	// when degraded mode was active. No-op when already in normal mode.
+	reconnOpts = append(reconnOpts, tunnel.WithReconnectSuccessHook(func(hookCtx context.Context) {
+		p.MaybeRestoreKillSwitch(hookCtx, "auto-reconnect")
+	}))
 	reconnector := tunnel.NewReconnector(client.State().Updates(), client.Connect, ks, reconnOpts...)
 	p.reconnector = reconnector
 	go reconnector.Start(ctx)
@@ -1410,6 +1490,39 @@ func (p *Program) run() {
 		}
 	}
 
+	// --- 8. UI watchdog (Story 5.7 — supervision levoile-ui) ---
+	// Démarré APRÈS l'IPC pour que GetStatus puisse retourner UISupervision
+	// dès la première requête. Arrêté EN TÊTE de shutdown() pour ne pas
+	// respawner pendant le teardown tunnel/firewall.
+	if p.config.UIWatchdogEnabled {
+		binaryPath := p.config.UIBinaryPath
+		if binaryPath == "" {
+			binaryPath = deriveUIBinaryPath()
+		}
+		if binaryPath != "" {
+			if _, statErr := os.Stat(binaryPath); statErr != nil {
+				// NFR22a — log filename only, not the full path (which could
+				// expose install location or user profile on some layouts).
+				fmt.Fprintf(serviceStderr, "service: ui watchdog: binary %s not found, supervision disabled: %v\n", filepath.Base(binaryPath), statErr)
+			} else {
+				wd, wdErr := uiwatchdog.New(uiwatchdog.Config{
+					Launcher: uiwatchdog.NewPlatformLauncher(binaryPath),
+					Logger:   &uiWatchdogLogger{},
+				})
+				if wdErr != nil {
+					fmt.Fprintf(serviceStderr, "service: ui watchdog: init failed: %v\n", wdErr)
+				} else {
+					p.uiWatchdog = wd
+					go func() {
+						if err := wd.Start(ctx); err != nil {
+							fmt.Fprintf(serviceStderr, "service: ui watchdog: %v\n", err)
+						}
+					}()
+				}
+			}
+		}
+	}
+
 	// --- Wait for shutdown ---
 	// À partir d'ici, shutdown() prend la responsabilité de fermer tunDev.
 	// Le désarmement de tunCleanup évite un double-close si shutdown se
@@ -1432,7 +1545,15 @@ func (p *Program) run() {
 // confirmation that shutdown is complete. Browser policies and DNS are
 // restored BEFORE IPC close.
 func (p *Program) shutdown() {
-	// 0. Clear captive portal state (Story 2.8).
+	// 0. Stop UI watchdog FIRST (Story 5.7) — must happen before tunnel/
+	// firewall teardown so the watchdog does not respawn levoile-ui.exe
+	// during the shutdown window.
+	if p.uiWatchdog != nil {
+		p.uiWatchdog.Stop()
+		p.uiWatchdog = nil
+	}
+
+	// 0a. Clear captive portal state (Story 2.8).
 	p.captivePortal.Store(false)
 	p.captiveProbeURL.Store("")
 	p.captiveMu.Lock()

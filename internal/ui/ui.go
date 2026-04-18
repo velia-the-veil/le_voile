@@ -4,20 +4,28 @@ import (
 	"context"
 	"fmt"
 	"io/fs"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"fyne.io/systray"
-	"github.com/velia-the-veil/le_voile/internal/dns"
 	"github.com/velia-the-veil/le_voile/internal/ipc"
 )
 
 const (
-	pollInterval     = 2 * time.Second
-	reconnectInitial = 1 * time.Second
-	reconnectMax     = 10 * time.Second
-	quitTimeout      = 10 * time.Second
+	pollInterval = 2 * time.Second
+	// ipcRetryInterval is the fixed cadence at which the UI re-attempts to
+	// reach the service when IPC is down (Story 5.6 AC3 / FR13c). Do NOT
+	// re-introduce exponential backoff — the 5 s fixed interval is part of
+	// the user-facing contract and matches the discreet spinner shown on
+	// the "Service non démarré" fallback screen.
+	ipcRetryInterval = 5 * time.Second
+	// uiDisconnectTimeout bounds how long the shutdown sequence waits for
+	// the service to acknowledge the UI-quit notification. The service
+	// response is purely informational (no lifecycle work), so a short
+	// timeout is fine — if the service is unreachable we exit anyway.
+	uiDisconnectTimeout = 2 * time.Second
 )
 
 // IPCClient abstracts the IPC client for testability.
@@ -43,7 +51,7 @@ type SystrayMenuAPI interface {
 
 type defaultSystrayAPI struct{}
 
-func (defaultSystrayAPI) SetIcon(iconBytes []byte) { systray.SetIcon(iconBytes) }
+func (defaultSystrayAPI) SetIcon(iconBytes []byte)  { systray.SetIcon(iconBytes) }
 func (defaultSystrayAPI) SetTooltip(tooltip string) { systray.SetTooltip(tooltip) }
 func (defaultSystrayAPI) SetTitle(title string)     { systray.SetTitle(title) }
 
@@ -71,45 +79,61 @@ type UI struct {
 	httpServer *HTTPServer
 	cancel     context.CancelFunc
 
-	mu               sync.Mutex
-	last             string // last known state to avoid redundant updates
-	connected        bool
+	mu                 sync.Mutex
+	last               string // last known state to avoid redundant updates
+	connected          bool
 	shutdownInProgress atomic.Bool
-	shutdownOnce     sync.Once
+	shutdownOnce       sync.Once
 
 	// webviewTerminate terminates the webview event loop (if open).
 	// Protected by mu.
 	webviewTerminate func()
 
 	sysProxy       *SysProxy
-	webviewOpen    atomic.Bool // prevents multiple windows
-	sysProxyActive atomic.Bool // tracks whether WinINET is currently set to Le Voile proxy
-	showCh         chan struct{} // signals webview to show itself
+	webviewOpen    atomic.Bool   // prevents multiple windows
+	webviewHidden  atomic.Bool   // true while the webview is hidden to tray (SW_HIDE)
+	sysProxyActive atomic.Bool   // tracks whether WinINET is currently set to Le Voile proxy
+	showCh         chan struct{} // signals webview to show itself (buffered 1, replaced per open)
+	hideCh         chan struct{} // signals webview to hide to tray (buffered 1, replaced per open)
 
-	menuOpen *systray.MenuItem
-	menuQuit *systray.MenuItem
+	// quitFn is invoked by onWebviewClosed when ✕ requests app quit.
+	// Defaults to u.handleQuit; overridable for testing.
+	quitFn func()
+
+	// onRetryWait is invoked right before reconnectIPC enters the 5 s wait.
+	// Nil in production; tests set it to coordinate timing without relying on
+	// Sleep (Story 5.6 review finding M2).
+	onRetryWait func()
+
+	menuOpen       *systray.MenuItem
+	menuKillSwitch *systray.MenuItem
+	menuQuit       *systray.MenuItem
 }
 
 // New creates a UI instance with real systray API.
 func New(client IPCClient, cfg Config) *UI {
-	return &UI{
+	u := &UI{
 		api:      defaultSystrayAPI{},
 		menuAPI:  defaultSystrayMenuAPI{},
 		client:   NewSafeIPCClient(client),
 		config:   cfg,
 		sysProxy: NewSysProxy(cfg.RelayDomain),
 	}
+	u.quitFn = u.handleQuit
+	return u
 }
 
 // newWithDeps creates a UI with injected dependencies (for testing).
 func newWithDeps(api SystrayAPI, menuAPI SystrayMenuAPI, client IPCClient, cfg Config, sysProxy *SysProxy) *UI {
-	return &UI{
+	u := &UI{
 		api:      api,
 		menuAPI:  menuAPI,
 		client:   NewSafeIPCClient(client),
 		config:   cfg,
 		sysProxy: sysProxy,
 	}
+	u.quitFn = u.handleQuit
+	return u
 }
 
 // Run starts the systray event loop. Blocks and must be called from the main goroutine.
@@ -122,10 +146,24 @@ func (u *UI) onReady() {
 	u.api.SetTooltip("Non protégé")
 	u.api.SetTitle("Le Voile")
 
+	// Left-click on the tray icon toggles the webview. We gate this to Windows
+	// only: fyne.io/systray sets ItemIsMenu=false on Linux as soon as any
+	// tapped callback is registered (systray_unix.go:368), which breaks the
+	// natural "right-click opens menu" default on libayatana-appindicator.
+	// On Linux the user interacts with the window through the context menu's
+	// "Ouvrir la fenêtre" entry — see Story 5.5 AC4 + review M1.
+	if runtime.GOOS == "windows" {
+		systray.SetOnTapped(u.handleTrayToggle)
+	}
+
 	// Menu items — French UI.
 	u.menuOpen = u.menuAPI.AddMenuItem("Ouvrir la fenêtre", "")
+	// Story 5.9 — destructive entry: opens the webview and asks the frontend
+	// to display the confirmation modal. The actual switch only happens after
+	// the user clicks "Continuer" in that modal (no optimistic state).
+	u.menuKillSwitch = u.menuAPI.AddMenuItem("Mode dégradé", "Désactiver temporairement la protection")
 	u.menuAPI.AddSeparator()
-	u.menuQuit = u.menuAPI.AddMenuItem("Quitter", "Quitter Le Voile")
+	u.menuQuit = u.menuAPI.AddMenuItem("Quitter", "Quitter l'interface (la protection reste active)")
 
 	// Recover orphaned WinINET proxy from a previous crash.
 	if u.sysProxy != nil {
@@ -155,34 +193,90 @@ func (u *UI) onExit() {
 
 func (u *UI) menuHandler(ctx context.Context) {
 	for {
+		// menuKillSwitch may be nil in tests that don't construct it via the
+		// real onReady. Substitute the never-fires sentinel so the select
+		// keeps all branches balanced in production and tests.
+		killCh := neverFiresChan
+		if u.menuKillSwitch != nil {
+			killCh = u.menuKillSwitch.ClickedCh
+		}
 		select {
 		case <-ctx.Done():
 			return
 		case <-u.menuOpen.ClickedCh:
 			u.handleOpenWebview()
+		case <-killCh:
+			u.handleKillSwitchMenu()
 		case <-u.menuQuit.ClickedCh:
 			u.handleQuit()
 		}
 	}
 }
 
+// neverFiresChan is a sentinel of the same type as systray.MenuItem.ClickedCh
+// that NEVER receives a value (and is intentionally never closed). Used as a
+// placeholder for nil menu items so the menuHandler select stays balanced
+// without spuriously firing the kill-switch case in tests that don't
+// construct that menu entry. Story 5.9 L1 — renamed from the misleading
+// "closedChan" which suggested it might be closed.
+var neverFiresChan = make(chan struct{})
+
+// handleKillSwitchMenu opens (or shows) the webview and queues a one-shot
+// "killswitch_modal" UI event for the frontend to consume on next poll.
+// The actual mode switch happens only after the user confirms via the modal —
+// no IPC is dispatched here. Story 5.9 AC1.
+func (u *UI) handleKillSwitchMenu() {
+	if u.httpServer != nil {
+		u.httpServer.TriggerUIEvent("killswitch_modal")
+	}
+	u.handleOpenWebview()
+}
+
+// handleOpenWebview creates the webview once per app lifetime, or signals an
+// existing (possibly hidden) window to show and come to the foreground. The
+// window is NEVER recreated after destruction: closing via ✕ quits the whole
+// app (see the goroutine's post-openWebview handleQuit). This avoids a
+// WebView2 recreation bug that rendered the second window blank.
 func (u *UI) handleOpenWebview() {
-	if u.webviewOpen.Load() {
-		// Webview exists but hidden — signal it to show.
-		select {
-		case u.showCh <- struct{}{}:
-		default:
+	if u.httpServer == nil {
+		return
+	}
+	if !u.webviewOpen.CompareAndSwap(false, true) {
+		// Already open — signal "show + foreground" (no-op if already shown).
+		u.mu.Lock()
+		ch := u.showCh
+		u.mu.Unlock()
+		if ch != nil {
+			select {
+			case ch <- struct{}{}:
+			default:
+			}
 		}
 		return
 	}
 	addr := u.httpServer.Addr()
 	if addr == "" {
+		u.webviewOpen.Store(false)
 		return
 	}
-	u.showCh = make(chan struct{}, 1)
-	u.webviewOpen.Store(true)
+	showCh := make(chan struct{}, 1)
+	hideCh := make(chan struct{}, 1)
+	u.mu.Lock()
+	u.showCh = showCh
+	u.hideCh = hideCh
+	u.mu.Unlock()
+	u.webviewHidden.Store(false)
 	go func() {
 		defer u.webviewOpen.Store(false)
+		defer u.webviewHidden.Store(false)
+		// Release the channel references once the webview is gone so GC can
+		// reclaim them and handleTrayToggle sees nil (noop guard).
+		defer func() {
+			u.mu.Lock()
+			u.showCh = nil
+			u.hideCh = nil
+			u.mu.Unlock()
+		}()
 		quit := openWebview(addr,
 			func(terminate func()) {
 				u.mu.Lock()
@@ -194,13 +288,57 @@ func (u *UI) handleOpenWebview() {
 				u.webviewTerminate = nil
 				u.mu.Unlock()
 			},
-			u.showCh,
+			showCh,
+			hideCh,
+			func(hidden bool) { u.webviewHidden.Store(hidden) },
 		)
-		// Only quit if user clicked X (not minimize to tray).
-		if quit && !u.shutdownInProgress.Load() {
-			u.handleQuit()
-		}
+		u.onWebviewClosed(quit)
 	}()
+}
+
+// onWebviewClosed is invoked once per webview lifecycle after openWebview
+// returns. When ✕ was clicked (quit=true) and we're not already shutting down,
+// drive a full app shutdown via quitFn (defaults to handleQuit; overridable
+// for tests). Extracted for testability — see TestOnWebviewClosed_*.
+func (u *UI) onWebviewClosed(quit bool) {
+	if !quit {
+		return
+	}
+	if u.shutdownInProgress.Load() {
+		return
+	}
+	if u.quitFn != nil {
+		u.quitFn()
+	}
+}
+
+// handleTrayToggle is bound to systray.SetOnTapped (left-click). Two-state
+// behavior only — the webview is never recreated after close, so when the
+// webview is absent (app shutting down or not yet ready) the click is a no-op:
+//
+//	hidden  → show + bring to front (signal on showCh)
+//	visible → hide to tray           (signal on hideCh)
+//
+// Sends are non-blocking so rapid clicks coalesce.
+func (u *UI) handleTrayToggle() {
+	if !u.webviewOpen.Load() {
+		return
+	}
+	u.mu.Lock()
+	var ch chan struct{}
+	if u.webviewHidden.Load() {
+		ch = u.showCh
+	} else {
+		ch = u.hideCh
+	}
+	u.mu.Unlock()
+	if ch == nil {
+		return
+	}
+	select {
+	case ch <- struct{}{}:
+	default:
+	}
 }
 
 func (u *UI) handleQuit() {
@@ -210,9 +348,13 @@ func (u *UI) handleQuit() {
 
 const httpShutdownTimeout = 3 * time.Second
 
-// shutdown performs the complete UI shutdown sequence. Idempotent via sync.Once.
+// shutdown performs the UI-only shutdown sequence. Idempotent via sync.Once.
+// Story 5.8: the UI process exits independently of the service. The service
+// keeps the tunnel, firewall, routing and TUN alive under systemd/SCM control
+// until someone explicitly stops it (`sc stop levoile-service` /
+// `systemctl stop levoile.service`).
 // Sequence: shutdownInProgress → destroy webview → restore proxy →
-// shutdown HTTP server → ActionQuit IPC → RecoverOrphanDNS → cancel ctx → close IPC.
+// shutdown HTTP server → ActionUIDisconnect notification → cancel ctx → close IPC.
 func (u *UI) shutdown() {
 	u.shutdownOnce.Do(u.doShutdown)
 }
@@ -230,7 +372,7 @@ func (u *UI) doShutdown() {
 		terminate()
 	}
 
-	// 3. Restore WinINET proxy (UI owns this resource — AC5).
+	// 3. Restore WinINET proxy (UI owns this resource).
 	// Try Restore first, then verify proxy is no longer ours.
 	if u.sysProxy != nil {
 		u.sysProxy.Restore()
@@ -246,18 +388,15 @@ func (u *UI) doShutdown() {
 		shutdownCancel()
 	}
 
-	// 5. Tell the service to stop and wait for it to exit.
-	quitCtx, quitCancel := context.WithTimeout(context.Background(), quitTimeout)
-	u.client.SendContext(quitCtx, ipc.Request{Action: ipc.ActionQuit})
-	quitCancel()
-	// Give the service time to shut down cleanly via SCM.
-	time.Sleep(1 * time.Second)
+	// 5. Notify the service that this UI is going away. The service
+	// acknowledges with StatusOK and does NOT stop the tunnel — Story 5.8
+	// AC1/AC5. The short timeout is deliberate: we're exiting the UI
+	// either way, the notification is best-effort.
+	disconnectCtx, disconnectCancel := context.WithTimeout(context.Background(), uiDisconnectTimeout)
+	u.client.SendContext(disconnectCtx, ipc.Request{Action: ipc.ActionUIDisconnect})
+	disconnectCancel()
 
-	// 6. Safety net: restore DNS from persisted file in case the service
-	// didn't shut down cleanly. No-op if the service already restored.
-	dns.RecoverOrphanDNS(context.Background())
-
-	// 7. Cancel polling context and close IPC connection.
+	// 6. Cancel polling context and close IPC connection.
 	if u.cancel != nil {
 		u.cancel()
 	}
@@ -286,19 +425,20 @@ func (u *UI) connectAndPoll(ctx context.Context) {
 }
 
 func (u *UI) reconnectIPC(ctx context.Context) {
-	delay := reconnectInitial
+	// Fixed 5 s cadence (Story 5.6 AC3). The first attempt runs immediately
+	// so the nominal startup path (service already up) does not incur any
+	// delay before the first /api/status succeeds.
 	for {
 		if err := u.client.Connect(); err == nil {
 			return
 		}
+		if u.onRetryWait != nil {
+			u.onRetryWait()
+		}
 		select {
 		case <-ctx.Done():
 			return
-		case <-time.After(delay):
-		}
-		delay *= 2
-		if delay > reconnectMax {
-			delay = reconnectMax
+		case <-time.After(ipcRetryInterval):
 		}
 	}
 }
@@ -322,8 +462,10 @@ func (u *UI) handleIPCError(ctx context.Context) {
 }
 
 func (u *UI) updateTrayState(resp ipc.Response) {
-	// Build state key to detect changes.
-	stateKey := fmt.Sprintf("%s|%s|%s|%s|%v", resp.Status, resp.IP, resp.Country, resp.RelayID, resp.HTTPProxyActive)
+	// Build state key to detect changes — include killswitch mode so the
+	// degraded-mode override doesn't get debounced away when the tunnel
+	// state is unchanged (Story 5.9 AC3).
+	stateKey := fmt.Sprintf("%s|%s|%s|%s|%v|%s", resp.Status, resp.IP, resp.Country, resp.RelayID, resp.HTTPProxyActive, resp.KillSwitchMode)
 	u.mu.Lock()
 	if u.last == stateKey {
 		u.mu.Unlock()
@@ -331,6 +473,18 @@ func (u *UI) updateTrayState(resp ipc.Response) {
 	}
 	u.last = stateKey
 	u.mu.Unlock()
+
+	// Story 5.9 — degraded mode wins over the tunnel-state-driven icon. The
+	// tray must render red + the dedicated tooltip even when the tunnel is
+	// "connected", to match the permanent banner shown in the webview.
+	if resp.KillSwitchMode == ipc.KillSwitchModeDegraded {
+		u.api.SetIcon(IconDisconnected)
+		u.api.SetTooltip("Mode dégradé — protection désactivée")
+		u.mu.Lock()
+		u.connected = false
+		u.mu.Unlock()
+		return
+	}
 
 	switch resp.Status {
 	case ipc.StatusConnected:

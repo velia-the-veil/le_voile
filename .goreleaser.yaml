@@ -41,44 +41,27 @@ builds:
     ldflags:
       - -s -w -X main.version={{.Version}}
 
-  # Portable builds — single binary combining service + tray.
-  # Windows: no CGo needed (fyne.io/systray is pure Go on Windows).
-  # Linux/macOS: require CGo (dbus/appindicator, Objective-C).
-  # Cross-compilation from Windows to Linux/macOS with CGo will fail — expected for MVP.
-  - id: portable-windows
-    main: ./cmd/portable
-    binary: levoile-portable
+  # Story 5.9 — privileged operator CLI shipped on both Linux and Windows.
+  # Pure Go (no CGo) — small enough to bundle into every archive without bloat.
+  - id: ctl-windows
+    main: ./cmd/ctl
+    binary: levoile-ctl
     goos: [windows]
     goarch: [amd64]
-    env:
-      - CGO_ENABLED=0
     ldflags:
       - -s -w -X main.version={{.Version}}
-    # No -H windowsgui: UAC/error messages must be visible in console.
 
-  - id: portable-linux
-    main: ./cmd/portable
-    binary: levoile-portable
+  - id: ctl-linux
+    main: ./cmd/ctl
+    binary: levoile-ctl
     goos: [linux]
-    goarch: [amd64]
-    env:
-      - CGO_ENABLED=1
-    ldflags:
-      - -s -w -X main.version={{.Version}}
-
-  - id: portable-darwin
-    main: ./cmd/portable
-    binary: levoile-portable
-    goos: [darwin]
     goarch: [amd64, arm64]
-    env:
-      - CGO_ENABLED=1
     ldflags:
       - -s -w -X main.version={{.Version}}
 
 archives:
   - id: windows
-    builds: [service, ui]
+    builds: [service, ui, ctl-windows]
     name_template: "LeVoile_{{.Version}}_windows_amd64"
     format: zip
     files:
@@ -95,34 +78,12 @@ archives:
       - deploy/*
 
   - id: ui-linux
-    builds: [ui-linux]
+    builds: [ui-linux, ctl-linux]
     name_template: "LeVoile_{{.Version}}_linux_{{.Arch}}"
     format: tar.gz
     files:
       - LICENSE
       - installer/config-default.toml
-
-  - id: portable-windows
-    builds: [portable-windows]
-    name_template: "LeVoile-Portable_{{.Version}}_windows_amd64"
-    format: zip
-    files:
-      - LICENSE
-      - installer/config-default.toml
-
-  - id: portable-linux
-    builds: [portable-linux]
-    name_template: "LeVoile-Portable_{{.Version}}_linux_amd64"
-    format: tar.gz
-    files:
-      - LICENSE
-
-  - id: portable-darwin
-    builds: [portable-darwin]
-    name_template: "LeVoile-Portable_{{.Version}}_{{.Os}}_{{.Arch}}"
-    format: tar.gz
-    files:
-      - LICENSE
 
 checksum:
   name_template: "checksums.txt"

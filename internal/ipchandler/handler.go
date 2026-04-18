@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"net"
 	"sort"
-	"sync"
 	"time"
 
 	"github.com/velia-the-veil/le_voile/internal/config"
@@ -17,11 +16,53 @@ import (
 	"github.com/velia-the-veil/le_voile/internal/registry"
 	svc "github.com/velia-the-veil/le_voile/internal/service"
 	"github.com/velia-the-veil/le_voile/internal/tunnel"
+	"github.com/velia-the-veil/le_voile/internal/uiwatchdog"
 )
 
-// configMu serializes config load-modify-save sequences across all IPC handlers
-// to prevent concurrent writes from clobbering each other.
-var configMu sync.Mutex
+// uiSupervisionFromSnapshot maps the in-process uiwatchdog snapshot to
+// the wire-format struct used by GetStatus / GetUISupervision. RFC 3339
+// is the format the rest of the IPC payload uses for timestamps
+// (LeakLastCheck), so we stay consistent.
+func uiSupervisionFromSnapshot(s *uiwatchdog.Snapshot) *ipc.UISupervisionState {
+	if s == nil {
+		return nil
+	}
+	out := &ipc.UISupervisionState{
+		Enabled:            s.Enabled,
+		RestartCountWindow: s.RestartCountWindow,
+	}
+	if !s.LastRestartAt.IsZero() {
+		out.LastRestartAt = s.LastRestartAt.UTC().Format(time.RFC3339)
+	}
+	if !s.BackoffUntil.IsZero() {
+		out.BackoffUntil = s.BackoffUntil.UTC().Format(time.RFC3339)
+	}
+	return out
+}
+
+// configMu is an alias for config.Mu (Story 5.9 H2 fix). Local symbol kept for
+// minimal diff in handler bodies — every config writer in the project (IPC
+// handlers + cmd/client kill-switch persister) shares the same mutex now.
+var configMu = &config.Mu
+
+// persistPreferredCountry writes the user's country choice back to the TOML
+// config under client.preferred_country. Serializes with configMu so it
+// never races other handlers that also edit config.
+//
+// Best-effort on load: if the file is missing or corrupt, the call is a
+// silent no-op (returns nil). Save errors are surfaced so SelectCountry can
+// report them to the UI — losing a preference on disk is a real user-facing
+// failure, losing a Load on a partial setup is not.
+func persistPreferredCountry(cfgPath, countryCode string) error {
+	configMu.Lock()
+	defer configMu.Unlock()
+	cfg, err := config.Load(cfgPath)
+	if err != nil {
+		return nil
+	}
+	cfg.Client.PreferredCountry = countryCode
+	return cfg.Save(cfgPath)
+}
 
 // Options configures behavior differences between installed and portable modes.
 type Options struct {
@@ -46,6 +87,8 @@ func Handle(prg *svc.Program, req ipc.Request, opts Options) ipc.Response {
 		return handleSetAutoStart(prg, req, opts)
 	case ipc.ActionQuit:
 		return handleQuit(prg)
+	case ipc.ActionUIDisconnect:
+		return handleUIDisconnect(prg)
 	case ipc.ActionSTUNStatus:
 		return handleSTUNStatus(prg)
 	case ipc.ActionLeakCheck:
@@ -68,9 +111,28 @@ func Handle(prg *svc.Program, req ipc.Request, opts Options) ipc.Response {
 		return handleGetAllowIPv6Leak(prg)
 	case ipc.ActionSetAllowIPv6Leak:
 		return handleSetAllowIPv6Leak(prg, req, opts)
+	case ipc.ActionGetUISupervision:
+		return handleGetUISupervision(prg)
+	case ipc.ActionGetKillSwitchMode:
+		return handleGetKillSwitchMode(prg)
+	case ipc.ActionSetKillSwitchMode:
+		return handleSetKillSwitchMode(prg, req, opts)
 	default:
 		return ipc.Response{Status: ipc.StatusError, Error: "unknown_action"}
 	}
+}
+
+// handleGetUISupervision returns the levoile-ui watchdog state (Story 5.7).
+// Returns Status=ok with UISupervision=nil when supervision is disabled
+// (Linux delegates to systemd) so the UI can distinguish "no data" from
+// "watchdog active but idle".
+func handleGetUISupervision(prg *svc.Program) ipc.Response {
+	snap := prg.UIWatchdogSnapshot()
+	resp := ipc.Response{Status: ipc.StatusOK}
+	if snap != nil {
+		resp.UISupervision = uiSupervisionFromSnapshot(snap)
+	}
+	return resp
 }
 
 func handleGetStatus(prg *svc.Program) ipc.Response {
@@ -97,11 +159,18 @@ func handleGetStatus(prg *svc.Program) ipc.Response {
 		resp.HTTPProxyAddr = prg.HTTPProxyAddr()
 		resp.HTTPProxySeq = prg.HTTPProxySeq()
 		resp.AllowIPv6Leak = prg.AllowIPv6Leak()
+		// Story 5.9 — surface kill-switch mode so the UI banner + tray-rouge
+		// override stay accurate even when the preflight rejected the tunnel.
+		resp.KillSwitchMode = prg.KillSwitchMode()
 		// Story 4.4 — keep the failover banner + active country visible even
 		// when a concurrent VPN blocks the rest of the status payload, so the
 		// user sees the last meaningful state before the preflight rejection.
 		resp.FailoverAlert = prg.FailoverAlert()
 		resp.CurrentCountryCode = prg.CurrentCountryCode()
+		// Story 5.7 — watchdog state must surface on every GetStatus path so
+		// the UI diagnostics panel can observe supervision even when a
+		// concurrent VPN blocks the tunnel.
+		resp.UISupervision = uiSupervisionFromSnapshot(prg.UIWatchdogSnapshot())
 		return resp
 	}
 	tc := prg.TunnelClient()
@@ -125,8 +194,10 @@ func handleGetStatus(prg *svc.Program) ipc.Response {
 		resp.FailoverAlert = prg.FailoverAlert()
 		resp.CurrentCountryCode = prg.CurrentCountryCode()
 		resp.AllowIPv6Leak = prg.AllowIPv6Leak()
+		resp.KillSwitchMode = prg.KillSwitchMode()
 		resp.CaptivePortal = prg.CaptivePortal()
 		resp.CaptiveProbeURL = prg.CaptiveProbeURL()
+		resp.UISupervision = uiSupervisionFromSnapshot(prg.UIWatchdogSnapshot())
 		return resp
 	}
 	state := tc.State().Get()
@@ -185,8 +256,10 @@ func handleGetStatus(prg *svc.Program) ipc.Response {
 	resp.CurrentCountryCode = prg.CurrentCountryCode()
 	resp.FirewallAltered = prg.FirewallAltered()
 	resp.AllowIPv6Leak = prg.AllowIPv6Leak()
+	resp.KillSwitchMode = prg.KillSwitchMode()
 	resp.CaptivePortal = prg.CaptivePortal()
 	resp.CaptiveProbeURL = prg.CaptiveProbeURL()
+	resp.UISupervision = uiSupervisionFromSnapshot(prg.UIWatchdogSnapshot())
 	return resp
 }
 
@@ -239,6 +312,8 @@ func handleConnect(prg *svc.Program) ipc.Response {
 		}
 		return ipc.Response{Status: ipc.StatusError, Error: err.Error()}
 	}
+	// Story 5.9 — manual Connect also triggers degraded-mode auto-restore.
+	prg.MaybeRestoreKillSwitch(ctx, "ipc-connect")
 	// Restart reconnector for future automatic reconnections.
 	if r := prg.Reconnector(); r != nil {
 		go r.Start(prg.Context())
@@ -307,6 +382,21 @@ func handleQuit(prg *svc.Program) ipc.Response {
 		prg.RequestStop()
 	}()
 	return ipc.Response{Status: ipc.StatusDisconnected}
+}
+
+// handleUIDisconnect acknowledges an UI process quit without touching the
+// service lifecycle. The UI sends this via ActionUIDisconnect during its
+// shutdown sequence (Story 5.8) so the tunnel, kill switch, routing and TUN
+// stay up under systemd/SCM control even after the tray process exits.
+// Intentionally does NOT call Reconnector.Stop or RequestStop — those are
+// reserved for ActionQuit (full stop via levoile-ctl / SCM callback).
+//
+// The Program parameter is accepted (not _) so future hooks (session
+// counting, structured logging with PID) can be wired in without a
+// signature churn.
+func handleUIDisconnect(prg *svc.Program) ipc.Response {
+	_ = prg // reserved for future observability hooks (see function doc)
+	return ipc.Response{Status: ipc.StatusOK}
 }
 
 func handleSTUNStatus(prg *svc.Program) ipc.Response {
@@ -611,23 +701,19 @@ func handleSelectCountry(prg *svc.Program, req ipc.Request, opts Options) ipc.Re
 		return ipc.Response{Status: ipc.StatusError, Error: fmt.Sprintf("ipchandler: reconnect: %v", err)}
 	}
 
+	// Story 5.9 — country switch is also a "fresh successful connect" that
+	// must lift degraded mode if it was active.
+	prg.MaybeRestoreKillSwitch(ctx, "ipc-select-country")
+
 	// Restart reconnector for future automatic reconnections.
 	if r := prg.Reconnector(); r != nil {
 		go r.Start(prg.Context())
 	}
 
-	// Save preferred_country to config TOML.
-	cfgPath := opts.ConfigPathFn()
-	if cfgPath != "" {
-		configMu.Lock()
-		if cfg, err := config.Load(cfgPath); err == nil {
-			cfg.Client.PreferredCountry = countryCode
-			if saveErr := cfg.Save(cfgPath); saveErr != nil {
-				configMu.Unlock()
-				return ipc.Response{Status: ipc.StatusError, Error: fmt.Sprintf("ipchandler: save config: %v", saveErr)}
-			}
+	if cfgPath := opts.ConfigPathFn(); cfgPath != "" {
+		if err := persistPreferredCountry(cfgPath, countryCode); err != nil {
+			return ipc.Response{Status: ipc.StatusError, Error: fmt.Sprintf("ipchandler: save config: %v", err)}
 		}
-		configMu.Unlock()
 	}
 
 	// Story 4.4 — the user just took explicit control of the country, so
@@ -698,6 +784,48 @@ func handleSetAllowIPv6Leak(prg *svc.Program, req ipc.Request, opts Options) ipc
 	}
 
 	return ipc.Response{Status: ipc.StatusOK, AllowIPv6Leak: allow}
+}
+
+// handleGetKillSwitchMode returns the current kill-switch mode (Story 5.9).
+// Always succeeds — defaults to "normal" when the in-memory config flag
+// reads as enabled.
+func handleGetKillSwitchMode(prg *svc.Program) ipc.Response {
+	return ipc.Response{
+		Status:         ipc.StatusOK,
+		KillSwitchMode: prg.KillSwitchMode(),
+	}
+}
+
+// handleSetKillSwitchMode toggles the OS-level firewall (Story 5.9).
+//
+// Authentication policy:
+//   - req.Auth == ""   → source = "ui", no token check (UI is local-loopback only)
+//   - req.Auth != ""   → source = "ctl", token verified in constant time
+//     against the machine-local file token. Empty configured token rejects all.
+//
+// Persistence is owned by the service (SetKillSwitchPersister callback wired
+// in cmd/client). Atomicity (firewall ↔ config rollback) is handled internally.
+func handleSetKillSwitchMode(prg *svc.Program, req ipc.Request, _ Options) ipc.Response {
+	if req.Value != ipc.KillSwitchModeNormal && req.Value != ipc.KillSwitchModeDegraded {
+		return ipc.Response{Status: ipc.StatusError, Error: "invalid_value: must be \"normal\" or \"degraded\""}
+	}
+
+	source := "ui"
+	if req.Auth != "" {
+		if !prg.VerifyCtlToken(req.Auth) {
+			return ipc.Response{Status: ipc.StatusError, Error: svc.ErrCtlAuthFailed.Error()}
+		}
+		source = "ctl"
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := prg.SetKillSwitchMode(ctx, req.Value, source); err != nil {
+		// Surface the bare sentinel string for known cases so the UI can
+		// switch on it (captive_portal_active, tunnel_not_connected, auth_failed).
+		return ipc.Response{Status: ipc.StatusError, Error: err.Error()}
+	}
+	return ipc.Response{Status: ipc.StatusOK, KillSwitchMode: req.Value}
 }
 
 // FormatUptime formats a duration as "Xh Ym" or "Xm Ys".

@@ -92,15 +92,15 @@ development_status:
   # Stories 5.1-5.5 et 5.8 substantiellement existantes (ancien Epic 10).
   # 5.6 (fallback service down), 5.7 (supervision UI Linux), 5.9 (mode degrade) = NOUVEAU.
   epic-5: in-progress
-  5-1-binaire-ui-unique-systray-webview-serveur-http-local-avec-affichage-de-statut: review
-  5-2-affichage-du-pays-selectionne-du-relais-actif-et-de-l-ip-visible: ready-for-dev
-  5-3-selecteur-de-pays-avec-drapeaux-et-nombre-de-relais: backlog
-  5-4-bouton-connect-disconnect: ready-for-dev
-  5-5-toggle-fenetre-via-clic-gauche-tray-quitter-via-clic-droit: ready-for-dev
-  5-6-ecran-fallback-service-non-demarre-retry-ipc: ready-for-dev
-  5-7-supervision-ui-avec-auto-restart-en-cas-de-crash: ready-for-dev
-  5-8-quitter-ui-via-tray-sans-tuer-le-service: ready-for-dev
-  5-9-mode-degrade-kill-switch-indicateur-visuel-permanent: ready-for-dev
+  5-1-binaire-ui-unique-systray-webview-serveur-http-local-avec-affichage-de-statut: done
+  5-2-affichage-du-pays-selectionne-du-relais-actif-et-de-l-ip-visible: done
+  5-3-selecteur-de-pays-avec-drapeaux-et-nombre-de-relais: done
+  5-4-bouton-connect-disconnect: done
+  5-5-toggle-fenetre-via-clic-gauche-tray-quitter-via-clic-droit: done
+  5-6-ecran-fallback-service-non-demarre-retry-ipc: done
+  5-7-supervision-ui-avec-auto-restart-en-cas-de-crash: done
+  5-8-quitter-ui-via-tray-sans-tuer-le-service: done
+  5-9-mode-degrade-kill-switch-indicateur-visuel-permanent: done
   epic-5-retrospective: optional
 
   # Epic 6: Validation Anti-Fuite (STUN + Watchdog TUN)

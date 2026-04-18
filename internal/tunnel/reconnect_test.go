@@ -650,3 +650,156 @@ func TestReconnector_FailoverFailsThenCircuitBreaker(t *testing.T) {
 		t.Fatal("Start did not return")
 	}
 }
+
+// Story 5.9 — WithReconnectSuccessHook fires after a successful reconnect cycle,
+// after the kill switch is deactivated. Used by the service to auto-restore
+// the OS-level firewall (kill switch) when degraded mode was active.
+func TestReconnector_ReconnectSuccessHook_FiresOnSuccess(t *testing.T) {
+	ks := &mockKillSwitch{}
+	updates := make(chan ConnState, 1)
+	var connectCount atomic.Int64
+	var hookCount atomic.Int64
+	var hookOrder atomic.Int64
+	var deactivateOrder atomic.Int64
+
+	connectFn := func(_ context.Context) error {
+		connectCount.Add(1)
+		return nil
+	}
+
+	// Wrap deactivate to record ordering: hook MUST run AFTER deactivate.
+	wrappedKS := &mockKillSwitch{}
+	origDeactivate := wrappedKS.Deactivate
+	_ = origDeactivate
+	hook := func(_ context.Context) {
+		hookOrder.Store(deactivateOrder.Load() + 1)
+		hookCount.Add(1)
+	}
+	// Patch ks Deactivate via a small adapter type.
+	adapter := &orderedKillSwitch{
+		inner: ks,
+		onDeactivate: func() { deactivateOrder.Store(1) },
+	}
+
+	r := NewReconnector(updates, connectFn, adapter, WithReconnectSuccessHook(hook))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	done := make(chan error, 1)
+	go func() { done <- r.Start(ctx) }()
+
+	updates <- StateDisconnected
+	time.Sleep(500 * time.Millisecond)
+
+	r.Stop()
+	<-done
+
+	if hookCount.Load() != 1 {
+		t.Errorf("reconnect success hook called %d times, want 1", hookCount.Load())
+	}
+	if hookOrder.Load() != 2 {
+		t.Errorf("hook order = %d, want 2 (after deactivate=1)", hookOrder.Load())
+	}
+	if connectCount.Load() != 1 {
+		t.Errorf("connectFn called %d times, want 1", connectCount.Load())
+	}
+}
+
+// orderedKillSwitch wraps a mockKillSwitch and signals on Deactivate, used to
+// verify the reconnect-success hook runs strictly after kill switch deactivation.
+type orderedKillSwitch struct {
+	inner        *mockKillSwitch
+	onDeactivate func()
+}
+
+func (o *orderedKillSwitch) Activate(ctx context.Context) error { return o.inner.Activate(ctx) }
+func (o *orderedKillSwitch) Deactivate(ctx context.Context) error {
+	err := o.inner.Deactivate(ctx)
+	if o.onDeactivate != nil {
+		o.onDeactivate()
+	}
+	return err
+}
+func (o *orderedKillSwitch) IsActive() bool { return o.inner.IsActive() }
+
+// Story 5.9 — Hook is NOT called when reconnect fails (circuit breaker trip).
+func TestReconnector_ReconnectSuccessHook_NotCalledOnCircuitBreaker(t *testing.T) {
+	ks := &mockKillSwitch{}
+	updates := make(chan ConnState, 1)
+	var hookCount atomic.Int64
+	var connectCount atomic.Int64
+	var cbHookCalled atomic.Int64
+
+	connectFn := func(_ context.Context) error {
+		connectCount.Add(1)
+		return errors.New("always fail")
+	}
+	successHook := func(_ context.Context) { hookCount.Add(1) }
+	cbHook := func(_ context.Context) { cbHookCalled.Add(1) }
+
+	r := NewReconnector(updates, connectFn, ks,
+		WithReconnectSuccessHook(successHook),
+		WithCircuitBreakerHook(cbHook),
+	)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	done := make(chan error, 1)
+	go func() { done <- r.Start(ctx) }()
+
+	updates <- StateDisconnected
+
+	deadline := time.After(6 * time.Second)
+	for cbHookCalled.Load() == 0 {
+		select {
+		case <-deadline:
+			t.Fatal("circuit breaker did not trip")
+		default:
+			time.Sleep(50 * time.Millisecond)
+		}
+	}
+
+	if hookCount.Load() != 0 {
+		t.Errorf("reconnect success hook fired %d times on circuit-breaker trip, want 0", hookCount.Load())
+	}
+
+	cancel()
+	<-done
+}
+
+// Story 5.9 — A panicking hook does not take down the reconnect loop.
+func TestReconnector_ReconnectSuccessHook_PanicRecovered(t *testing.T) {
+	ks := &mockKillSwitch{}
+	updates := make(chan ConnState, 2)
+	var connectCount atomic.Int64
+
+	connectFn := func(_ context.Context) error {
+		connectCount.Add(1)
+		return nil
+	}
+	hook := func(_ context.Context) { panic("hook panic") }
+
+	r := NewReconnector(updates, connectFn, ks, WithReconnectSuccessHook(hook))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	done := make(chan error, 1)
+	go func() { done <- r.Start(ctx) }()
+
+	// Trigger two disconnect cycles — second cycle proves the loop survived
+	// the first hook panic.
+	updates <- StateDisconnected
+	time.Sleep(300 * time.Millisecond)
+	updates <- StateDisconnected
+	time.Sleep(300 * time.Millisecond)
+
+	r.Stop()
+	<-done
+
+	if connectCount.Load() != 2 {
+		t.Errorf("connectFn called %d times after hook panic, want 2 (loop survived)", connectCount.Load())
+	}
+}

@@ -28,8 +28,13 @@ mtu = 1420
 
 [firewall]
 # Active le kill switch kernel-level (WFP sur Windows, nftables sur Linux).
-# Bloque tout trafic sortant sauf TUN + relais. Si false, mode dégradé
-# explicite — aucune protection anti-fuite réseau (cf Story 5.9).
+# Bloque tout trafic sortant sauf TUN + relais.
+#
+# Story 5.9 — désactivable temporairement à chaud via :
+#   • le menu tray "Mode dégradé" (modale de confirmation destructive),
+#   • la commande CLI privilégiée `levoile-ctl killswitch off|on`.
+# Auto-restauré dès qu'une nouvelle connexion tunnel réussit. La valeur
+# persistée ici est mise à jour automatiquement par le service.
 enable_killswitch = true
 
 # ⚠ ATTENTION : autoriser IPv6 hors tunnel expose votre IPv6 réelle sur

@@ -1,6 +1,6 @@
 # Story 5.1 : Binaire UI unique (systray + webview + serveur HTTP local) avec affichage de statut
 
-Status: review
+Status: done
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -44,8 +44,9 @@ afin de **savoir immédiatement si je suis protégé, sur mon OS, sans configura
   - `GET  /api/registry`
   - `GET  /api/leak-status`
   - `GET  /api/update-status`
-  - `POST /api/quit`
   - `GET  /api/settings` (+ sous-routes `/settings/autostart`, `/settings/blocklist`, `/settings/httpproxy`, `/settings/ipv6leak`)
+
+> **Note (fix M2, 2026-04-17)** : `POST /api/quit` initialement prévu a été retiré pour raison de sécurité — exposer un kill-switch du service sur HTTP loopback non authentifié est inacceptable. L'arrêt UI se fait via le menu systray *Quitter* → `u.handleQuit()` sans transit HTTP. Un test `TestQuitEndpointRemoved` détecte toute ré-introduction accidentelle.
 **And** chaque endpoint proxie vers le service via IPC client (nommé pipe Windows / Unix socket Linux)
 
 **AC4 — Singleton multiplateforme**
@@ -537,6 +538,7 @@ Approche : étendre l'infrastructure UI Windows existante (Story 10.1 obsolète,
 | Added | `internal/ui/singleton_linux_test.go` |
 | Added | `internal/ui/icons_linux.go` |
 | Added | `internal/ui/icons_windows.go` *(migration depuis `icons.go`)* |
+| Added | `internal/ui/icons_stub.go` *(fix M1 — stub darwin/BSD)* |
 | Added | `internal/ui/icons/connected.png` |
 | Added | `internal/ui/icons/connecting.png` |
 | Added | `internal/ui/icons/disconnected.png` |
@@ -547,8 +549,9 @@ Approche : étendre l'infrastructure UI Windows existante (Story 10.1 obsolète,
 | Renamed | `internal/ui/webview_cgo.go` → `internal/ui/webview_cgo_windows.go` *(build tag `cgo && windows`)* |
 | Deleted | `internal/ui/icons.go` *(remplacé par variantes OS)* |
 | Modified | `internal/ui/singleton_stub.go` *(build tag → `!windows && !linux`)* |
-| Modified | `internal/ui/httpserver.go` *(4 nouveaux endpoints + 2 types de réponse)* |
-| Modified | `internal/ui/httpserver_test.go` *(7 nouveaux tests + `TestMethodNotAllowed` étendu)* |
+| Modified | `internal/ui/httpserver.go` *(3 nouveaux endpoints + 2 types de réponse ; fix H1/H2 leak-status → ActionGetStatus ; fix M2 /api/quit retiré)* |
+| Modified | `internal/ui/httpserver_test.go` *(tests leak/update/disconnect ; fix M3 mock capture lastReq ; fix M2 TestQuitEndpointRemoved)* |
+| Modified | `internal/ui/webview_cgo_linux.go` *(fix H3 — drain goroutine retirée)* |
 | Modified | `internal/ui/ui_test.go` *(suppression de 3 tests obsolètes `TestHandleToggle_*`)* |
 | Modified | `cmd/ui/main.go` *(retrait `ensureService()` local, import `exec`/`filepath` retirés)* |
 | Modified | `.goreleaser.yaml` *(target `ui-linux` + archive `ui-linux`)* |
@@ -556,3 +559,11 @@ Approche : étendre l'infrastructure UI Windows existante (Story 10.1 obsolète,
 ### Change Log
 
 - **2026-04-17** : Story 5.1 — parité Linux UI complétée (singleton flock per-user, icônes PNG build-tagged, `ensureService()` split OS, webview_cgo Linux-safe). Ajout de 4 endpoints API (`/api/disconnect`, `/api/quit`, `/api/leak-status`, `/api/update-status`). Cible GoReleaser `ui-linux` (amd64 + arm64). Correction d'une régression latente : `webview_cgo.go` importait `golang.org/x/sys/windows` sans tag OS → split en `webview_cgo_windows.go` + `webview_cgo_linux.go`. 15 nouveaux tests. 0 nouvelle dépendance externe.
+- **2026-04-17 (code review fixes)** : 6 findings adressés.
+  - **H1** : `/api/leak-status` renvoyait toujours `{"status":""}` car il lisait `resp.LeakStatus` mais `handleLeakCheck` côté ipchandler renvoyait le résultat dans `resp.Status`. Fix : endpoint utilise maintenant `ActionGetStatus` (qui peuple `LeakStatus`/`LeakLastCheck` via `fillLeakStatus` depuis le scheduler cache).
+  - **H2** : même fix que H1 — évite aussi le check STUN live de 20 s à chaque polling. Endpoint devient un simple read du cache.
+  - **H3** : goroutine drain `for range showCh` sur Linux supprimée (fuite d'une goroutine par cycle open/close). Le signal `show` est no-op sur Linux (window WM-managé) ; le send côté ui.go reste non-bloquant grâce au buffered chan + select+default.
+  - **M1** : ajout `icons_stub.go` (build tag `!windows && !linux`) pour éviter l'échec de compilation sur darwin/BSD.
+  - **M2** : route `POST /api/quit` **supprimée** (expose un kill-switch non authentifié du service à tout process local). L'UI shutdown se fait localement via menu systray "Quitter" → `u.handleQuit()` sans passer par HTTP. Test `TestQuitEndpointRemoved` ajouté pour détecter toute ré-introduction accidentelle.
+  - **M3** : `mockIPCClient` capture maintenant `lastReq`. Test `TestLeakStatus_Pass` assert que `ActionGetStatus` est bien dispatché (pas `ActionLeakCheck`) — garde-fou contre régression de la classe H1.
+  - Tous les tests passent (`go test -race ./internal/ui/...`), cross-platform builds OK (Windows CGo + NoCGo, Linux NoCGo, darwin icons_stub).

@@ -76,6 +76,62 @@ func TestHandle_Quit_NilTunnel(t *testing.T) {
 	}
 }
 
+// Story 5.8 AC5 — ActionUIDisconnect MUST NOT stop the service. The handler
+// returns StatusOK and leaves every lifecycle resource untouched. Direct
+// assertion: after the call, the program's lifecycle context is still
+// uncancelled (handleQuit would have cancelled it via RequestStop → Cancel).
+func TestHandle_UIDisconnect_DoesNotStopService(t *testing.T) {
+	prg := newTestProgram()
+	prg.ForTestInitContext(context.Background())
+
+	// Precondition: the lifecycle ctx is live before the call.
+	if err := prg.Context().Err(); err != nil {
+		t.Fatalf("precondition: ctx already cancelled: %v", err)
+	}
+
+	resp := Handle(prg, ipc.Request{Action: ipc.ActionUIDisconnect}, Options{})
+	if resp.Status != ipc.StatusOK {
+		t.Errorf("expected status=ok, got %q", resp.Status)
+	}
+
+	// Direct assertion: lifecycle ctx must remain live. RequestStop would
+	// have called Cancel() which cancels this ctx. This guards against any
+	// future refactor that accidentally wires lifecycle teardown into the
+	// UIDisconnect path.
+	if err := prg.Context().Err(); err != nil {
+		t.Errorf("handleUIDisconnect cancelled the service lifecycle context (err=%v) — it MUST be a no-op on lifecycle", err)
+	}
+
+	// Idempotence: the handler must be safe to call repeatedly (same UI
+	// reconnecting + quitting, multiple UIs on Linux multi-user).
+	for i := 0; i < 10; i++ {
+		if r := Handle(prg, ipc.Request{Action: ipc.ActionUIDisconnect}, Options{}); r.Status != ipc.StatusOK {
+			t.Fatalf("iteration %d: status=%q, want ok", i, r.Status)
+		}
+	}
+	if err := prg.Context().Err(); err != nil {
+		t.Errorf("after 10 UIDisconnects the ctx was cancelled (err=%v)", err)
+	}
+
+	// Cross-check: the Quit path cancels the ctx on a freshly-initialised
+	// program. This proves the ForTestInitContext mechanism observes real
+	// cancellation, so the "ctx still live" assertion above is meaningful.
+	quitPrg := newTestProgram()
+	quitPrg.ForTestInitContext(context.Background())
+	_ = Handle(quitPrg, ipc.Request{Action: ipc.ActionQuit}, Options{})
+	// handleQuit schedules Cancel in a 100ms goroutine — wait for it.
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		if quitPrg.Context().Err() != nil {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if quitPrg.Context().Err() == nil {
+		t.Error("sanity: ActionQuit should have cancelled the ctx within 1s — ForTestInitContext is broken and the UIDisconnect assertion would be vacuous")
+	}
+}
+
 func TestHandle_UnknownAction(t *testing.T) {
 	resp := Handle(newTestProgram(), ipc.Request{Action: "unknown_test"}, Options{})
 	if resp.Status != ipc.StatusError || resp.Error != "unknown_action" {
@@ -675,6 +731,187 @@ func TestHandle_SelectCountry_RoundRobinHappyPath(t *testing.T) {
 	}
 }
 
+// TestPersistPreferredCountry verifies Story 5.3 AC 2 last bullet: after a
+// successful SelectCountry, the chosen ISO code must be persisted to the
+// TOML client.preferred_country field so it survives a service restart.
+// The helper is extracted from handleSelectCountry precisely so this
+// round-trip (Load → mutate → Save → reload) can be unit-tested without
+// standing up a real tunnel.
+func TestPersistPreferredCountry(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfgPath := filepath.Join(tmpDir, "config.toml")
+
+	initial := &config.Config{
+		Relay:  config.RelayConfig{Domain: "test.dev", PublicKeyEd25519: "dGVzdA=="},
+		Client: config.ClientConfig{AutoStart: true, PreferredCountry: ""},
+	}
+	if err := initial.Save(cfgPath); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	if err := persistPreferredCountry(cfgPath, "gb"); err != nil {
+		t.Fatalf("persistPreferredCountry: %v", err)
+	}
+
+	loaded, err := config.Load(cfgPath)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if loaded.Client.PreferredCountry != "gb" {
+		t.Errorf("PreferredCountry = %q, want gb", loaded.Client.PreferredCountry)
+	}
+
+	// A second call overwrites the previous value — the preference is not
+	// accumulated, it's replaced. Users changing country mid-session expect
+	// the latest click to win.
+	if err := persistPreferredCountry(cfgPath, "us"); err != nil {
+		t.Fatalf("second persist: %v", err)
+	}
+	loaded, _ = config.Load(cfgPath)
+	if loaded.Client.PreferredCountry != "us" {
+		t.Errorf("after overwrite: PreferredCountry = %q, want us", loaded.Client.PreferredCountry)
+	}
+}
+
+// TestPersistPreferredCountry_MissingConfigNoOp encodes the best-effort
+// semantic: if the config file can't be loaded (missing, corrupt), the
+// helper must swallow the error and return nil — the user's country switch
+// should not be blocked by a broken config on disk.
+func TestPersistPreferredCountry_MissingConfigNoOp(t *testing.T) {
+	if err := persistPreferredCountry(filepath.Join(t.TempDir(), "does-not-exist.toml"), "de"); err != nil {
+		t.Errorf("missing config: got %v, want nil (best-effort)", err)
+	}
+}
+
+// TestHandle_SelectCountry_NoRelaysForCountry verifies Story 5.3 AC 3: when
+// the requested country is valid (in CountryMetaMap) but the live pool has no
+// active relay for it, the handler must surface "no_relays_for_country" and
+// NOT disturb the current tunnel. This protects the user from losing their
+// active connection just because they clicked a country that temporarily
+// dropped below quorum (e.g. all relays failing health checks).
+func TestHandle_SelectCountry_NoRelaysForCountry(t *testing.T) {
+	const zeroKey32 = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+	// Discoverer has a 'de' relay but no 'fr' relay. 'fr' is a known country
+	// in CountryMetaMap so it passes the early validation, but SelectRelay
+	// must return ErrNoRelaysForCountry downstream.
+	relays := []registry.RelayEntry{
+		{ID: "relay-de-001", Domain: "de-001.example.test", PublicKey: zeroKey32},
+	}
+	disc := registry.NewDiscovererForTest(relays)
+
+	prg := newTestProgram()
+	prg.ForTestSetDiscoverer(disc)
+
+	client, err := tunnel.NewClient("127.0.0.1:1", zeroKey32, tunnel.WithInsecure(true))
+	if err != nil {
+		t.Fatalf("tunnel.NewClient: %v", err)
+	}
+	prg.ForTestSetTunnelClient(client)
+
+	resp := Handle(prg, ipc.Request{Action: ipc.ActionSelectCountry, Value: "fr"}, Options{})
+	if resp.Status != ipc.StatusError || resp.Error != "no_relays_for_country" {
+		t.Errorf("got status=%q error=%q, want error/no_relays_for_country", resp.Status, resp.Error)
+	}
+}
+
+// TestHandle_GetRegistry_RelayCountReflectsPool verifies Story 5.3 AC 4: the
+// relay_count field returned by /api/registry must stay in sync with the live
+// pool composition. After a relay is removed (e.g. failover drop), a
+// subsequent GetRegistry must report the decremented count — otherwise the
+// sidebar would display stale numbers that mislead the user about capacity.
+func TestHandle_GetRegistry_RelayCountReflectsPool(t *testing.T) {
+	const zeroKey32 = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+	initialRelays := []registry.RelayEntry{
+		{ID: "relay-de-001", Domain: "de-001.example.test", PublicKey: zeroKey32},
+		{ID: "relay-de-002", Domain: "de-002.example.test", PublicKey: zeroKey32},
+		{ID: "relay-gb-001", Domain: "gb-001.example.test", PublicKey: zeroKey32},
+	}
+	disc := registry.NewDiscovererForTest(initialRelays)
+
+	prg := newTestProgram()
+	prg.ForTestSetDiscoverer(disc)
+
+	// Initial snapshot: DE=2, GB=1.
+	resp := Handle(prg, ipc.Request{Action: ipc.ActionGetRegistry}, Options{})
+	if resp.Status != ipc.StatusOK {
+		t.Fatalf("initial GetRegistry: status=%q error=%q", resp.Status, resp.Error)
+	}
+	countsBefore := map[string]int{}
+	for _, c := range resp.RegistryCountries {
+		countsBefore[c.Code] = c.RelayCount
+	}
+	if countsBefore["de"] != 2 || countsBefore["gb"] != 1 {
+		t.Fatalf("initial counts: got %+v, want de=2 gb=1", countsBefore)
+	}
+
+	// Simulate a failover drop: one DE relay removed from the live pool.
+	disc.SetRelaysForTest([]registry.RelayEntry{
+		{ID: "relay-de-001", Domain: "de-001.example.test", PublicKey: zeroKey32},
+		{ID: "relay-gb-001", Domain: "gb-001.example.test", PublicKey: zeroKey32},
+	})
+
+	resp = Handle(prg, ipc.Request{Action: ipc.ActionGetRegistry}, Options{})
+	if resp.Status != ipc.StatusOK {
+		t.Fatalf("post-drop GetRegistry: status=%q error=%q", resp.Status, resp.Error)
+	}
+	countsAfter := map[string]int{}
+	for _, c := range resp.RegistryCountries {
+		countsAfter[c.Code] = c.RelayCount
+	}
+	if countsAfter["de"] != 1 || countsAfter["gb"] != 1 {
+		t.Errorf("post-drop counts: got %+v, want de=1 gb=1", countsAfter)
+	}
+}
+
+// TestHandle_GetRegistry_FieldContract verifies Story 5.3 AC 1: every country
+// entry returned by GetRegistry must populate Code/Name/Flag for the 4 MVP
+// countries (DE/ES/GB/US), since the sidebar renders each of these fields.
+// A missing Flag would surface as a blank emoji slot in the UI.
+func TestHandle_GetRegistry_FieldContract(t *testing.T) {
+	const zeroKey32 = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+	relays := []registry.RelayEntry{
+		{ID: "relay-de-001", Domain: "de-001.example.test", PublicKey: zeroKey32},
+		{ID: "relay-es-001", Domain: "es-001.example.test", PublicKey: zeroKey32},
+		{ID: "relay-gb-001", Domain: "gb-001.example.test", PublicKey: zeroKey32},
+		{ID: "relay-us-001", Domain: "us-001.example.test", PublicKey: zeroKey32},
+	}
+	disc := registry.NewDiscovererForTest(relays)
+
+	prg := newTestProgram()
+	prg.ForTestSetDiscoverer(disc)
+
+	resp := Handle(prg, ipc.Request{Action: ipc.ActionGetRegistry}, Options{})
+	if resp.Status != ipc.StatusOK {
+		t.Fatalf("status=%q error=%q", resp.Status, resp.Error)
+	}
+
+	want := map[string]struct {
+		name, flag string
+	}{
+		"de": {"Allemagne", "🇩🇪"},
+		"es": {"Espagne", "🇪🇸"},
+		"gb": {"Royaume-Uni", "🇬🇧"},
+		"us": {"États-Unis", "🇺🇸"},
+	}
+	got := map[string]struct{ name, flag string }{}
+	for _, c := range resp.RegistryCountries {
+		got[c.Code] = struct{ name, flag string }{c.Name, c.Flag}
+		if c.RelayCount < 1 {
+			t.Errorf("country %q: relay_count=%d, want >=1", c.Code, c.RelayCount)
+		}
+	}
+	for code, w := range want {
+		g, ok := got[code]
+		if !ok {
+			t.Errorf("country %q: missing from response", code)
+			continue
+		}
+		if g.name != w.name || g.flag != w.flag {
+			t.Errorf("country %q: got name=%q flag=%q, want name=%q flag=%q", code, g.name, g.flag, w.name, w.flag)
+		}
+	}
+}
+
 // TestHandle_SelectCountry_TriggersBackgroundDiscover verifies AC 6 of Story
 // 4.3: on every country change, handleSelectCountry must fire a background
 // latency re-sort via Discoverer.TriggerBackgroundDiscover (so the pool
@@ -712,5 +949,139 @@ func TestHandle_SelectCountry_TriggersBackgroundDiscover(t *testing.T) {
 	after := disc.BgDiscoverFiresForTest()
 	if after != before+1 {
 		t.Errorf("BgDiscoverFires: got %d→%d, want +1 (handler must trigger bg discover)", before, after)
+	}
+}
+
+// --- Story 5.9: Mode dégradé kill switch ---
+
+// killswitch_mode default ("normal" because Config.FirewallEnabled defaults true
+// in cmd/client and tests, but newTestProgram leaves it false → "degraded").
+// We assert the Get handler returns whichever the program reports — the focus
+// is on roundtrip correctness, not the default value.
+func TestHandle_GetKillSwitchMode_ReportsCurrentMode(t *testing.T) {
+	prg := svc.NewProgram(svc.Config{FirewallEnabled: true})
+	resp := Handle(prg, ipc.Request{Action: ipc.ActionGetKillSwitchMode}, Options{})
+	if resp.Status != ipc.StatusOK {
+		t.Errorf("expected ok, got %q", resp.Status)
+	}
+	if resp.KillSwitchMode != ipc.KillSwitchModeNormal {
+		t.Errorf("expected mode=normal when FirewallEnabled=true, got %q", resp.KillSwitchMode)
+	}
+}
+
+func TestHandle_SetKillSwitchMode_InvalidValue(t *testing.T) {
+	prg := svc.NewProgram(svc.Config{FirewallEnabled: true})
+	prg.SetKillSwitchPersister(func(bool) error { return nil })
+
+	resp := Handle(prg, ipc.Request{Action: ipc.ActionSetKillSwitchMode, Value: "off"}, Options{})
+	if resp.Status != ipc.StatusError {
+		t.Errorf("expected error for invalid value, got %q", resp.Status)
+	}
+}
+
+// AC2 — UI request (no Auth) flips normal -> degraded successfully.
+func TestHandle_SetKillSwitchMode_FromUI_ToDegraded(t *testing.T) {
+	prg := svc.NewProgram(svc.Config{FirewallEnabled: true})
+	prg.SetKillSwitchPersister(func(bool) error { return nil })
+
+	resp := Handle(prg,
+		ipc.Request{Action: ipc.ActionSetKillSwitchMode, Value: ipc.KillSwitchModeDegraded},
+		Options{})
+	if resp.Status != ipc.StatusOK {
+		t.Errorf("expected ok, got %q (error=%s)", resp.Status, resp.Error)
+	}
+	if resp.KillSwitchMode != ipc.KillSwitchModeDegraded {
+		t.Errorf("response mode = %q, want degraded", resp.KillSwitchMode)
+	}
+	if prg.KillSwitchMode() != ipc.KillSwitchModeDegraded {
+		t.Errorf("program mode = %q, want degraded", prg.KillSwitchMode())
+	}
+}
+
+// AC5 — ctl request with valid token authenticates and proceeds.
+func TestHandle_SetKillSwitchMode_FromCtl_ValidToken(t *testing.T) {
+	prg := svc.NewProgram(svc.Config{FirewallEnabled: true})
+	prg.SetCtlToken([]byte("token-32-bytes-secret-aaaaaaaaaa"))
+	prg.SetKillSwitchPersister(func(bool) error { return nil })
+
+	req := ipc.Request{
+		Action: ipc.ActionSetKillSwitchMode,
+		Value:  ipc.KillSwitchModeDegraded,
+		Auth:   "token-32-bytes-secret-aaaaaaaaaa",
+	}
+	resp := Handle(prg, req, Options{})
+	if resp.Status != ipc.StatusOK {
+		t.Errorf("expected ok with valid ctl token, got %q (error=%s)", resp.Status, resp.Error)
+	}
+}
+
+// AC5 — ctl request with bad token rejected with auth_failed.
+func TestHandle_SetKillSwitchMode_FromCtl_InvalidToken(t *testing.T) {
+	prg := svc.NewProgram(svc.Config{FirewallEnabled: true})
+	prg.SetCtlToken([]byte("token-32-bytes-secret-aaaaaaaaaa"))
+	prg.SetKillSwitchPersister(func(bool) error { return nil })
+
+	req := ipc.Request{
+		Action: ipc.ActionSetKillSwitchMode,
+		Value:  ipc.KillSwitchModeDegraded,
+		Auth:   "wrong-token",
+	}
+	resp := Handle(prg, req, Options{})
+	if resp.Status != ipc.StatusError || resp.Error != "auth_failed" {
+		t.Errorf("expected error/auth_failed, got %q/%q", resp.Status, resp.Error)
+	}
+	// Mode must NOT have changed.
+	if prg.KillSwitchMode() != ipc.KillSwitchModeNormal {
+		t.Errorf("mode = %q, want normal (auth must reject before applying)", prg.KillSwitchMode())
+	}
+}
+
+// AC5 — ctl request with empty configured token rejects all auth attempts.
+func TestHandle_SetKillSwitchMode_FromCtl_EmptyConfigured(t *testing.T) {
+	prg := svc.NewProgram(svc.Config{FirewallEnabled: true})
+	// No SetCtlToken call — token stays empty.
+	prg.SetKillSwitchPersister(func(bool) error { return nil })
+
+	req := ipc.Request{
+		Action: ipc.ActionSetKillSwitchMode,
+		Value:  ipc.KillSwitchModeDegraded,
+		Auth:   "any-token",
+	}
+	resp := Handle(prg, req, Options{})
+	if resp.Status != ipc.StatusError || resp.Error != "auth_failed" {
+		t.Errorf("expected auth_failed when no ctl token configured, got %q/%q", resp.Status, resp.Error)
+	}
+}
+
+// AC7 — captive portal active blocks set_killswitch_mode at the IPC layer
+// (regression guard for the transitive service-layer check). Story 5.9 M3 fix.
+func TestHandle_SetKillSwitchMode_RefusedDuringCaptive(t *testing.T) {
+	prg := svc.NewProgram(svc.Config{FirewallEnabled: true})
+	prg.SetKillSwitchPersister(func(bool) error { return nil })
+	prg.ForceCaptivePortalForTest(true)
+
+	resp := Handle(prg,
+		ipc.Request{Action: ipc.ActionSetKillSwitchMode, Value: ipc.KillSwitchModeDegraded},
+		Options{})
+	if resp.Status != ipc.StatusError {
+		t.Errorf("expected error during captive, got %q", resp.Status)
+	}
+	if resp.Error != "captive_portal_active" {
+		t.Errorf("expected error=captive_portal_active, got %q", resp.Error)
+	}
+}
+
+// AC1 — get_status surfaces killswitch_mode in every response branch.
+func TestHandle_GetStatus_IncludesKillSwitchMode(t *testing.T) {
+	prg := svc.NewProgram(svc.Config{FirewallEnabled: true})
+	resp := Handle(prg, ipc.Request{Action: ipc.ActionGetStatus}, Options{})
+	if resp.KillSwitchMode != ipc.KillSwitchModeNormal {
+		t.Errorf("status killswitch_mode = %q, want normal", resp.KillSwitchMode)
+	}
+
+	prg2 := svc.NewProgram(svc.Config{FirewallEnabled: false})
+	resp2 := Handle(prg2, ipc.Request{Action: ipc.ActionGetStatus}, Options{})
+	if resp2.KillSwitchMode != ipc.KillSwitchModeDegraded {
+		t.Errorf("status killswitch_mode = %q, want degraded", resp2.KillSwitchMode)
 	}
 }

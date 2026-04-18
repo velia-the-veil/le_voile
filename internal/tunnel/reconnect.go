@@ -89,6 +89,17 @@ func WithCircuitBreakerHook(fn func(ctx context.Context)) ReconnectorOption {
 	}
 }
 
+// WithReconnectSuccessHook registers a callback invoked after a successful
+// reconnect cycle (after kill switch deactivation). Used by the service to
+// auto-restore the OS-level firewall when degraded mode (Story 5.9) was active
+// before disconnect. The hook runs under a recover() guard so a panic does not
+// take down the reconnect loop. Hook receives the same ctx as handleDisconnect.
+func WithReconnectSuccessHook(fn func(ctx context.Context)) ReconnectorOption {
+	return func(r *Reconnector) {
+		r.reconnectSuccessHook = fn
+	}
+}
+
 // Reconnector monitors tunnel state changes and automatically reconnects
 // with exponential backoff when the connection is lost. It coordinates
 // with a KillSwitch that remains active for the full duration of the
@@ -104,12 +115,13 @@ type Reconnector struct {
 	// Reset() is called (typically by a user-initiated Connect via IPC).
 	failed atomic.Bool
 
-	connectFn          ConnectFunc
-	disconnectFn       func() error
-	killSwitch         KillSwitchController
-	updates            <-chan ConnState
-	failoverFn         func(ctx context.Context) error
-	circuitBreakerHook func(ctx context.Context)
+	connectFn            ConnectFunc
+	disconnectFn         func() error
+	killSwitch           KillSwitchController
+	updates              <-chan ConnState
+	failoverFn           func(ctx context.Context) error
+	circuitBreakerHook   func(ctx context.Context)
+	reconnectSuccessHook func(ctx context.Context)
 }
 
 // NewReconnector creates a Reconnector that listens for state changes on
@@ -277,10 +289,23 @@ func (r *Reconnector) handleDisconnect(ctx context.Context) {
 			continue
 		}
 
-		// Reconnection successful — deactivate kill switch.
+		// Reconnection successful — deactivate kill switch, then notify hook.
 		r.deactivateKillSwitch(ctx)
+		r.invokeReconnectSuccessHook(ctx)
 		return
 	}
+}
+
+// invokeReconnectSuccessHook fires the optional reconnect-success hook under a
+// recover() guard so a panicking hook does not take down the reconnect loop.
+func (r *Reconnector) invokeReconnectSuccessHook(ctx context.Context) {
+	if r.reconnectSuccessHook == nil {
+		return
+	}
+	defer func() {
+		_ = recover()
+	}()
+	r.reconnectSuccessHook(ctx)
 }
 
 // tripCircuitBreaker sets the failed flag and invokes the optional hook.

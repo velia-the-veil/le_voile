@@ -7,11 +7,20 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sync"
 
 	"github.com/BurntSushi/toml"
 )
 
 var tunNameRe = regexp.MustCompile(`^[a-z][a-z0-9]{0,14}$`)
+
+// Mu serializes load-modify-save sequences across all packages that mutate
+// the on-disk TOML config. Story 5.9 H2 fix — previously the IPC handler held
+// a package-internal mutex and the cmd/client kill-switch persister held no
+// mutex at all, allowing concurrent writers to lose updates. Every config
+// writer (IPC handlers, kill-switch persister, etc.) MUST take this mutex
+// around its load → modify → save sequence.
+var Mu sync.Mutex
 
 // Config holds the application configuration.
 type Config struct {

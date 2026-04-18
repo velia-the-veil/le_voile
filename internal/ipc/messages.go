@@ -28,6 +28,27 @@ const (
 	ActionRetryCaptive     = "retry_captive"
 	ActionGetAllowIPv6Leak = "get_allow_ipv6_leak"
 	ActionSetAllowIPv6Leak = "set_allow_ipv6_leak"
+	// ActionGetUISupervision retourne l'état du watchdog UI (Story 5.7).
+	ActionGetUISupervision = "get_ui_supervision"
+	// ActionUIDisconnect est une notification envoyée par l'UI quand
+	// l'utilisateur quitte le processus UI via le menu « Quitter » du tray.
+	// Le service répond StatusOK et ne déclenche AUCUNE action lifecycle —
+	// seul ActionQuit (réservé à levoile-ctl / SCM) arrête réellement le
+	// service. Voir Story 5.8.
+	ActionUIDisconnect = "ui_disconnect"
+	// Story 5.9 — runtime kill-switch toggle (Mode dégradé).
+	// ActionSetKillSwitchMode value must be one of "normal" or "degraded".
+	// When the request is sourced from levoile-ctl, the Auth field carries
+	// the machine-local token; UI requests leave it empty.
+	ActionGetKillSwitchMode = "get_killswitch_mode"
+	ActionSetKillSwitchMode = "set_killswitch_mode"
+)
+
+// Story 5.9 — kill-switch mode values used by ActionSetKillSwitchMode and
+// surfaced via Response.KillSwitchMode for UI rendering decisions.
+const (
+	KillSwitchModeNormal   = "normal"
+	KillSwitchModeDegraded = "degraded"
 )
 
 // Status constant for captive portal mode.
@@ -57,6 +78,11 @@ const (
 type Request struct {
 	Action string `json:"action"`
 	Value  string `json:"value,omitempty"`
+	// Auth carries the machine-local token used by levoile-ctl to authenticate
+	// privileged actions (Story 5.9 — kill-switch toggle from CLI). UI requests
+	// leave this empty; the IPC handler detects empty Auth as "UI source" and
+	// allows the action without a token check.
+	Auth string `json:"auth,omitempty"`
 }
 
 // Response is a JSON message sent from service to client.
@@ -121,11 +147,33 @@ type Response struct {
 	// switch (Story 2.9). The UI uses this to show a permanent warning indicator.
 	AllowIPv6Leak bool `json:"allow_ipv6_leak,omitempty"`
 
+	// KillSwitchMode reports the current kill-switch mode (Story 5.9):
+	//   - "normal":   OS firewall active, default safe state
+	//   - "degraded": firewall disabled, traffic in clear; UI must show a
+	//                 permanent red banner + red tray icon until restored
+	// Always populated in get_status responses (and noop fast paths so
+	// the UI never sees an empty value during preflight).
+	KillSwitchMode string `json:"killswitch_mode,omitempty"`
+
 	// CaptivePortal is true when the service is in captive portal mode
 	// (firewall lockdown relaxed, waiting for portal authentication).
 	CaptivePortal bool   `json:"captive_portal,omitempty"`
 	// CaptiveProbeURL is the URL that triggered captive detection.
 	CaptiveProbeURL string `json:"captive_probe_url,omitempty"`
+
+	// UISupervision exposes the state of the levoile-ui supervisor
+	// (Story 5.7). Pointer + omitempty so Linux installs (where the
+	// watchdog is delegated to systemd) can leave it nil.
+	UISupervision *UISupervisionState `json:"ui_supervision,omitempty"`
+}
+
+// UISupervisionState mirrors uiwatchdog.Snapshot but lives in the IPC
+// package to keep service-side packages free of cross-domain types.
+type UISupervisionState struct {
+	Enabled            bool   `json:"enabled"`
+	LastRestartAt      string `json:"last_restart_at,omitempty"`
+	RestartCountWindow int    `json:"restart_count_window"`
+	BackoffUntil       string `json:"backoff_until,omitempty"`
 }
 
 // RegistryCountry holds country info for the registry response.

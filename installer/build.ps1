@@ -37,7 +37,7 @@ Copy-Item (Join-Path $ProjectRoot "dist\service_windows_amd64_v1\levoile-service
 Copy-Item (Join-Path $ProjectRoot "dist\ui_windows_amd64_v1\levoile-ui.exe") (Join-Path $BuildDir "levoile-desktop.exe")
 
 # Copy assets
-Copy-Item (Join-Path $ProjectRoot "assets\icons\*.ico") (Join-Path $BuildDir "icons\")
+Copy-Item (Join-Path $ProjectRoot "internal\ui\icons\*.ico") (Join-Path $BuildDir "icons\")
 Copy-Item (Join-Path $ScriptDir "config-default.toml") $BuildDir
 
 # Step 3: Compile NSIS installer
