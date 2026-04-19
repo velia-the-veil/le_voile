@@ -84,6 +84,10 @@ Section "Install"
   SetOutPath $INSTDIR
   IfFileExists "$INSTDIR\config.toml" skip_config
     File /oname=config.toml "build\config-default.toml"
+    ; Fresh config.toml was just deposited — any pre-existing .hmac is
+    ; orphaned from a previous install and would cause HMAC mismatch at
+    ; service start. Delete it so the service re-signs via ErrHMACAbsent.
+    Delete "$INSTDIR\config.toml.hmac"
   skip_config:
 
   ; Register and start the service
