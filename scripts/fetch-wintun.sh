@@ -49,6 +49,30 @@ else
     echo "ERREUR : wintun.dll non extraite" >&2
     exit 1
   fi
+
+  # Defense-in-depth (fix H7 audit) : SHA-256 de l'archive protège déjà du
+  # swap côté serveur, mais l'archive elle-même n'est pas Authenticode.
+  # Microsoft signe la DLL ; si `signtool` ou `osslsigncode` est dispo, on
+  # exige une signature Authenticode valide. Sinon on avertit mais laisse
+  # passer (cross-plateforme — la DLL sera revérifiée par Windows au load).
+  if command -v signtool >/dev/null 2>&1; then
+    echo "Vérification Authenticode via signtool…"
+    if ! signtool verify /pa /q "${TARGET_DLL}"; then
+      echo "ERREUR : Authenticode verify a échoué sur wintun.dll" >&2
+      rm -f "${TARGET_DLL}"
+      exit 1
+    fi
+  elif command -v osslsigncode >/dev/null 2>&1; then
+    echo "Vérification Authenticode via osslsigncode…"
+    if ! osslsigncode verify -in "${TARGET_DLL}" >/dev/null 2>&1; then
+      echo "ERREUR : osslsigncode verify a échoué sur wintun.dll" >&2
+      rm -f "${TARGET_DLL}"
+      exit 1
+    fi
+  else
+    echo "ATTENTION : ni signtool ni osslsigncode trouvés — vérif Authenticode sautée." >&2
+    echo "            SHA-256 du ZIP reste vérifié. Installe osslsigncode pour défense-en-profondeur." >&2
+  fi
 fi
 
 # Génère le fichier Go qui injecte la DLL dans embeddedWintunDLL via embed.

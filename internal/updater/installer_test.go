@@ -239,14 +239,26 @@ func TestInstaller_Install_Success(t *testing.T) {
 		t.Errorf("new binary content = %q, want %q", string(newContent), "new binary v2")
 	}
 
-	// Verify staging was cleaned up
+	// Verify staging was cleaned up. Persistent state markers (max seen
+	// version for anti-downgrade, rollback/failure markers) survive cleanup
+	// by design — filter them out before asserting the payload artefacts
+	// are gone.
 	entries, _ := os.ReadDir(env.stagingDir)
-	if len(entries) != 0 {
-		names := make([]string, len(entries))
-		for i, e := range entries {
-			names[i] = e.Name()
+	persistent := map[string]bool{
+		maxSeenVersionFile: true,
+		rollbackStateFile:  true,
+		failedVersionFile:  true,
+		installRetriesFile: true,
+	}
+	var leftover []string
+	for _, e := range entries {
+		if persistent[e.Name()] {
+			continue
 		}
-		t.Errorf("staging dir should be empty, got: %v", names)
+		leftover = append(leftover, e.Name())
+	}
+	if len(leftover) != 0 {
+		t.Errorf("staging dir should be empty of payload files, got: %v", leftover)
 	}
 }
 

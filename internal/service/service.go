@@ -3,6 +3,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -2235,35 +2236,19 @@ func (p *Program) recoverTUN(ctx context.Context) error {
 	p.mu.Unlock()
 	fmt.Fprintf(serviceStderr, "service: tun recovery: interface %s recreated\n", dev.Name())
 
-	// 2. Routing re-setup.
-	p.mu.Lock()
-	if p.routeMgr != nil {
-		_ = p.routeMgr.Teardown() // idempotent
-		p.routeMgr = nil
-	}
-	p.mu.Unlock()
-
-	relayIP := p.resolvedRelayIP()
-	if relayIP != nil {
-		rm := routingFactory()
-		_ = rm.Cleanup()
-		origGW, origIface, err := captureOriginalRouteFunc()
-		if err != nil {
-			fmt.Fprintf(serviceStderr, "service: tun recovery: routing gateway: %v\n", err)
-		} else if err := rm.Setup(dev.Name(), relayIP, origGW, origIface); err != nil {
-			fmt.Fprintf(serviceStderr, "service: tun recovery: routing setup: %v\n", err)
-		} else {
-			p.mu.Lock()
-			p.routeMgr = rm
-			p.mu.Unlock()
-			fmt.Fprintf(serviceStderr, "service: tun recovery: routing restored\n")
-		}
-	}
-
-	// 3. Firewall re-activate (SANS Deactivate préalable — AC3).
+	// 2. Firewall re-activate (SANS Deactivate préalable — AC3).
 	// Réutilise l'instance existante si possible (évite fuite goroutine
 	// AlteredCh watcher — fix H2). Activate est idempotent (flush+replace
 	// atomique côté nftables/WFP).
+	//
+	// Fix C5 (audit sécurité 2026-04) : ce bloc est exécuté AVANT le routing
+	// setup. Raison : si on installe les routes vers le nouveau TUN d'abord,
+	// une fenêtre ~ms existe où le kernel route des paquets vers un TUN
+	// que le firewall n'a pas encore blessé. En activant le firewall d'abord
+	// (flush+replace atomique), les paquets qui commencent à être routés
+	// ensuite sont toujours gouvernés par des règles à jour pour le nouveau
+	// nom d'interface.
+	relayIP := p.resolvedRelayIP()
 	if p.config.FirewallEnabled && relayIP != nil {
 		p.mu.Lock()
 		fw := p.firewallMgr
@@ -2283,6 +2268,30 @@ func (p *Program) recoverTUN(ctx context.Context) error {
 			p.firewallMgr = fw
 			p.mu.Unlock()
 			fmt.Fprintf(serviceStderr, "service: tun recovery: firewall restored\n")
+		}
+	}
+
+	// 3. Routing re-setup.
+	p.mu.Lock()
+	if p.routeMgr != nil {
+		_ = p.routeMgr.Teardown() // idempotent
+		p.routeMgr = nil
+	}
+	p.mu.Unlock()
+
+	if relayIP != nil {
+		rm := routingFactory()
+		_ = rm.Cleanup()
+		origGW, origIface, err := captureOriginalRouteFunc()
+		if err != nil {
+			fmt.Fprintf(serviceStderr, "service: tun recovery: routing gateway: %v\n", err)
+		} else if err := rm.Setup(dev.Name(), relayIP, origGW, origIface); err != nil {
+			fmt.Fprintf(serviceStderr, "service: tun recovery: routing setup: %v\n", err)
+		} else {
+			p.mu.Lock()
+			p.routeMgr = rm
+			p.mu.Unlock()
+			fmt.Fprintf(serviceStderr, "service: tun recovery: routing restored\n")
 		}
 	}
 
@@ -2350,10 +2359,36 @@ func (p *Program) AllowIPv6Leak() bool {
 	return p.config.AllowIPv6Leak
 }
 
+// ErrSecurityPolicyLocked is returned by runtime setters for security-relevant
+// policies (IPv6 leak, kill-switch mode, …) when the operator has locked
+// those policies to config-file-only via LEVOILE_LOCK_SECURITY_POLICY=1 or
+// the equivalent config flag. Recovery from a lock is out-of-band: edit
+// config.toml and restart the service.
+var ErrSecurityPolicyLocked = errors.New("service: security policy locked — edit config.toml and restart")
+
+// securityPolicyLocked reports whether runtime toggles of security-relevant
+// policies are forbidden. Read once per call so operators can unlock by
+// restarting the service after unsetting the env var.
+func securityPolicyLocked() bool {
+	return os.Getenv("LEVOILE_LOCK_SECURITY_POLICY") == "1"
+}
+
 // SetAllowIPv6Leak updates the IPv6 leak policy at runtime.
 // It updates the firewall rules and the in-memory config atomically.
-// Returns an error if the firewall update fails (config unchanged).
+// Returns ErrSecurityPolicyLocked when LEVOILE_LOCK_SECURITY_POLICY=1 is set,
+// so operators can pin the policy to config.toml and forbid UI/CTL overrides.
+// Every invocation is audit-logged on stderr even when allowed (fix H6).
 func (p *Program) SetAllowIPv6Leak(allow bool) error {
+	// Audit trail: every IPv6 policy change is stderr-logged so a SIEM or
+	// journald consumer can catch unexpected toggles. The log line precedes
+	// the lock check on purpose — attempted overrides under a lock are also
+	// events worth reviewing.
+	fmt.Fprintf(serviceStderr, "SECURITY AUDIT: SetAllowIPv6Leak allow=%v locked=%v\n", allow, securityPolicyLocked())
+
+	if securityPolicyLocked() {
+		return ErrSecurityPolicyLocked
+	}
+
 	p.mu.Lock()
 	fw := p.firewallMgr
 	// Hold lock across the entire operation to prevent concurrent reads

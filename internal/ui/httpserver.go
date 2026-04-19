@@ -11,6 +11,7 @@ import (
 	"io/fs"
 	"net"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -120,6 +121,87 @@ func NewHTTPServer(ipcClient *SafeIPCClient, frontendFS fs.FS) *HTTPServer {
 	s.mux.HandleFunc("/api/csrf-token", s.handleCSRFToken)
 
 	return s
+}
+
+// originGuard rejects cross-origin requests. The UI webview issues same-origin
+// fetches (Origin == http://127.0.0.1:PORT) or origin-less requests (file://
+// context, browser extensions, curl). Any Origin/Referer header pointing at a
+// non-loopback host is an attack: either a malicious page running in a tab the
+// user happened to visit, or a DNS rebinding attempt targeting the dynamic
+// listener port. Either way, reject before the handler runs (fix C2 audit
+// sécurité).
+//
+// Requests without Origin and without Referer are allowed — this covers the
+// webview's direct fetches, CLI curl for local debugging, and the frontend
+// bundle fetching its own static assets. The Host header is also validated
+// to catch raw IP attacks on 127.0.0.1 from a user-typed external DNS name.
+func originGuard(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !isOriginAllowed(r) {
+			http.Error(w, "Forbidden: cross-origin request", http.StatusForbidden)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// isOriginAllowed returns true when the request's Origin/Referer (if any)
+// and Host target the loopback interface. Exported for tests.
+func isOriginAllowed(r *http.Request) bool {
+	// Host must be loopback — blocks DNS-rebinding where an attacker hosts
+	// evil.example resolving to 127.0.0.1. Browsers send the user-typed
+	// Host name, not the resolved IP.
+	host := r.Host
+	if colon := strings.LastIndexByte(host, ':'); colon >= 0 {
+		host = host[:colon]
+	}
+	if !isLoopbackHost(host) {
+		return false
+	}
+	// Origin takes precedence. When absent, fall back to Referer's origin
+	// prefix. When both absent, accept (same-origin fetches and non-browser
+	// clients like curl don't send either).
+	if o := r.Header.Get("Origin"); o != "" {
+		return isLoopbackOrigin(o)
+	}
+	if ref := r.Header.Get("Referer"); ref != "" {
+		return isLoopbackOrigin(ref)
+	}
+	return true
+}
+
+// isLoopbackHost matches 127.0.0.1, ::1, and localhost. Conservative: no
+// wildcard hosts, no resolving — purely textual.
+func isLoopbackHost(host string) bool {
+	switch host {
+	case "127.0.0.1", "::1", "[::1]", "localhost":
+		return true
+	}
+	return false
+}
+
+// isLoopbackOrigin matches an Origin/Referer header that begins with a
+// loopback scheme+host prefix. Any port is accepted (our listener picks
+// dynamically). Schemes other than http/https are rejected outright.
+func isLoopbackOrigin(origin string) bool {
+	for _, prefix := range []string{
+		"http://127.0.0.1",
+		"http://[::1]",
+		"http://localhost",
+		"https://127.0.0.1",
+		"https://[::1]",
+		"https://localhost",
+	} {
+		if strings.HasPrefix(origin, prefix) {
+			// Ensure the next char is ":" (port), "/" (path), or EOS —
+			// prevents bypass via http://127.0.0.1.evil.com.
+			rest := origin[len(prefix):]
+			if rest == "" || rest[0] == ':' || rest[0] == '/' {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // newCSRFToken returns 32 hex-encoded random bytes for CSRF defense-in-depth.
@@ -232,7 +314,7 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 		return fmt.Errorf("ui: httpserver: listen: %w", err)
 	}
 	s.listener = ln
-	s.server = &http.Server{Handler: s.mux}
+	s.server = &http.Server{Handler: originGuard(s.mux)}
 	close(s.ready)
 
 	go func() {

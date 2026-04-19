@@ -122,8 +122,13 @@ func TestRecoverTUN_OrderStrict(t *testing.T) {
 
 	calls := rec.snapshot()
 
-	// Vérifier l'ordre strict (AC2).
-	wantOrder := []string{"tun.New", "routing.Setup", "firewall.Activate"}
+	// Ordre strict post-fix C5 (audit sécurité 2026-04) : le firewall est
+	// réactivé AVANT le routing setup. Raison : si routing envoie des
+	// paquets vers le nouveau TUN avant que le firewall ne le gouverne,
+	// une fenêtre microscopique de non-couverture existe. Activer le
+	// firewall d'abord ferme cette fenêtre — flush+replace atomique
+	// nftables/WFP garantit zéro downtime.
+	wantOrder := []string{"tun.New", "firewall.Activate", "routing.Setup"}
 	if len(calls) < len(wantOrder) {
 		t.Fatalf("appels = %v, attendu au moins %v", calls, wantOrder)
 	}

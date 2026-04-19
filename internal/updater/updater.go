@@ -188,6 +188,27 @@ func (u *Updater) SetOnUpdateReady(fn func(version string)) {
 	u.onUpdateReady = fn
 }
 
+// seedMaxSeenVersion writes the currently-running version to the persisted
+// anti-downgrade marker when no prior marker exists, or when the running
+// version is strictly higher than the stored one. Never lowers the marker.
+func (u *Updater) seedMaxSeenVersion() {
+	current := CurrentVersion()
+	if current == "" || current == "dev" {
+		return
+	}
+	stored, err := ReadMaxSeenVersion(u.stagingDir)
+	if err != nil {
+		u.logf("seed max-seen-version read err=%v", err)
+		return
+	}
+	if stored != "" && compareVersions(current, stored) <= 0 {
+		return
+	}
+	if err := WriteMaxSeenVersion(u.stagingDir, current); err != nil {
+		u.logf("seed max-seen-version write err=%v", err)
+	}
+}
+
 // Start begins the periodic update check loop.
 // It waits initialDelay before the first check, then checks every checkInterval.
 // The loop is interruptible via context cancellation.
@@ -197,6 +218,13 @@ func (u *Updater) Start(ctx context.Context) error {
 		// not for us. Don't run the periodic loop at all.
 		return ErrPackageManaged
 	}
+
+	// Seed the anti-downgrade baseline on first run. Monotonic: only written
+	// when the current binary's version is strictly higher than what's
+	// already persisted. Best-effort — a failure here still lets the cycle
+	// proceed, it just means a legitimate fresh install hasn't yet marked
+	// its baseline and an attacker would need a different vector.
+	u.seedMaxSeenVersion()
 
 	// Wait initial delay before first check
 	initTimer := time.NewTimer(initialDelay)
@@ -271,6 +299,19 @@ func (u *Updater) CheckAndDownload(ctx context.Context) (*StagedUpdate, error) {
 	if release == nil {
 		u.logf("up to date duration_ms=%d", time.Since(cycleStart).Milliseconds())
 		return nil, nil // up to date
+	}
+
+	// Anti-downgrade gate: refuse any release older than the highest version
+	// this client has ever installed. Defends against a leaked signing key
+	// being used to push clients back to a vulnerable prior release.
+	maxSeen, err := ReadMaxSeenVersion(u.stagingDir)
+	if err != nil {
+		u.logf("read max-seen-version err=%v", err)
+		return nil, fmt.Errorf("updater: check and download: read max seen: %w", err)
+	}
+	if maxSeen != "" && compareVersions(release.Version, maxSeen) < 0 {
+		u.logf("skip downgrade candidate=%s max_seen=%s", release.Version, maxSeen)
+		return nil, ErrDowngradeRejected
 	}
 
 	// Check if this version previously failed (rollback occurred)

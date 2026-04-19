@@ -24,6 +24,23 @@ const ReleasePublicKeyCurrentBase64 = "h94H7SXEBMr0/OTqxLmepAxax60vhgbbezU0Jt+hb
 // then Next on failure.
 const ReleasePublicKeyNextBase64 = ""
 
+// RevokedReleaseKeysBase64 lists release public keys (base64 raw) that must
+// never validate a signature, even if they equal Current or Next. Populated
+// after a compromise is discovered; clients that ship this list reject every
+// signature made by the leaked key. The only way out of a compromise once
+// production clients have been poisoned is a regular update that adds the
+// revoked key to this slice.
+//
+// Each entry is compared byte-for-byte against the 32-byte raw public key
+// after base64 decoding of Current/Next; matching entries cause verification
+// to fail immediately.
+var RevokedReleaseKeysBase64 = []string{}
+
+// ErrReleaseKeyRevoked is returned when a signature would have validated
+// against a key listed in RevokedReleaseKeysBase64. Distinct from plain
+// signature mismatch so callers can alert loudly on compromise attempts.
+var ErrReleaseKeyRevoked = errors.New("crypto: release key is revoked")
+
 // ReleasePublicKeyCurrent parses and returns the current release public key.
 // Returns ErrInvalidKey if the embedded constant is a placeholder or malformed.
 func ReleasePublicKeyCurrent() (ed25519.PublicKey, error) {
@@ -60,19 +77,40 @@ func ReleasePublicKeyNext() (ed25519.PublicKey, bool, error) {
 // Auto-update has no user to ask, so it always tries both trust anchors
 // during the dual-signature window (NFR22h).
 //
-// Returns nil on success. Returns a wrapped error indicating neither key
-// accepted the signature (or that neither key is provisioned).
+// Returns nil on success. Returns ErrReleaseKeyRevoked if the signing key
+// matches an entry in RevokedReleaseKeysBase64 — even if the signature
+// itself would have validated. Returns a wrapped error indicating neither
+// key accepted the signature (or that neither key is provisioned).
 func VerifyReleaseSignature(message, sig []byte) error {
 	current, err := ReleasePublicKeyCurrent()
 	if err == nil && Verify(current, message, sig) {
+		if isRevoked(ReleasePublicKeyCurrentBase64) {
+			return ErrReleaseKeyRevoked
+		}
 		return nil
 	}
 	next, hasNext, nextErr := ReleasePublicKeyNext()
 	if hasNext && nextErr == nil && Verify(next, message, sig) {
+		if isRevoked(ReleasePublicKeyNextBase64) {
+			return ErrReleaseKeyRevoked
+		}
 		return nil
 	}
 	if err != nil && !hasNext {
 		return err
 	}
 	return errors.New("crypto: release signature does not match any trusted key")
+}
+
+// isRevoked reports whether keyBase64 equals any entry in
+// RevokedReleaseKeysBase64. Comparison is exact — callers must pass the
+// base64 form used in the constants above, without leading/trailing
+// whitespace.
+func isRevoked(keyBase64 string) bool {
+	for _, revoked := range RevokedReleaseKeysBase64 {
+		if revoked == keyBase64 {
+			return true
+		}
+	}
+	return false
 }

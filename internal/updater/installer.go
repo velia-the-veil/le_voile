@@ -23,6 +23,10 @@ var (
 	// manager (dpkg/rpm/pacman). Auto-update is skipped to avoid conflicts with
 	// the package manager's own update mechanism.
 	ErrPackageManaged = errors.New("updater: binary is package-managed, auto-update disabled")
+	// ErrDowngradeRejected is returned when a candidate release is older than
+	// the persisted max-seen-version. Defends against a compromised release key
+	// being used to force clients back to a vulnerable prior version.
+	ErrDowngradeRejected = errors.New("updater: candidate release is older than max-seen-version")
 )
 
 const (
@@ -222,6 +226,17 @@ func (inst *Installer) Install(ctx context.Context, staged *StagedUpdate) error 
 
 	// 5. Clean up staging directory
 	inst.cleanStaging(staged)
+
+	// 6. Commit anti-downgrade baseline. Best-effort: a failure to write the
+	// max-seen marker must not roll back a successful install — at worst, a
+	// future check re-seeds from CurrentVersion() and no downgrade slips
+	// through because the running binary IS the new version by the time the
+	// next cycle runs.
+	if err := WriteMaxSeenVersion(inst.stagingDir, staged.Version); err != nil {
+		// Logging is handled by the updater cycle caller; swallow here so
+		// install itself is reported successful.
+		_ = err
+	}
 
 	return nil
 }

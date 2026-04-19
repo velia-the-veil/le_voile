@@ -12,6 +12,7 @@ const (
 	rollbackStateFile   = "rollback_state.json"
 	failedVersionFile   = "failed_version.txt"
 	installRetriesFile  = "install_retries.txt"
+	maxSeenVersionFile  = "max_seen_version.txt"
 )
 
 // RollbackState tracks whether a rollback is possible after a recent installation.
@@ -164,5 +165,46 @@ func ClearInstallRetries(dir string) error {
 	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("updater: install retries: remove: %w", err)
 	}
+	return nil
+}
+
+// ReadMaxSeenVersion reads the highest version ever installed or accepted by
+// this client, persisted at `max_seen_version.txt` alongside other updater
+// state (0600). Empty string when the file does not exist — first run.
+//
+// This is the anti-downgrade baseline: an attacker who compromises the
+// release signing key cannot force clients back to a vulnerable older
+// release, because every client refuses any version < ReadMaxSeenVersion.
+func ReadMaxSeenVersion(dir string) (string, error) {
+	path := filepath.Join(dir, maxSeenVersionFile)
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", nil
+		}
+		return "", fmt.Errorf("updater: max seen version: read: %w", err)
+	}
+
+	return strings.TrimSpace(string(data)), nil
+}
+
+// WriteMaxSeenVersion persists `version` as the new anti-downgrade baseline.
+// Called at two points: at startup (to catch up to the currently running
+// binary) and after a successful Install (to commit the new high-water
+// mark). Monotonic — callers should only raise, never lower, the value.
+func WriteMaxSeenVersion(dir string, version string) error {
+	path := filepath.Join(dir, maxSeenVersionFile)
+	tmpPath := path + ".tmp"
+
+	if err := os.WriteFile(tmpPath, []byte(version), 0o600); err != nil {
+		return fmt.Errorf("updater: max seen version: write tmp: %w", err)
+	}
+
+	if err := renameWithRetry(tmpPath, path); err != nil {
+		os.Remove(tmpPath)
+		return fmt.Errorf("updater: max seen version: rename: %w", err)
+	}
+
 	return nil
 }

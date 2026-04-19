@@ -90,7 +90,16 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 		if s.CFIPValidator != nil {
 			vh.SetCFValidator(s.CFIPValidator)
 		}
-		mux.Handle("/verify", cfWrap(LimitMiddleware(s.Limiter, vh)))
+		// Fix H10 (audit sécurité) : ajouter un per-IP limiter en amont du
+		// Limiter global. Sans ça, un client unique peut spammer /verify
+		// jusqu'à saturer la capacité globale et dégrader le service pour
+		// tous les autres. L'Ed25519 sign côté relay est rapide mais non
+		// gratuit ; le plafond per-IP évite qu'un client monopolise le CPU.
+		var verifyHandler http.Handler = vh
+		if s.IPLimiter != nil {
+			verifyHandler = IPLimitMiddleware(s.IPLimiter, verifyHandler)
+		}
+		mux.Handle("/verify", cfWrap(LimitMiddleware(s.Limiter, verifyHandler)))
 	}
 	if s.ConnectHandler != nil {
 		// /connect uses its own per-IP limiter (IPLimiter), not the global
