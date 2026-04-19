@@ -187,6 +187,11 @@ Section "Uninstall"
   ; Delete files. User config (%AppData%\LeVoile\config.toml) is preserved
   ; by convention — the user explicitly removes it if desired.
   Delete "$INSTDIR\config.toml"
+  ; Delete integrity sidecar too — leaving it orphaned causes a HMAC mismatch
+  ; on the next install that deposits a fresh config.toml (the service reads
+  ; the stale .hmac, recomputes against the new content, and flips
+  ; integrityFailed=true until the sidecar is manually removed).
+  Delete "$INSTDIR\config.toml.hmac"
   Delete "$INSTDIR\levoile.ico"
   Delete "$INSTDIR\${SERVICE_EXE}"
   Delete "$INSTDIR\${UI_EXE}"
