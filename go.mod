@@ -4,7 +4,7 @@ go 1.26
 
 require (
 	fyne.io/systray v1.12.0
-	github.com/BurntSushi/toml v1.5.0
+	github.com/BurntSushi/toml v1.6.0
 	github.com/Microsoft/go-winio v0.6.2
 	github.com/kardianos/service v1.2.4
 	github.com/quic-go/quic-go v0.59.0
