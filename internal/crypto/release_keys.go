@@ -13,10 +13,18 @@ import (
 // machine (per NFR22g). Rotated every 24 months per NFR22h via the dual-key
 // chain below.
 //
-// Generated 2026-04-18 via `go run ./cmd/genkey -out "$HOME/.levoile/signing" -pem`.
+// Regenerated 2026-04-19 via `go run ./cmd/genkey -out "$HOME/.levoile/signing" -pem -force`.
+// The previous key (h94H7SXEBMr0/OTqxLmepAxax60vhgbbezU0Jt+hbQM=, generated
+// 2026-04-18) was destroyed before any release was ever signed with it —
+// the private key was overwritten by an ephemeral key during a local build
+// smoke-test and never recovered (no backup existed). No external clients
+// had been shipped between the two dates, so this swap has no real-world
+// rotation impact. Post-incident: backup-signing-key.sh must run against
+// this key before any tag is pushed.
+//
 // The PEM is also published in docs/keys/levoile-release.pub.pem for consumers
 // that want to verify via `openssl pkeyutl -verify -rawin`.
-const ReleasePublicKeyCurrentBase64 = "h94H7SXEBMr0/OTqxLmepAxax60vhgbbezU0Jt+hbQM="
+const ReleasePublicKeyCurrentBase64 = "u6NF2/Qwhz8hrXTrwPvuIGdbJmd1Dl+sjphC/0SeaPo="
 
 // ReleasePublicKeyNextBase64 is the upcoming rotation key. Empty when no
 // rotation is in flight. During the 6-month dual-signature transition window
