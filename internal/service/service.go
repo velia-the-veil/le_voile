@@ -21,6 +21,7 @@ import (
 	"github.com/velia-the-veil/le_voile/internal/blocklist"
 	"github.com/velia-the-veil/le_voile/internal/browser"
 	"github.com/velia-the-veil/le_voile/internal/captive"
+	lecrypto "github.com/velia-the-veil/le_voile/internal/crypto"
 	"github.com/velia-the-veil/le_voile/internal/dns"
 	"github.com/velia-the-veil/le_voile/internal/firewall"
 	"github.com/velia-the-veil/le_voile/internal/httpproxy"
@@ -1779,6 +1780,18 @@ func (p *Program) updatePubKey() string {
 	if p.config.UpdatePubKey != "" {
 		return p.config.UpdatePubKey
 	}
+	// Canonical fallback: the release key baked into the binary at build time
+	// (rotated every 24 months per NFR22h). This is the key the release
+	// pipeline signs artifacts with — verifying with RelayPubKey (registry
+	// master) was incorrect and would reject every legitimate signed release
+	// because the two keys are distinct by design (see internal/crypto/
+	// release_keys.go and reference_relay_servers memory).
+	if k := lecrypto.ReleasePublicKeyCurrentBase64; k != "" {
+		return k
+	}
+	// Last resort: RelayPubKey. Kept for backward-compat with test fixtures
+	// that wire the relay key directly; production releases will never reach
+	// this branch because release_keys.go is compile-time non-empty.
 	return p.config.RelayPubKey
 }
 
