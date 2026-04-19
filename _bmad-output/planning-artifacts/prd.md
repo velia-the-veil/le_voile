@@ -51,16 +51,16 @@ editHistory:
 
 Le Voile est un VPN desktop qui garantit le zero-log par architecture — les relais VPS sont stateless, il n'y a physiquement rien à enregistrer. Contrairement aux VPN traditionnels qui promettent le zero-log par politique de confidentialité, Le Voile le prouve par le design et le code source ouvert.
 
-Destiné au grand public francophone soucieux de sa vie privée, le produit cible un besoin urgent : la France s'apprête à bloquer les VPN traditionnels. Le Voile y survivra grâce à un trafic indiscernable du trafic web normal (QUIC/HTTPS via Cloudflare).
+Destiné au grand public francophone soucieux de sa vie privée, le produit cible un besoin urgent : la France s'apprête à bloquer les VPN traditionnels. Le Voile y survivra grâce à un trafic QUIC/HTTP/3 indistinguable du trafic web normal (TLS 1.3, ALPN h3, SNI standard), sans handshake VPN détectable au DPI.
 
-Le client desktop 2 processus (service privilégié + UI unique combinant system tray et webview) est disponible sur **Windows et Linux** (Debian/Ubuntu, Fedora/RHEL, Arch, Alpine). Il capture tout le trafic IP de la machine via une interface virtuelle **TUN (Linux) / Wintun (Windows)**, l'encapsule dans HTTP/3 via Cloudflare, et l'achemine vers un relais VPS stateless qui agit comme gateway NAT. Le DNS est résolu côté relais (avec blocklist StevenBlack/hosts intégrée). Un **kill switch firewall OS-level** (nftables Linux / Windows Filtering Platform) survit aux crashes du service et rend les fuites structurellement impossibles.
+Le client desktop 2 processus (service privilégié + UI unique combinant system tray et webview) est disponible sur **Windows et Linux** (Debian/Ubuntu, Fedora/RHEL, Arch, Alpine). Il capture tout le trafic IP de la machine via une interface virtuelle **TUN (Linux) / Wintun (Windows)**, l'encapsule dans HTTP/3 en connexion directe au VPS relais (DNS A record → origin, pas de CDN intermédiaire), et l'achemine vers un relais stateless qui agit comme gateway NAT. Le DNS est résolu côté relais (avec blocklist StevenBlack/hosts intégrée). Un **kill switch firewall OS-level** (nftables Linux / Windows Filtering Platform) survit aux crashes du service et rend les fuites structurellement impossibles.
 
 Gratuit, financé par donations, distribué via plateformeliberte.fr.
 
 ### Ce qui rend Le Voile unique
 
 - **Confiance par le design** — Relais stateless, zéro donnée à compromettre, code source ouvert (github.com/velia-the-veil/le_voile)
-- **Indétectable** — Trafic QUIC/HTTPS via Cloudflare, mimant du trafic web standard. Résistant au blocage des VPN traditionnels
+- **Indétectable** — Trafic QUIC/HTTP/3 avec TLS 1.3 + ALPN h3 + SNI standard, structurellement identique à une visite navigateur. Résistant au blocage des VPN traditionnels au DPI
 - **Multi-relais géographiques** — Relais répartis par pays, failover automatique, registre distribué sans point de défaillance unique
 - **Capture L3 machine-wide** — Interface TUN/Wintun capturant tout le trafic IP du système. Aucune configuration applicative requise : navigateurs, mail, jeux, clients BitTorrent — tout passe par le tunnel sans exception
 - **Kill switch firewall OS-level** — Règles kernel (nftables / WFP) qui survivent aux crashes du service. Impossible à contourner
@@ -289,9 +289,9 @@ Gratuit, financé par donations, distribué via plateformeliberte.fr.
 ### Innovation Areas
 
 - **Registre distribué pair-à-pair** — Chaque relais sert l'intégralité du registre via `/.well-known/relay-registry.json`. Pas de serveur de coordination central, pas de point de défaillance unique. Le client cache le registre localement pour un fonctionnement résilient au démarrage (cold start)
-- **Capture L3 + encapsulation HTTP/3** — Paquets IP bruts capturés par TUN/Wintun, encapsulés dans un stream HTTP/3 via Cloudflare. Combine capture universelle (VPN traditionnel) + camouflage protocolaire (indiscernable d'HTTPS). Aucun produit grand public ne combine les deux
+- **Capture L3 + encapsulation HTTP/3** — Paquets IP bruts capturés par TUN/Wintun, encapsulés dans un stream HTTP/3 vers le relais direct. Combine capture universelle (VPN traditionnel) + camouflage protocolaire (indiscernable d'HTTPS). Aucun produit grand public ne combine les deux
 - **Modèle gateway NAT côté relais** — Le client n'embarque pas de stack TCP/IP userspace. Le relais désencapsule, applique NAT, forwarde. Simplifie massivement le client sans sacrifier les performances
-- **Camouflage protocolaire** — QUIC/HTTPS via Cloudflare CDN. Pour un observateur réseau, Le Voile ressemble à un site web ordinaire
+- **Camouflage protocolaire** — QUIC/HTTP/3 + TLS 1.3 direct vers le relais (ALPN h3, SNI = domaine relais). Pour un observateur réseau, Le Voile ressemble à un site web ordinaire
 - **Kill switch firewall kernel-level** — Règles nftables (Linux) / WFP (Windows) qui survivent aux crashes du service client. Impossible à contourner accidentellement ou par défaut d'arrêt du process
 
 ### Compromis Documentés
@@ -368,7 +368,7 @@ Gratuit, financé par donations, distribué via plateformeliberte.fr.
 - **Routing automatique** : route par défaut via TUN + route spécifique vers IP relais via gateway originale
 - Installeur NSIS Windows (service SCM, UI autostart, shortcuts, Wintun DLL)
 - Paquets Linux natifs via GoReleaser + nfpm : .deb (Debian/Ubuntu), .rpm (Fedora/RHEL), AUR (Arch), .apk (Alpine). Post-install setcap + systemctl enable
-- Tunnel QUIC/HTTP3 vers les relais via Cloudflare — stream bidirectionnel `/tunnel` transportant paquets IP bruts
+- Tunnel QUIC/HTTP3 direct vers les relais (DNS A record → VPS origin) — stream bidirectionnel `/tunnel` transportant paquets IP bruts
 - DNS résolu côté relais (upstream Cloudflare 1.1.1.1 / Quad9 9.9.9.9 avec failover) + blocklist StevenBlack/hosts intégrée côté relais
 - Reconnexion automatique du tunnel (backoff exponentiel + circuit breaker) — kill switch firewall reste actif pendant toute la durée
 - NAT côté relais : table 5-tuple → port NAT, TTL court, éviction automatique
@@ -408,7 +408,7 @@ Gratuit, financé par donations, distribué via plateformeliberte.fr.
 
 ### Tunnel & Connexion Réseau
 
-- FR1: Le client peut établir un tunnel QUIC/HTTP3 vers le relais sélectionné via Cloudflare au démarrage
+- FR1: Le client peut établir un tunnel QUIC/HTTP3 direct vers le relais sélectionné au démarrage
 - FR2: Le client peut se reconnecter automatiquement au relais après une perte de connexion (kill switch firewall maintenu pendant toute la durée)
 - FR3: Le client peut authentifier chaque relais via sa clé publique Ed25519 unique (certificate pinning)
 - FR4: Les relais peuvent accepter et relayer les connexions QUIC/HTTP3 entrantes des clients
@@ -509,12 +509,12 @@ Gratuit, financé par donations, distribué via plateformeliberte.fr.
 - NFR5: Aucune fuite DNS pendant le fonctionnement normal, la reconnexion ou le failover — garanti structurellement par la capture L3 + kill switch firewall
 - NFR6: Interface TUN/Wintun, routes système et règles firewall restaurées dans tous les scénarios (désactivation, crash, shutdown). Zéro résidu
 - NFR7: Code source publiquement auditable sur GitHub
-- NFR8: Les relais valident que les requêtes proviennent des plages IP Cloudflare — requêtes hors plage rejetées
+- NFR8: **Retiré** (pivot 2026-04-19). Ancien libellé imposait la validation des plages IP Cloudflare — obsolète, le relais accepte les connexions directes au domaine relais, la protection anti-abus se fait via rate-limit + bandwidth quota par IP client.
 - NFR9: Les relais bloquent les paquets IP vers les réseaux privés (loopback, RFC 1918, link-local) — protection SSRF
 - NFR9b: Kill switch firewall OS-level (nftables Linux / WFP Windows) survit aux crashes du process service — aucune fuite possible même en cas de défaillance applicative
 - NFR9c: Toutes les comparaisons cryptographiques (pinning Ed25519, validation signature token, vérification hash binaire) utilisent `crypto/subtle.ConstantTimeCompare` — résistance aux timing attacks
-- NFR9d: Le relais vérifie que l'IP hash (SHA256) du session token correspond à l'IP source Cloudflare (CF-Connecting-IP) de la requête — rejet immédiat si différent, empêche le replay depuis une autre IP
-- NFR9e: TLS entre Cloudflare et VPS relais configuré en "Full (Strict)" — certificat valide obligatoire côté origine, TLS 1.3 minimum
+- NFR9d: Le relais vérifie que l'IP hash (SHA256) du session token correspond à l'IP source du socket (`r.RemoteAddr`) — rejet immédiat si différent, empêche le replay depuis une autre IP
+- NFR9e: TLS direct entre le client et le VPS relais, TLS 1.3 minimum, certificat Let's Encrypt servi depuis l'origin (pas de terminaison CDN intermédiaire)
 - NFR9f: Le relais valide les signatures DNSSEC sur les réponses upstream (Cloudflare 1.1.1.1 + Quad9 9.9.9.9 supportent DNSSEC) — protection contre DNS poisoning amont
 - NFR9g: Le client détecte l'injection de paquets externes sur l'interface TUN par comparaison de checksum et timestamp. Paquets non émis par le pump tunnel ignorés et loggés
 - NFR9h: Binaires compilés avec `-ldflags="-s -w"` (strip symbols + DWARF debug info) — freine le reverse engineering basique. Obfuscation avancée (garble) différée Phase 2

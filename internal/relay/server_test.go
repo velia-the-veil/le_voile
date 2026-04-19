@@ -236,11 +236,10 @@ func TestServer_TLS13Negotiated(t *testing.T) {
 	}
 }
 
-// setupTestServerWithCF starts a relay configured with CF source filtering.
-// insecure=false → strict mode; insecure=true → dev pass-through.
-// All wireable handlers (DoH stub, STUN, /verify via signing key, registry)
-// are enabled so endpoint coverage tests can hit them.
-func setupTestServerWithCF(t *testing.T, insecure bool) (addr string, cleanup func()) {
+// setupFullTestServer starts a relay with all routable handlers enabled
+// (DoH stub, /verify via signing key, /.well-known registry). Clients reach
+// it directly over HTTP/3 or HTTPS/TCP — no CDN fronting.
+func setupFullTestServer(t *testing.T) (addr string, cleanup func()) {
 	t.Helper()
 
 	_, priv, err := lecrypto.GenerateKeyPair()
@@ -264,7 +263,6 @@ func setupTestServerWithCF(t *testing.T, insecure bool) (addr string, cleanup fu
 
 	addr = freeUDPAddr(t)
 	srv := NewServer(addr, certPath, keyPath)
-	srv.CFIPValidator = NewCloudflareIPValidator(insecure, nil)
 	srv.Handler = NewDoHHandler([]string{"https://1.1.1.1/dns-query"}, nil)
 	srv.SigningKey = priv
 	srv.RegistryFile = registryPath
@@ -272,19 +270,7 @@ func setupTestServerWithCF(t *testing.T, insecure bool) (addr string, cleanup fu
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() { _ = srv.ListenAndServe(ctx) }()
 
-	// Wait for readiness — accept any HTTP response (200 or 403).
-	client := newHTTP3TestClient()
-	defer client.CloseIdleConnections()
-	deadline := time.Now().Add(3 * time.Second)
-	for time.Now().Before(deadline) {
-		r, err := client.Get("https://" + addr + "/health")
-		if err == nil {
-			io.Copy(io.Discard, r.Body)
-			r.Body.Close()
-			break
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
+	waitForServer(t, addr)
 
 	return addr, func() {
 		cancel()
@@ -292,28 +278,28 @@ func setupTestServerWithCF(t *testing.T, insecure bool) (addr string, cleanup fu
 	}
 }
 
-// TestServer_RejectsNonCFSource_AllEndpoints confirms Story 1.3 AC4: when
-// CFIPValidator is configured in strict mode, every public endpoint
-// returns HTTP 403 from a non-CF source. /connect is the documented
-// exception and is not tested here. /verify uses POST to bypass the 405
-// check that would otherwise mask the 403.
-func TestServer_RejectsNonCFSource_AllEndpoints(t *testing.T) {
-	addr, cleanup := setupTestServerWithCF(t, false)
+// TestServer_AllPublicEndpointsReachable confirms every public endpoint
+// responds (not 403/4xx by default) from a direct client connection — the
+// relay is DNS-only origin, no CDN fronting, so source-IP gating is not
+// applied at the transport layer.
+func TestServer_AllPublicEndpointsReachable(t *testing.T) {
+	addr, cleanup := setupFullTestServer(t)
 	defer cleanup()
 
 	client := newHTTP3TestClient()
 	defer client.CloseIdleConnections()
 
 	endpoints := []struct {
-		name   string
-		method string
-		path   string
+		name         string
+		method       string
+		path         string
+		wantStatuses []int
 	}{
-		{"health", "GET", "/health"},
-		{"ip", "GET", "/ip"},
-		{"dns-query", "GET", "/dns-query"},
-		{"verify", "POST", "/verify"},
-		{"registry", "GET", "/.well-known/relay-registry.json"},
+		{"health", "GET", "/health", []int{http.StatusOK}},
+		{"ip", "GET", "/ip", []int{http.StatusOK}},
+		{"dns-query", "GET", "/dns-query", []int{http.StatusMethodNotAllowed, http.StatusBadRequest}},
+		{"verify", "GET", "/verify", []int{http.StatusMethodNotAllowed}},
+		{"registry", "GET", "/.well-known/relay-registry.json", []int{http.StatusOK}},
 	}
 
 	for _, ep := range endpoints {
@@ -328,69 +314,17 @@ func TestServer_RejectsNonCFSource_AllEndpoints(t *testing.T) {
 			}
 			defer resp.Body.Close()
 			io.Copy(io.Discard, resp.Body)
-			if resp.StatusCode != http.StatusForbidden {
-				t.Errorf("%s %s: expected 403, got %d", ep.method, ep.path, resp.StatusCode)
+			ok := false
+			for _, s := range ep.wantStatuses {
+				if resp.StatusCode == s {
+					ok = true
+					break
+				}
+			}
+			if !ok {
+				t.Errorf("%s %s: got status %d, want one of %v", ep.method, ep.path, resp.StatusCode, ep.wantStatuses)
 			}
 		})
-	}
-}
-
-// TestServer_RejectsNonCFSource_TCPListener confirms that the dual-stack
-// TCP/TLS listener (used by the registry latency checker) also enforces
-// CF source filtering. Without this guarantee, a clear-text TCP path could
-// bypass the HTTP/3 middleware in production.
-func TestServer_RejectsNonCFSource_TCPListener(t *testing.T) {
-	addr, cleanup := setupTestServerWithCF(t, false)
-	defer cleanup()
-
-	tcpClient := &http.Client{
-		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-		},
-		Timeout: 5 * time.Second,
-	}
-	defer tcpClient.CloseIdleConnections()
-
-	// Poll until TCP listener is live (HTTP/3 readiness doesn't imply TCP).
-	deadline := time.Now().Add(3 * time.Second)
-	var resp *http.Response
-	for time.Now().Before(deadline) {
-		r, err := tcpClient.Get("https://" + addr + "/health")
-		if err == nil {
-			resp = r
-			break
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
-	if resp == nil {
-		t.Fatal("TCP listener did not respond within 3s")
-	}
-	defer resp.Body.Close()
-	io.Copy(io.Discard, resp.Body)
-
-	if resp.StatusCode != http.StatusForbidden {
-		t.Errorf("expected 403 over TCP for non-CF source, got %d", resp.StatusCode)
-	}
-}
-
-// TestServer_AcceptsInsecureMode confirms that -cf-insecure dev mode
-// allows direct (non-CF) clients through.
-func TestServer_AcceptsInsecureMode(t *testing.T) {
-	addr, cleanup := setupTestServerWithCF(t, true)
-	defer cleanup()
-
-	client := newHTTP3TestClient()
-	defer client.CloseIdleConnections()
-
-	resp, err := client.Get("https://" + addr + "/health")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	defer resp.Body.Close()
-	io.Copy(io.Discard, resp.Body)
-
-	if resp.StatusCode != http.StatusOK {
-		t.Errorf("expected 200 in insecure mode, got %d", resp.StatusCode)
 	}
 }
 
@@ -399,7 +333,7 @@ func TestServer_AcceptsInsecureMode(t *testing.T) {
 // stabilize within a short window. This is a coarse leak check
 // (no goleak dependency) but catches obvious goroutine retention bugs.
 func TestServer_ShutdownNoLeak(t *testing.T) {
-	addr, _ := setupTestServerWithCF(t, true)
+	addr, _ := setupFullTestServer(t)
 
 	// Drive a request through to ensure handler stack is warm.
 	client := newHTTP3TestClient()
@@ -413,11 +347,10 @@ func TestServer_ShutdownNoLeak(t *testing.T) {
 	// Snapshot goroutines before shutdown trigger.
 	before := runtime.NumGoroutine()
 
-	// setupTestServerWithCF's cleanup cancels ctx + sleeps 100ms. We re-
-	// invoke a fresh setup/cancel cycle here so we control timing.
+	// Fresh setup/cancel cycle to control timing independently of the
+	// parent setup's cleanup.
 	ctx, cancel := context.WithCancel(context.Background())
 	srv := NewServer(addr, "", "")
-	srv.CFIPValidator = NewCloudflareIPValidator(true, nil)
 	_ = ctx
 	_ = srv
 

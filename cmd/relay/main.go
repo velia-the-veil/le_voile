@@ -28,7 +28,6 @@ func main() {
 	fallback := flag.String("fallback", "https://9.9.9.9/dns-query", "fallback DoH resolver URL (empty to disable)")
 	signingKeyPath := flag.String("signing-key", "", "path to Ed25519 private key file (base64); enables /verify endpoint")
 	registryFile := flag.String("registry-file", "", "path to relay-registry.json (served at /.well-known/relay-registry.json)")
-	cfInsecure := flag.Bool("cf-insecure", false, "trust direct source IP instead of CF-Connecting-IP (dev mode only)")
 	publicIP := flag.String("public-ip", "", "relay public IP for NAT source rewriting (auto-detected from eth0 if empty)")
 	tunnelEcho := flag.Bool("tunnel-echo", false, "enable /tunnel with echo forwarder (dev/test only — never use in production)")
 	dnsBlocklistURL := flag.String("dns-blocklist-url", "https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts", "URL for DNS blocklist (StevenBlack format)")
@@ -50,17 +49,6 @@ func main() {
 	srv.Handler = dohHandler
 	srv.RegistryFile = *registryFile
 
-	// Cloudflare source validation runs on every public endpoint, even when
-	// no signing key is configured. Refusals are logged aggregate-only — no
-	// IP is ever written to logs (NFR20).
-	cfv := relay.NewCloudflareIPValidator(*cfInsecure, func(format string, args ...any) {
-		fmt.Fprintf(os.Stderr, "relay: cfip: "+format+"\n", args...)
-	})
-	srv.CFIPValidator = cfv
-	srv.CFRejectLog = func(reason string) {
-		fmt.Fprintf(os.Stderr, "relay: %s\n", reason)
-	}
-
 	if *signingKeyPath != "" {
 		key, err := loadSigningKey(*signingKeyPath)
 		if err != nil {
@@ -78,7 +66,7 @@ func main() {
 
 		// Enable HTTP CONNECT proxy handler.
 		srv.ConnectHandler = relay.NewConnectHandler(
-			key.Public().(ed25519.PublicKey), cfv, ipLimiter, bwLimiter,
+			key.Public().(ed25519.PublicKey), ipLimiter, bwLimiter,
 			func(format string, args ...any) {
 				fmt.Fprintf(os.Stderr, "relay: connect: "+format+"\n", args...)
 			},
@@ -98,7 +86,7 @@ func main() {
 		if *tunnelEcho {
 			// Dev/test: echo forwarder ignores NAT.
 			th := relay.NewTunnelHandler(
-				key.Public().(ed25519.PublicKey), cfv, ipLimiter,
+				key.Public().(ed25519.PublicKey), ipLimiter,
 				&echoForwarder{},
 				func(format string, args ...any) {
 					fmt.Fprintf(os.Stderr, "relay: tunnel: "+format+"\n", args...)
@@ -109,7 +97,7 @@ func main() {
 			fmt.Fprintf(os.Stderr, "relay: WARNING: /tunnel enabled with echo forwarder (dev mode)\n")
 		} else {
 			th := relay.NewTunnelHandler(
-				key.Public().(ed25519.PublicKey), cfv, ipLimiter,
+				key.Public().(ed25519.PublicKey), ipLimiter,
 				natTable,
 				func(format string, args ...any) {
 					fmt.Fprintf(os.Stderr, "relay: tunnel: "+format+"\n", args...)

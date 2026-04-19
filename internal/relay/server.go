@@ -14,11 +14,11 @@ import (
 // Server wraps an HTTP/3 server for the stateless relay.
 //
 // Public endpoints (/health, /verify, /ip, /dns-query,
-// /.well-known/relay-registry.json) are protected by CFSourceMiddleware
-// when CFIPValidator is set in strict (non-insecure) mode: requests from
-// IPs outside Cloudflare's published ranges receive HTTP 403.
-// /connect and /tunnel are documented exceptions — they carry their own
-// bearer-token + per-IP validation via IPLimiter.
+// /.well-known/relay-registry.json, /connect, /tunnel) are served directly
+// to clients. The relay is reached via DNS A records pointing at the VPS
+// origin — there is no CDN fronting, so source-IP validation is done on
+// r.RemoteAddr, and authenticated endpoints (/connect, /tunnel) bind their
+// session tokens to SHA256(client-remote-addr) for IP-hash verification.
 //
 // Story 6.1: /stun-relay removed — post-Epic-2 L3 capture routes STUN
 // Binding Requests through the tunnel pump natively.
@@ -33,21 +33,19 @@ type Server struct {
 	Limiter        *Limiter
 	TunnelLimiter  *Limiter
 	IPLimiter      *IPLimiter
-	CFIPValidator  *CloudflareIPValidator
 	BWLimiter      *BandwidthLimiter
 	StartTime      time.Time
 	NATStatsFunc   NATStatsProvider // optional: provides NAT stats for /health
 	RegistryFile   string           // path to relay-registry.json (served at /.well-known/relay-registry.json)
-	CFRejectLog    func(string)     // invoked with "cf-reject" on each refused request; never receives IPs (NFR20)
 	h3             *http3.Server
 }
 
 // NewServer creates a relay server configured for TLS 1.3 with Ed25519 certificates.
 func NewServer(addr, certFile, keyFile string) *Server {
 	return &Server{
-		Addr:      addr,
-		CertFile:  certFile,
-		KeyFile:   keyFile,
+		Addr:          addr,
+		CertFile:      certFile,
+		KeyFile:       keyFile,
 		Limiter:       NewLimiter(MaxConnections),
 		TunnelLimiter: NewLimiter(MaxTunnels),
 		StartTime:     time.Now(),
@@ -69,27 +67,18 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 
 	mux := http.NewServeMux()
 
-	// cfWrap applies CF source filtering BEFORE the connection limiter so
-	// non-CF requests don't consume a slot. nil-safe and insecure-aware.
-	cfWrap := func(h http.Handler) http.Handler {
-		return CFSourceMiddleware(s.CFIPValidator, s.CFRejectLog, h)
-	}
-
 	if s.Handler != nil {
-		mux.Handle("/dns-query", cfWrap(LimitMiddleware(s.Limiter, s.Handler)))
+		mux.Handle("/dns-query", LimitMiddleware(s.Limiter, s.Handler))
 	}
 	healthHandler := NewHealthHandler(s.Limiter, s.TunnelLimiter, s.StartTime)
 	if s.NATStatsFunc != nil {
 		healthHandler.SetNATStatsProvider(s.NATStatsFunc)
 	}
-	mux.Handle("/health", cfWrap(LimitMiddleware(s.Limiter, healthHandler)))
+	mux.Handle("/health", LimitMiddleware(s.Limiter, healthHandler))
 
-	// Create verify handler and wire CF validator for session token issuance.
+	// Create verify handler for session token issuance.
 	if s.SigningKey != nil {
 		vh := NewVerifyHandler(s.SigningKey)
-		if s.CFIPValidator != nil {
-			vh.SetCFValidator(s.CFIPValidator)
-		}
 		// Fix H10 (audit sécurité) : ajouter un per-IP limiter en amont du
 		// Limiter global. Sans ça, un client unique peut spammer /verify
 		// jusqu'à saturer la capacité globale et dégrader le service pour
@@ -99,33 +88,31 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 		if s.IPLimiter != nil {
 			verifyHandler = IPLimitMiddleware(s.IPLimiter, verifyHandler)
 		}
-		mux.Handle("/verify", cfWrap(LimitMiddleware(s.Limiter, verifyHandler)))
+		mux.Handle("/verify", LimitMiddleware(s.Limiter, verifyHandler))
 	}
 	if s.ConnectHandler != nil {
 		// /connect uses its own per-IP limiter (IPLimiter), not the global
 		// connection limiter. CONNECT tunnels are long-lived streams that
-		// would exhaust the global short-request limiter.
-		// Documented exception to CF source filtering — handler enforces
+		// would exhaust the global short-request limiter. Handler enforces
 		// its own bearer-token + per-IP validation.
 		mux.Handle("/connect", s.ConnectHandler)
 	}
 	if s.TunnelHandler != nil {
 		// /tunnel uses the dedicated TunnelLimiter (HTTP 503 when saturated)
-		// — separate from the global request Limiter.
-		// CF source filtering is not applied — handler enforces bearer-token
-		// + IP-hash auth directly.
+		// — separate from the global request Limiter. Handler enforces
+		// bearer-token + IP-hash auth directly.
 		mux.Handle("/tunnel", LimitMiddleware(s.TunnelLimiter, s.TunnelHandler))
 	}
 
 	// /ip returns the client's visible IP — used by desktop to display exit IP.
-	mux.Handle("/ip", cfWrap(LimitMiddleware(s.Limiter, NewIPHandler(s.CFIPValidator))))
+	mux.Handle("/ip", LimitMiddleware(s.Limiter, NewIPHandler()))
 
 	// Serve relay registry JSON if configured.
 	if s.RegistryFile != "" {
-		mux.Handle("/.well-known/relay-registry.json", cfWrap(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mux.Handle("/.well-known/relay-registry.json", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			http.ServeFile(w, r, s.RegistryFile)
-		})))
+		}))
 	}
 
 	s.h3 = &http3.Server{
@@ -139,15 +126,12 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 		},
 	}
 
-	// Start background goroutines for IP limiter cleanup, bandwidth limiter cleanup, and CF IP refresh.
+	// Start background goroutines for IP limiter cleanup and bandwidth limiter cleanup.
 	if s.IPLimiter != nil {
 		go s.IPLimiter.StartCleanup(ctx)
 	}
 	if s.BWLimiter != nil {
 		go s.BWLimiter.StartCleanup(ctx)
-	}
-	if s.CFIPValidator != nil {
-		go s.CFIPValidator.StartRefresh(ctx)
 	}
 
 	errCh := make(chan error, 2)

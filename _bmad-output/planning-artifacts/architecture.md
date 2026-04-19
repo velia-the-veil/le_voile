@@ -3,15 +3,15 @@ stepsCompleted: [1, 2, 3, 4, 5, 6, 7, 8]
 lastStep: 8
 status: 'revised'
 completedAt: '2026-03-08'
-rewrittenAt: '2026-04-15'
-rewrittenReason: 'Ajout support Linux + bascule capture L3 unifiée (TUN Linux / Wintun Windows) + suppression extension navigateur + kill switch firewall (nftables / WFP). Révision 2026-04-08 conservée: webview/webview + fyne.io/systray.'
-previousRewrittenAt: '2026-04-08'
-previousRewrittenReason: 'Suppression mode portable, remplacement Wails v2 par webview/webview + fyne.io/systray (binaire UI unique), architecture 2 processus'
-inputDocuments: ['prd.md', 'prd-validation-report.md', 'codebase analysis 2026-04-02', 'architecture.md (2026-04-08 revision)']
+rewrittenAt: '2026-04-19'
+rewrittenReason: 'Pivot transport : retrait du fronting Cloudflare (incompatible ToS §2.8 non-HTML + origin-IP de toute façon exposée en NAT sortant). Le relais est désormais joint directement par DNS A record → VPS origin. Le handshake TLS + HTTP/3 camouflage DPI sans intermédiaire CDN. Session tokens bindés sur r.RemoteAddr au lieu de CF-Connecting-IP. Voir modèle de menace révisé ci-dessous.'
+previousRewrittenAt: '2026-04-15'
+previousRewrittenReason: 'Ajout support Linux + bascule capture L3 unifiée (TUN Linux / Wintun Windows) + suppression extension navigateur + kill switch firewall (nftables / WFP). Révision 2026-04-08 conservée: webview/webview + fyne.io/systray.'
+inputDocuments: ['prd.md', 'prd-validation-report.md', 'codebase analysis 2026-04-02', 'architecture.md (2026-04-15 revision)']
 workflowType: 'architecture'
 project_name: 'bmad_vpn_le_voile_de_velia'
 user_name: 'Akerimus'
-date: '2026-04-15'
+date: '2026-04-19'
 snapshot_ref: 'windows-stable-2026-04-15 (git tag) + backup/windows-stable (branch)'
 ---
 
@@ -27,7 +27,7 @@ _Snapshot de l'état stable Windows-only précédent : git tag `windows-stable-2
 
 **Functional Requirements:**
 36 FRs organisés en 10 domaines (FR37-40 extension navigateur retirés — capture L3 machine-wide rend l'extension redondante) :
-- **Tunnel & Connexion (FR1-4)** — Établissement QUIC/HTTPS via Cloudflare, reconnexion auto avec backoff exponentiel, authentification Ed25519 par relais, session tokens signés (TTL 4h) avec circuit breaker
+- **Tunnel & Connexion (FR1-4)** — Établissement QUIC/HTTPS direct au relais (DNS A record → VPS origin, sans CDN intermédiaire), reconnexion auto avec backoff exponentiel, authentification Ed25519 par relais, session tokens signés (TTL 4h) avec circuit breaker
 - **Capture Trafic L3 (FR5-8 révisés + FR27-30 révisés)** — Interface TUN/Wintun virtuelle, encapsulation IP brut tunnelisée via QUIC/HTTP3 vers relais (relais = gateway NAT), DNS résolu côté relais (plus de proxy DNS local), kill switch firewall (nftables Linux / WFP Windows) drop tout sauf TUN + IP relais, rate limiting par IP côté relais (200 max), bandwidth limiting par IP (quota journalier), protection SSRF, blocklist DNS appliquée côté relais (StevenBlack/hosts)
 - **Protection Anti-Fuite (FR31-34)** — Détection fuites WebRTC via STUN Binding Requests (RFC 5389) — WebRTC ne peut plus fuir puisque tout le trafic UDP/STUN passe aussi par la TUN, mais check de validation conservé. Vérification IP tunnel vs IP détectée, scheduler périodique
 - **Interface Utilisateur (FR9-13b)** — Binaire UI unique (`levoile-ui`) combinant webview/webview (fenêtre 420×540px) + fyne.io/systray (icône tray) dans un seul processus, charte plateformeliberte.fr, sélecteur de pays avec drapeaux
@@ -40,7 +40,7 @@ _Snapshot de l'état stable Windows-only précédent : git tag `windows-stable-2
 
 **Non-Functional Requirements:**
 20 NFRs répartis en 4 axes :
-- **Sécurité (NFR1-9)** — TLS 1.3 min, Ed25519 par relais + registre signé master key, zero persistence, résistance DPI (QUIC/HTTPS via Cloudflare), zero fuite DNS/WebRTC (capture L3 machine-wide), kill switch firewall OS-level (nftables/WFP), protection SSRF, validation source Cloudflare (CF-Connecting-IP), code auditable
+- **Sécurité (NFR1-9)** — TLS 1.3 min, Ed25519 par relais + registre signé master key, zero persistence, résistance DPI (QUIC/HTTP/3 indistinguable d'un HTTPS navigateur), zero fuite DNS/WebRTC (capture L3 machine-wide), kill switch firewall OS-level (nftables/WFP), protection SSRF, session token bindé à l'IP client (SHA256(r.RemoteAddr)), code auditable
 - **Performance (NFR10-14)** — Latence DNS < 50ms (résolution côté relais via upstream proche), tunnel < 3s, reconnexion avec backoff (100ms → 30s), RAM < 25MB (hausse acceptable vs 20MB — stack TCP/IP userspace ou équivalent), CPU < 1%
 - **Fiabilité (NFR15-18)** — Kill switch via règles firewall (indépendant du process client, persiste en cas de crash), watchdog TUN interface 3s, crash-recovery firewall/TUN au redémarrage service, failover transparent multi-relais
 - **Confidentialité (NFR19-20)** — Aucun log IP client (ni relais ni client), IP hash uniquement dans session tokens
@@ -61,7 +61,7 @@ _Snapshot de l'état stable Windows-only précédent : git tag `windows-stable-2
 - **Microsoft/go-winio** (v0.6.2) — Named pipes Windows pour IPC (Windows only)
 - **quic-go** (v0.59.0) — Implémentation QUIC production-ready, HTTP/3 + TLS 1.3
 - **BurntSushi/toml** (v1.5.0) — Configuration TOML
-- **Cloudflare** — CDN intermédiaire pour le camouflage protocolaire (QUIC/HTTPS)
+- **Cloudflare DoH** — Resolver DNS (1.1.1.1) pour bootstrap de résolution du domaine relais, avec fallback Quad9 (9.9.9.9). **Pas utilisé comme CDN fronting** — le relais est joint en direct (DNS A record → VPS). Voir "Modèle de menace — pas de CDN fronting" ci-dessous
 - **Ed25519** — Algorithme d'authentification par relais + signature du registre par master key
 - **Multi-VPS** — Relais répartis géographiquement par pays, scalables horizontalement
 - **Capture L3 unifiée** — Contrainte nouvelle : le client doit créer une interface virtuelle et router le trafic IP via elle, au lieu d'intercepter au niveau application (proxy L7)
@@ -78,12 +78,12 @@ _Snapshot de l'état stable Windows-only précédent : git tag `windows-stable-2
 
 ### Cross-Cutting Concerns Identified
 
-- **Sécurité** — Chiffrement bout en bout, zero-log, résistance DPI, clé Ed25519 par relais, registre signé master key, session tokens signés, validation source CF, protection SSRF — touche tunnel, relay, registry, tun
+- **Sécurité** — Chiffrement bout en bout, zero-log, résistance DPI, clé Ed25519 par relais, registre signé master key, session tokens bindés à l'IP client (r.RemoteAddr), protection SSRF — touche tunnel, relay, registry, tun
 - **Anti-Fuite** — Détection WebRTC via STUN (validation — la capture L3 empêche structurellement les fuites), kill switch firewall OS-level — touche leakcheck, stun, firewall
 - **Capture trafic machine-wide** — TUN/Wintun capture tout IP (TCP/UDP/ICMP), encapsulation vers relais, pas de config par application — touche tun, firewall, routing
 - **Fiabilité** — Kill switch firewall persistant (nftables/WFP), watchdog interface TUN, reconnexion auto avec backoff, failover multi-relais, règles firewall restaurées proprement au shutdown — touche service, firewall, tun, tunnel, registry
 - **Intégration OS** — Interface TUN (build tags : Linux /dev/net/tun, Windows Wintun), firewall (nftables Linux, WFP Windows), routes (iproute2 Linux, winipcfg Windows), élévation (root/CAP Linux, UAC Windows), service (systemd/SCM), tray (dbus/appindicator Linux, systray natif Windows) — varie par plateforme
-- **Camouflage** — Trafic IP brut encapsulé dans HTTP/3 via Cloudflare, indiscernable d'une connexion HTTPS standard — touche tunnel, relay, Cloudflare
+- **Camouflage** — Trafic IP brut encapsulé dans HTTP/3 + TLS 1.3 vers le relais direct, indiscernable d'une connexion navigateur standard (ALPN h3, SNI = domaine relais) — touche tunnel, relay
 - **Statelessness** — Aucune persistence côté relais (NAT table en RAM, TTL court) — touche architecture relais, registre, monitoring
 - **Découverte** — Registre distribué signé, sélection géographique, failover, latency measurement — touche client, relais, déploiement
 - **Mise à jour** — Auto-update via GitHub releases, vérification signature Ed25519, rollback, rate limiting — touche updater, distribution
@@ -282,7 +282,7 @@ le_voile/
 
 ### Communication & Protocole
 
-- **Client ↔ Relais (Tunnel IP)** : HTTP/3 via quic-go/http3. POST `https://{relay-domain}/tunnel` avec Upgrade pour stream bidirectionnel persistant transportant les paquets IP bruts. Framing : `[2 octets big-endian: length][payload IP packet]`. Header `Authorization: Bearer {session_token}` à l'ouverture du stream. Limite pratique MTU : 1420 octets (QUIC overhead pris en compte). Trafic indiscernable d'une connexion HTTPS standard via Cloudflare
+- **Client ↔ Relais (Tunnel IP)** : HTTP/3 via quic-go/http3 en connexion directe au VPS relais. POST `https://{relay-domain}/tunnel` avec Upgrade pour stream bidirectionnel persistant transportant les paquets IP bruts. Framing : `[2 octets big-endian: length][payload IP packet]`. Header `Authorization: Bearer {session_token}` à l'ouverture du stream. Limite pratique MTU : 1420 octets (QUIC overhead pris en compte). Trafic indiscernable d'une connexion HTTPS/HTTP/3 standard côté DPI
 - **Protocole de désencapsulation** : Le relais reçoit le paquet IP → parse header (IPv4/IPv6 + protocole TCP/UDP/ICMP) → NAT source (substitue IP source par IP relais, alloue port NAT) → forwarde sur Internet via socket raw ou socket userspace selon protocole
 - **DNS** : Les requêtes DNS (UDP 53 / TCP 53) capturées par la TUN arrivent au relais comme tout autre paquet IP. Le relais les intercepte : soit les résout en interne via upstream (Cloudflare 1.1.1.1 / Quad9 fallback) en appliquant la blocklist, soit les forwarde si on laisse l'upstream décider (décision d'implémentation : résolution interne pour appliquer la blocklist et zero-log)
 - **Client ↔ Relais (Verify)** : GET `https://{relay-domain}/verify` — challenge-response, émission session token Ed25519 TTL 4h. Inchangé
@@ -350,12 +350,12 @@ Deux processus communiquant via IPC :
 - **Relais VPS** (`cmd/relay/`) : Binaire Go autonome HTTP/3 (port 443) avec TLS. Handlers : **Tunnel IP** (/tunnel — stream bidirectionnel paquets IP, NAT, DNS blocklist intégrée), Verify (/verify — session token), IP detection (/ip), health (/health), registry (/.well-known/relay-registry.json). **Supprimé** : /dns-query, /connect, /stun-relay (tous absorbés par /tunnel). Build tag pour traçabilité. Flags : -addr, -cert, -key, -upstream, -fallback, -signing-key, -registry-file, -cf-insecure, -blocklist-url
 - **NAT côté relais** : Table NAT en RAM (`sync.Map` keyed par `(session, 5-tuple)`). Alloc port NAT via pool range 10000-60000 avec eviction TTL. Socket userspace ou raw selon protocole (TCP : dial/accept normal, UDP : `net.ListenUDP`, ICMP : raw socket ou abandon au MVP)
 - **Relay DNSSEC Validator** (`internal/relay/dns_resolver.go`) : Les réponses DNS upstream sont validées DNSSEC avant forwarding. Cloudflare 1.1.1.1 et Quad9 9.9.9.9 supportent nativement DNSSEC. Réponse SERVFAIL si validation échoue (NFR9f)
-- **Relay Session Validator** (`internal/relay/verify_handler.go`) : À chaque ouverture de stream /tunnel, vérification que SHA256(CF-Connecting-IP) == IPHash du session token. Rejet HTTP 401 si différent (NFR9d)
-- **Relay TLS Config** : Serveur TLS obligatoirement TLS 1.3, ciphersuites modernes uniquement. Configuration Cloudflare côté Origin Certificate en mode "Full (Strict)" (NFR9e)
+- **Relay Session Validator** (`internal/relay/verify_handler.go`) : À chaque ouverture de stream /tunnel, vérification que SHA256(r.RemoteAddr) == IPHash du session token. Rejet HTTP 401 si différent (NFR9d) — le client reçoit son IP-hash au /verify et le relais la vérifie au /tunnel sur le même socket direct.
+- **Relay TLS Config** : Serveur TLS obligatoirement TLS 1.3, ciphersuites modernes uniquement. Certificat Let's Encrypt servi directement depuis le VPS, pas de terminaison TLS intermédiaire (NFR9e)
 - **TUN Packet Integrity** (`internal/tun/integrity.go`) : Tagging des paquets émis par le pump tunnel (metadata in-memory + checksum), détection de paquets arrivant sur la TUN sans avoir transité par le pump = injection externe. Paquets non tagués ignorés + log (NFR9g)
 - **Registre signé** : Inchangé
 - **Déploiement relais** : `deploy/install.sh` — Crée user system `levoile`, copie binaire /opt/levoile, cert/key avec permissions 0600, systemd service avec CAP_NET_BIND_SERVICE + CAP_NET_ADMIN (pour NAT si raw sockets), ProtectSystem=strict, ProtectHome=true, NoNewPrivileges=true, restart always
-- **Cloudflare** : Inchangé (CF-Connecting-IP continue d'identifier le client réel pour les limiteurs)
+- **Transport** : HTTP/3 direct vers le VPS relais (DNS A record → origin). **Pas de fronting CDN** (Cloudflare ToS §2.8 interdit le non-HTML, coût Enterprise prohibitif, et l'IP origin est de toute façon exposée au DNS sortant NAT — gain sécurité marginal). Les rate-limiters utilisent `r.RemoteAddr` (host portion) comme identité client (clientIP helper dans `internal/relay/middleware.go`)
 - **Signature installeur Windows** : Le .exe NSIS final est signé Ed25519 (master key) + optionnellement Authenticode (signature commerciale, à évaluer selon budget). Checksums SHA256 des binaires internes affichés dans la page de téléchargement
 - **Installeur Windows NSIS** (`installer/levoile.nsi`) :
   - Install : UAC admin → kill instances → stop/unregister old service → copy binaries (service + UI) + icons + **wintun.dll** → register service SCM → UI autostart HKCU → shortcuts desktop/Start menu → launch UI
@@ -866,7 +866,7 @@ le_voile/
 │       ├── verify_handler.go          # /verify — session token issuance
 │       ├── ip_handler.go              # /ip
 │       ├── health.go                  # /health (tunnels + nat_entries)
-│       ├── cfip.go                    # Cloudflare IP validator
+│       ├── middleware.go              # LimitMiddleware + IPLimitMiddleware + clientIP helper (host from r.RemoteAddr)
 │       ├── limiter.go / ip_limiter.go / bandwidth_limiter.go
 │       └── e2e_test.go
 │       # Supprimés : doh_handler.go, stun_handler.go, connect_handler.go (fusionnés dans tunnel_handler)
@@ -947,9 +947,9 @@ le_voile/
 
 **Frontière Réseau (Client ↔ Relais) :**
 - Points de contact : POST `/tunnel` (stream bidirectionnel paquets IP), GET `/verify` (session token), GET `/ip`, GET `/health`, GET `/.well-known/relay-registry.json`
-- Tout passe via Cloudflare (`https://{relay-domain}`) — jamais d'accès direct au VPS
+- Tout passe en HTTPS/HTTP/3 direct vers `https://{relay-domain}` (DNS A record = VPS origin). Pas d'intermédiaire CDN — ToS Cloudflare §2.8 interdit le proxying non-HTML, et l'IP origin est de toute façon exposée via le NAT sortant donc le gain sécurité d'un fronting serait marginal vs le coût (Enterprise + dépendance tiers)
 - Le registry discoverer est le seul composant qui détermine quel relais contacter
-- Le handler `/tunnel` valide : session token Ed25519, source Cloudflare IP (CF-Connecting-IP), rate limit par IP, bandwidth limit par IP. Pour chaque paquet IP forwardé : SSRF check (bloque réseaux privés destination)
+- Le handler `/tunnel` valide : session token Ed25519, IP client (constant-time compare `SHA256(r.RemoteAddr) == IPHash` du token), rate limit par IP (IPLimiter), bandwidth limit par IP (BWLimiter). Pour chaque paquet IP forwardé : SSRF check (bloque réseaux privés destination)
 - `/health` accessible publiquement mais ne contient que des métriques anonymes
 
 **Frontière Capture L3 (OS ↔ Le Voile) :**
@@ -1023,8 +1023,8 @@ le_voile/
                         ↓ (framing 2-byte length + payload)
               [HTTP/3 stream POST /tunnel sur quic-go]
                         ↓ (trafic indiscernable HTTPS)
-              [Cloudflare CDN ({relay-domain})]
-                        ↓ (HTTP/3)
+              [Connexion HTTP/3 directe → {relay-domain} = VPS origin]
+                        ↓
               [Relais VPS — internal/relay/tunnel_handler.go]
                         ↓ (parse IP header)
               [SSRF check (destinations privées bloquées)]
@@ -1036,7 +1036,7 @@ le_voile/
                         ↓ (réponse)
               [Relais : NAT reverse lookup → 5-tuple client]
                         ↓ (paquet IP encapsulé)
-              [HTTP/3 stream → Cloudflare → client]
+              [HTTP/3 stream → client (retour direct)]
                         ↓ (internal/tunnel/pump.go → internal/tun/Device.Write())
               [levoile0 → kernel → application]
 ```
@@ -1095,7 +1095,7 @@ le_voile/
 ```
 [Service démarrage] → [internal/registry/discoverer.go]
                         ↓ (GET /.well-known/relay-registry.json)
-              [Cloudflare CDN → Relais quelconque]
+              [HTTPS direct → n'importe quel relais du registre]
                         ↓ (JSON signé)
               [internal/registry/registry.go → VerifyAll(master key)]
                         ↓ (relais vérifiés)
@@ -1190,7 +1190,7 @@ le_voile/
 | ~~FR37-40~~ | **SUPPRIMÉ** (capture L3 rend l'extension redondante) |
 
 **Non-Functional Requirements : 20/20 couverts**
-- Sécurité (NFR1-9) : TLS 1.3 via quic-go, Ed25519 par relais + registre signé master key, certificate pinning, zero persistence, HTTP/3 camouflage, SSRF protection côté relais, validation source CF (CF-Connecting-IP), code auditable, kill switch firewall kernel-level
+- Sécurité (NFR1-9) : TLS 1.3 via quic-go, Ed25519 par relais + registre signé master key, certificate pinning, zero persistence, HTTP/3 camouflage, SSRF protection côté relais, session token bindé à l'IP client (SHA256(r.RemoteAddr)), code auditable, kill switch firewall kernel-level
 - Performance (NFR10-14) : Go natif, capture L3 zéro-copy (lecture TUN vers stream QUIC), failover transparent, bandwidth limiting, RAM < 25MB (hausse acceptable vs 20MB — inclut buffers TUN + NAT table)
 - Fiabilité (NFR15-18) : Kill switch firewall persistant (survit au crash service), watchdog TUN 3s, failover multi-relais (firewall maintenu), crash-recovery firewall au restart, circuit breaker (5 échecs → déconnexion + firewall actif)
 - Confidentialité (NFR19-20) : Zero log IP client (relais ne loggue que métriques anonymes agrégées), IP hash uniquement dans session tokens, NAT table en RAM volatile avec TTL court
@@ -1292,7 +1292,7 @@ le_voile/
 - Architecture 2 processus simplifiée — service privilégié (SCM/systemd) + UI user, communication IPC propre
 - Architecture multi-relais résiliente — registre signé Ed25519, failover automatique, kill switch maintenu pendant le failover
 - Zero-log par design — aucune donnée à compromettre, architecture stateless côté relais (NAT table RAM avec TTL court)
-- Camouflage protocolaire — paquets IP encapsulés dans HTTP/3 via Cloudflare, indiscernables du trafic web
+- Camouflage protocolaire — paquets IP encapsulés dans HTTP/3 + TLS 1.3 direct vers le relais, indiscernables du trafic web côté DPI
 - UI riche via webview/webview — charte plateformeliberte.fr fidèlement reproduite, frontend HTML/CSS/JS réutilisé Linux + Windows
 - Packaging Linux natif — apt/dnf/pacman/apk + AUR, intégration systemd standard
 - Code cross-platform unifié — même package `wireguard/tun` pour TUN + Wintun, même interface `Firewall` pour nftables + WFP

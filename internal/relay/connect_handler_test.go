@@ -74,11 +74,10 @@ func newConnectRequest(t *testing.T, token string, target string) *http.Request 
 	return req
 }
 
-// newHandler creates a ConnectHandler with insecure CF validator for testing.
+// newHandler creates a ConnectHandler for testing.
 func newHandler(t *testing.T, pub ed25519.PublicKey, limiter *IPLimiter) *ConnectHandler {
 	t.Helper()
-	cfv := NewCloudflareIPValidator(true, nil)
-	return NewConnectHandler(pub, cfv, limiter, nil, func(string, ...any) {})
+	return NewConnectHandler(pub, limiter, nil, func(string, ...any) {})
 }
 
 func TestConnectHandler_NonPOST(t *testing.T) {
@@ -253,8 +252,7 @@ func TestConnectHandler_429_On_DailyQuotaExceeded(t *testing.T) {
 	// AC2: IP over daily quota → new /connect gets HTTP 429 before dialing.
 	pub, priv := testKeys(t)
 	bwLimiter := NewBandwidthLimiter(1000) // small quota for testing
-	cfv := NewCloudflareIPValidator(true, nil)
-	h := NewConnectHandler(pub, cfv, nil, bwLimiter, func(string, ...any) {})
+	h := NewConnectHandler(pub, nil, bwLimiter, func(string, ...any) {})
 
 	clientIP := "203.0.113.52"
 	token := testToken(t, priv, clientIP)
@@ -330,8 +328,7 @@ func TestConnectHandler_ValidRequestE2E(t *testing.T) {
 	}()
 
 	pub, priv := testKeys(t)
-	cfv := NewCloudflareIPValidator(true, nil)
-	h := NewConnectHandler(pub, cfv, nil, nil, func(string, ...any) {})
+	h := NewConnectHandler(pub, nil, nil, func(string, ...any) {})
 
 	srv := httptest.NewServer(h)
 	defer srv.Close()
@@ -473,8 +470,7 @@ func TestConnectHandler_BandwidthLimiterCounts(t *testing.T) {
 	// This confirms the limiter is wired in but only counts during relay.
 	pub, priv := testKeys(t)
 	bwLimiter := NewBandwidthLimiter(DailyQuotaBytes)
-	cfv := NewCloudflareIPValidator(true, nil)
-	h := NewConnectHandler(pub, cfv, nil, bwLimiter, func(string, ...any) {})
+	h := NewConnectHandler(pub, nil, bwLimiter, func(string, ...any) {})
 
 	clientIP := "203.0.113.20"
 	token := testToken(t, priv, clientIP)

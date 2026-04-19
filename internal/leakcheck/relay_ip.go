@@ -11,9 +11,9 @@ import (
 )
 
 // defaultRelayIPCacheTTL is the TTL for the cached relay IP. The relay
-// domain's DNS (Cloudflare-fronted) returns a small pool of IPs that stays
-// stable over minutes; 5 minutes balances reactivity to relay failover
-// with DoH traffic economy.
+// domain's DNS resolves directly to the VPS origin IP (DNS-only, no CDN
+// fronting); a 5-minute cache balances reactivity to failover with DoH
+// traffic economy.
 const defaultRelayIPCacheTTL = 5 * time.Minute
 
 // DoHResolver abstracts the minimum surface needed from

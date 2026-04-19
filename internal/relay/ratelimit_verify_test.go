@@ -27,7 +27,7 @@ func TestIPLimitMiddleware_RejectsSameIPSpam(t *testing.T) {
 	for i := 0; i < 3; i++ {
 		go func() {
 			req := httptest.NewRequest(http.MethodPost, "http://relay/verify", nil)
-			req.Header.Set("CF-Connecting-IP", "203.0.113.7")
+			req.RemoteAddr = "203.0.113.7:12345"
 			rr := httptest.NewRecorder()
 			wrapped.ServeHTTP(rr, req)
 			done <- rr.Code
@@ -40,7 +40,7 @@ func TestIPLimitMiddleware_RejectsSameIPSpam(t *testing.T) {
 
 	// Fourth request from same IP — expect 429 without entering inner.
 	req := httptest.NewRequest(http.MethodPost, "http://relay/verify", nil)
-	req.Header.Set("CF-Connecting-IP", "203.0.113.7")
+	req.RemoteAddr = "203.0.113.7:12345"
 	rr := httptest.NewRecorder()
 	wrapped.ServeHTTP(rr, req)
 	if rr.Code != http.StatusTooManyRequests {
@@ -68,7 +68,7 @@ func TestIPLimitMiddleware_DifferentIPsIsolated(t *testing.T) {
 	wrapped := IPLimitMiddleware(limiter, blocking)
 
 	req1 := httptest.NewRequest(http.MethodPost, "http://relay/verify", nil)
-	req1.Header.Set("CF-Connecting-IP", "198.51.100.1")
+	req1.RemoteAddr = "198.51.100.1:12345"
 	rr1 := httptest.NewRecorder()
 	wrapped.ServeHTTP(rr1, req1)
 	if rr1.Code != http.StatusOK {
@@ -77,7 +77,7 @@ func TestIPLimitMiddleware_DifferentIPsIsolated(t *testing.T) {
 
 	// Different IP — must succeed independently of IP A's history.
 	req2 := httptest.NewRequest(http.MethodPost, "http://relay/verify", nil)
-	req2.Header.Set("CF-Connecting-IP", "198.51.100.2")
+	req2.RemoteAddr = "198.51.100.2:12345"
 	rr2 := httptest.NewRecorder()
 	wrapped.ServeHTTP(rr2, req2)
 	if rr2.Code != http.StatusOK {

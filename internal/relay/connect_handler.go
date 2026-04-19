@@ -28,21 +28,19 @@ type connectRequest struct {
 // Accepts POST requests with a target in the JSON body, authenticates via
 // session token, and relays traffic bidirectionally to the destination.
 type ConnectHandler struct {
-	signingKey  ed25519.PublicKey // for verifying session tokens
-	cfValidator *CloudflareIPValidator
-	ipLimiter   *IPLimiter
-	bwLimiter   *BandwidthLimiter
-	logFunc     func(format string, args ...any)
+	signingKey ed25519.PublicKey // for verifying session tokens
+	ipLimiter  *IPLimiter
+	bwLimiter  *BandwidthLimiter
+	logFunc    func(format string, args ...any)
 }
 
 // NewConnectHandler creates a new relay CONNECT handler.
-func NewConnectHandler(pubKey ed25519.PublicKey, cfv *CloudflareIPValidator, ipLimiter *IPLimiter, bwLimiter *BandwidthLimiter, logFunc func(string, ...any)) *ConnectHandler {
+func NewConnectHandler(pubKey ed25519.PublicKey, ipLimiter *IPLimiter, bwLimiter *BandwidthLimiter, logFunc func(string, ...any)) *ConnectHandler {
 	return &ConnectHandler{
-		signingKey:  pubKey,
-		cfValidator: cfv,
-		ipLimiter:   ipLimiter,
-		bwLimiter:   bwLimiter,
-		logFunc:     logFunc,
+		signingKey: pubKey,
+		ipLimiter:  ipLimiter,
+		bwLimiter:  bwLimiter,
+		logFunc:    logFunc,
 	}
 }
 
@@ -58,28 +56,11 @@ func (h *ConnectHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// CF-Connecting-IP validation: drop non-CF sources silently.
-	if h.cfValidator != nil && !h.cfValidator.IsTrustedSource(r.RemoteAddr) {
-		// Silent TCP drop — no HTTP response.
-		hj, ok := w.(http.Hijacker)
-		if ok {
-			conn, _, _ := hj.Hijack()
-			if conn != nil {
-				conn.Close()
-			}
-		}
+	// Extract client IP from direct connection remote address.
+	remoteIP := clientIP(r)
+	if remoteIP == "" {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
-	}
-
-	// Extract client IP.
-	clientIP := ""
-	if h.cfValidator != nil {
-		var err error
-		clientIP, err = h.cfValidator.ExtractClientIP(r)
-		if err != nil {
-			http.Error(w, "Unauthorized", http.StatusUnauthorized)
-			return
-		}
 	}
 
 	// Authenticate: extract and verify session token.
@@ -104,8 +85,8 @@ func (h *ConnectHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Check IP hash match (defense-in-depth).
-	if clientIP != "" {
-		expectedHash := fmt.Sprintf("%x", sha256.Sum256([]byte(clientIP)))
+	if remoteIP != "" {
+		expectedHash := fmt.Sprintf("%x", sha256.Sum256([]byte(remoteIP)))
 		if payload.IPHash != expectedHash {
 			http.Error(w, "Unauthorized", http.StatusUnauthorized)
 			return
@@ -113,17 +94,17 @@ func (h *ConnectHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Per-IP rate limiting.
-	if h.ipLimiter != nil && clientIP != "" {
-		if !h.ipLimiter.Acquire(clientIP) {
+	if h.ipLimiter != nil && remoteIP != "" {
+		if !h.ipLimiter.Acquire(remoteIP) {
 			RejectedIPLimitTotal.Add(1)
 			http.Error(w, "Too Many Requests", http.StatusTooManyRequests)
 			return
 		}
-		defer h.ipLimiter.Release(clientIP)
+		defer h.ipLimiter.Release(remoteIP)
 	}
 
 	// Per-IP daily bandwidth quota check — reject before dialing upstream.
-	if h.bwLimiter != nil && clientIP != "" && !h.bwLimiter.CanOpenTunnel(clientIP) {
+	if h.bwLimiter != nil && remoteIP != "" && !h.bwLimiter.CanOpenTunnel(remoteIP) {
 		RejectedDailyQuotaTotal.Add(1)
 		http.Error(w, "Too Many Requests", http.StatusTooManyRequests)
 		return
@@ -168,7 +149,7 @@ func (h *ConnectHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// when the destination side times out or disconnects.
 	clientReader := io.MultiReader(decoder.Buffered(), r.Body)
 	ctx := r.Context()
-	relay(ctx, clientReader, w, destConn, r.Body, clientIP, h.bwLimiter)
+	relay(ctx, clientReader, w, destConn, r.Body, remoteIP, h.bwLimiter)
 }
 
 // relay copies data bidirectionally between the HTTP stream and the destination.
@@ -177,7 +158,7 @@ func (h *ConnectHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // bodyCloser is closed to unblock clientReader.Read() when the relay ends —
 // without this, reads on the HTTP/3 request body block indefinitely, leaking
 // the goroutine and its IP limiter slot.
-func relay(ctx context.Context, clientReader io.Reader, clientWriter io.Writer, dest net.Conn, bodyCloser io.Closer, clientIP string, bwLimiter *BandwidthLimiter) {
+func relay(ctx context.Context, clientReader io.Reader, clientWriter io.Writer, dest net.Conn, bodyCloser io.Closer, remoteIP string, bwLimiter *BandwidthLimiter) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
@@ -193,8 +174,8 @@ func relay(ctx context.Context, clientReader io.Reader, clientWriter io.Writer, 
 			dest.SetReadDeadline(time.Now().Add(connectIdleTimeout))
 			n, err := dest.Read(buf)
 			if n > 0 {
-				if bwLimiter != nil && clientIP != "" {
-					bwLimiter.AccountAndThrottle(ctx, clientIP, n)
+				if bwLimiter != nil && remoteIP != "" {
+					bwLimiter.AccountAndThrottle(ctx, remoteIP, n)
 				}
 				if _, wErr := clientWriter.Write(buf[:n]); wErr != nil {
 					return

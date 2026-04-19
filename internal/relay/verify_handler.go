@@ -54,20 +54,15 @@ type SessionTokenPayload struct {
 }
 
 // VerifyHandler signs a client-provided nonce with the relay's Ed25519 key
-// and optionally issues a session token for proxy CONNECT authentication.
+// and issues a session token bound to the client's remote address (used by
+// /connect and /tunnel for IP-hash verification).
 type VerifyHandler struct {
-	signingKey  ed25519.PrivateKey
-	cfValidator *CloudflareIPValidator // may be nil if proxy not enabled
+	signingKey ed25519.PrivateKey
 }
 
 // NewVerifyHandler creates a VerifyHandler with the given signing key.
 func NewVerifyHandler(signingKey ed25519.PrivateKey) *VerifyHandler {
 	return &VerifyHandler{signingKey: signingKey}
-}
-
-// SetCFValidator enables session token issuance using the given validator.
-func (h *VerifyHandler) SetCFValidator(v *CloudflareIPValidator) {
-	h.cfValidator = v
 }
 
 // ServeHTTP handles POST requests with a JSON nonce, returning an Ed25519 signature
@@ -95,23 +90,11 @@ func (h *VerifyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Fail-fast: validate CF source before expensive Ed25519 signature.
-	var clientIP string
-	var hasClientIP bool
-	if h.cfValidator != nil {
-		ip, ipErr := h.cfValidator.ExtractClientIP(r)
-		if ipErr != nil {
-			if !h.cfValidator.IsInsecure() {
-				// Strict mode: reject non-CF sources or missing/invalid CF-Connecting-IP.
-				http.Error(w, "Forbidden", http.StatusForbidden)
-				return
-			}
-			// Insecure/dev mode: continue without session token (AC7).
-		} else {
-			clientIP = ip
-			hasClientIP = true
-		}
-	}
+	// Resolve client IP from the request's remote address (direct origin, no
+	// CDN fronting). If the remote address is unparseable we still sign the
+	// nonce but omit the session token — the client will retry and the next
+	// request will either succeed or fail at a lower layer.
+	remoteIP := clientIP(r)
 
 	sig, err := lecrypto.Sign(h.signingKey, nonceBytes)
 	if err != nil {
@@ -123,8 +106,8 @@ func (h *VerifyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		Signature: base64.StdEncoding.EncodeToString(sig),
 	}
 
-	if hasClientIP {
-		token, tokenErr := CreateSessionToken(h.signingKey, clientIP)
+	if remoteIP != "" {
+		token, tokenErr := CreateSessionToken(h.signingKey, remoteIP)
 		if tokenErr == nil {
 			resp.SessionToken = token
 		}

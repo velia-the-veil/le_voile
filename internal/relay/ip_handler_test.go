@@ -8,7 +8,7 @@ import (
 )
 
 func TestIPHandler_ReturnsRemoteAddr(t *testing.T) {
-	handler := NewIPHandler(nil)
+	handler := NewIPHandler()
 	req := httptest.NewRequest(http.MethodGet, "/ip", nil)
 	req.RemoteAddr = "93.184.216.34:12345"
 	w := httptest.NewRecorder()
@@ -25,7 +25,7 @@ func TestIPHandler_ReturnsRemoteAddr(t *testing.T) {
 }
 
 func TestIPHandler_IPv6(t *testing.T) {
-	handler := NewIPHandler(nil)
+	handler := NewIPHandler()
 	req := httptest.NewRequest(http.MethodGet, "/ip", nil)
 	req.RemoteAddr = "[2001:db8::1]:12345"
 	w := httptest.NewRecorder()

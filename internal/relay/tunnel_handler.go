@@ -52,16 +52,15 @@ type PacketForwarder interface {
 // TunnelHandler serves POST /tunnel — a bidirectional IP-packet stream
 // authenticated by Ed25519 session tokens with IP-hash binding.
 type TunnelHandler struct {
-	signingKey  ed25519.PublicKey
-	cfValidator *CloudflareIPValidator
-	ipLimiter   *IPLimiter
-	bwLimiter   *BandwidthLimiter
-	forwarder   PacketForwarder
-	logFunc     func(string, ...any)
+	signingKey ed25519.PublicKey
+	ipLimiter  *IPLimiter
+	bwLimiter  *BandwidthLimiter
+	forwarder  PacketForwarder
+	logFunc    func(string, ...any)
 }
 
 // NewTunnelHandler creates a TunnelHandler. Panics if pubKey or forwarder is nil.
-func NewTunnelHandler(pubKey ed25519.PublicKey, cfv *CloudflareIPValidator, ipLimiter *IPLimiter, forwarder PacketForwarder, logFunc func(string, ...any)) *TunnelHandler {
+func NewTunnelHandler(pubKey ed25519.PublicKey, ipLimiter *IPLimiter, forwarder PacketForwarder, logFunc func(string, ...any)) *TunnelHandler {
 	if pubKey == nil {
 		panic("tunnel: nil public key")
 	}
@@ -69,11 +68,10 @@ func NewTunnelHandler(pubKey ed25519.PublicKey, cfv *CloudflareIPValidator, ipLi
 		panic("tunnel: nil forwarder")
 	}
 	return &TunnelHandler{
-		signingKey:  pubKey,
-		cfValidator: cfv,
-		ipLimiter:   ipLimiter,
-		forwarder:   forwarder,
-		logFunc:     logFunc,
+		signingKey: pubKey,
+		ipLimiter:  ipLimiter,
+		forwarder:  forwarder,
+		logFunc:    logFunc,
 	}
 }
 
@@ -91,24 +89,11 @@ func (h *TunnelHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Extract client IP via CF validator.
-	// cfValidator nil → reject (misconfiguration: IP-hash can't be verified).
-	if h.cfValidator == nil {
+	// Extract client IP from direct connection remote address.
+	remoteIP := clientIP(r)
+	if remoteIP == "" {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
-	}
-	clientIP := ""
-	if !h.cfValidator.IsInsecure() {
-		ip, err := h.cfValidator.ExtractClientIP(r)
-		if err != nil {
-			http.Error(w, "Unauthorized", http.StatusUnauthorized)
-			return
-		}
-		clientIP = ip
-	} else {
-		// Insecure/dev mode: best-effort extraction.
-		ip, _ := h.cfValidator.ExtractClientIP(r)
-		clientIP = ip
 	}
 
 	// Extract Bearer token.
@@ -133,37 +118,35 @@ func (h *TunnelHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// IP-hash match via constant-time compare (NFR9c/NFR9d).
-	if clientIP != "" {
-		expected := fmt.Sprintf("%x", sha256.Sum256([]byte(clientIP)))
-		if subtle.ConstantTimeCompare([]byte(expected), []byte(payload.IPHash)) != 1 {
-			http.Error(w, "Unauthorized", http.StatusUnauthorized)
-			return
-		}
+	expected := fmt.Sprintf("%x", sha256.Sum256([]byte(remoteIP)))
+	if subtle.ConstantTimeCompare([]byte(expected), []byte(payload.IPHash)) != 1 {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
 	}
 
 	// Per-IP rate limiting (AC6 per-IP). Global limit handled by LimitMiddleware.
-	if h.ipLimiter != nil && clientIP != "" {
-		if !h.ipLimiter.Acquire(clientIP) {
+	if h.ipLimiter != nil {
+		if !h.ipLimiter.Acquire(remoteIP) {
 			RejectedIPLimitTotal.Add(1)
 			http.Error(w, "Too Many Requests", http.StatusTooManyRequests)
 			return
 		}
-		defer h.ipLimiter.Release(clientIP)
+		defer h.ipLimiter.Release(remoteIP)
 	}
 
 	// Per-IP daily bandwidth quota check — reject before starting tunnel.
-	if h.bwLimiter != nil && clientIP != "" && !h.bwLimiter.CanOpenTunnel(clientIP) {
+	if h.bwLimiter != nil && !h.bwLimiter.CanOpenTunnel(remoteIP) {
 		RejectedDailyQuotaTotal.Add(1)
 		http.Error(w, "Too Many Requests", http.StatusTooManyRequests)
 		return
 	}
 
 	// Auth passed — start bidirectional stream (AC1).
-	h.serveTunnel(w, r, payload, clientIP)
+	h.serveTunnel(w, r, payload, remoteIP)
 }
 
 // serveTunnel runs the bidirectional frame pump after auth succeeds.
-func (h *TunnelHandler) serveTunnel(w http.ResponseWriter, r *http.Request, payload *SessionTokenPayload, clientIP string) {
+func (h *TunnelHandler) serveTunnel(w http.ResponseWriter, r *http.Request, payload *SessionTokenPayload, remoteIP string) {
 	// Capture body reference BEFORE WriteHeader — the Go HTTP/1.1 server
 	// may close r.Body after the response headers are flushed if it detects
 	// the body hasn't been fully consumed. Holding a direct reference to
@@ -253,8 +236,8 @@ func (h *TunnelHandler) serveTunnel(w http.ResponseWriter, r *http.Request, payl
 				return true
 			}
 			// Bandwidth accounting on outbound data (same as connect_handler relay).
-			if h.bwLimiter != nil && clientIP != "" {
-				h.bwLimiter.AccountAndThrottle(sessionCtx, clientIP, len(pkt))
+			if h.bwLimiter != nil {
+				h.bwLimiter.AccountAndThrottle(sessionCtx, remoteIP, len(pkt))
 			}
 			binary.BigEndian.PutUint16(hdr, uint16(len(pkt)))
 			if _, err := w.Write(hdr); err != nil {

@@ -48,10 +48,10 @@ tshark -r /tmp/levoile-dpi.pcap -Y "tls.handshake.version" \
   -T fields -e tls.handshake.version | sort -u
 # Attendu : 0x0304 (TLS 1.3)
 
-# 5. SNI cohérent avec Cloudflare edge
+# 5. SNI cohérent avec le domaine relais direct
 tshark -r /tmp/levoile-dpi.pcap -Y "tls.handshake.extensions_server_name" \
   -T fields -e tls.handshake.extensions_server_name | sort -u
-# Attendu : {de,es,gb,us}.levoile.dev ou sous-domaine Cloudflare
+# Attendu : {de,es,gb,us}-00{1,2}.levoile.dev (DNS A record → VPS origin, pas de CDN intermédiaire)
 ```
 
 ## Fréquence

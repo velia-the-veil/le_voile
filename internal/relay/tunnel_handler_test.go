@@ -125,11 +125,10 @@ func newTunnelTestEnv(t *testing.T) *tunnelTestEnv {
 	if err != nil {
 		t.Fatalf("create token: %v", err)
 	}
-	cfv := NewCloudflareIPValidator(true, nil) // insecure for tests
 	ipLimiter := NewIPLimiter(IPLimiterMaxPerIP)
 	fwd := newTestEchoForwarder()
 	logBuf := &safeLogBuf{}
-	handler := NewTunnelHandler(pub, cfv, ipLimiter, fwd, logBuf.Write)
+	handler := NewTunnelHandler(pub, ipLimiter, fwd, logBuf.Write)
 	return &tunnelTestEnv{
 		handler:   handler,
 		forwarder: fwd,
@@ -145,7 +144,7 @@ func (e *tunnelTestEnv) newRequest(body io.Reader) *http.Request {
 	req := httptest.NewRequest(http.MethodPost, "/tunnel", body)
 	req.Header.Set("Authorization", "Bearer "+e.token)
 	req.Header.Set("Content-Type", "application/octet-stream")
-	// Insecure mode extracts IP from RemoteAddr — must match token's IP.
+	// Handler extracts IP from RemoteAddr — must match token's IP.
 	req.RemoteAddr = e.clientIP + ":12345"
 	return req
 }
@@ -315,9 +314,8 @@ func TestTunnelHandler_Bidirectional(t *testing.T) {
 func TestTunnelHandler_Unauthorized(t *testing.T) {
 	pub, priv, _ := lecrypto.GenerateKeyPair()
 	clientIP := "203.0.113.42"
-	cfv := NewCloudflareIPValidator(true, nil)
 	fwd := newTestEchoForwarder()
-	handler := NewTunnelHandler(pub, cfv, NewIPLimiter(IPLimiterMaxPerIP), fwd, nil)
+	handler := NewTunnelHandler(pub, NewIPLimiter(IPLimiterMaxPerIP), fwd, nil)
 
 	validToken, _ := CreateSessionToken(priv, clientIP)
 	expiredToken := forgeExpiredToken(t, priv, clientIP)
@@ -381,10 +379,9 @@ func TestTunnelHandler_MethodNotAllowed(t *testing.T) {
 func TestTunnelHandler_PerIPLimit(t *testing.T) {
 	pub, priv, _ := lecrypto.GenerateKeyPair()
 	clientIP := "203.0.113.42"
-	cfv := NewCloudflareIPValidator(true, nil)
 	fwd := newTestEchoForwarder()
 	ipLimiter := NewIPLimiter(1) // max 1 per IP
-	handler := NewTunnelHandler(pub, cfv, ipLimiter, fwd, nil)
+	handler := NewTunnelHandler(pub, ipLimiter, fwd, nil)
 
 	token, _ := CreateSessionToken(priv, clientIP)
 
@@ -455,10 +452,9 @@ func TestTunnelHandler_ContextCancellation(t *testing.T) {
 func TestTunnelHandler_NoIPInLogs(t *testing.T) {
 	pub, priv, _ := lecrypto.GenerateKeyPair()
 	clientIP := "203.0.113.42"
-	cfv := NewCloudflareIPValidator(true, nil)
 	fwd := newTestEchoForwarder()
 	logBuf := &safeLogBuf{}
-	handler := NewTunnelHandler(pub, cfv, NewIPLimiter(IPLimiterMaxPerIP), fwd, logBuf.Write)
+	handler := NewTunnelHandler(pub, NewIPLimiter(IPLimiterMaxPerIP), fwd, logBuf.Write)
 
 	validToken, _ := CreateSessionToken(priv, clientIP)
 	expiredToken := forgeExpiredToken(t, priv, clientIP)
@@ -509,7 +505,7 @@ func TestTunnelHandler_NoIPInLogs(t *testing.T) {
 	// Check log output for IP leaks.
 	logs := logBuf.String()
 
-	forbidden := []string{clientIP, "198.51.100.99", "CF-Connecting-IP"}
+	forbidden := []string{clientIP, "198.51.100.99"}
 	for _, s := range forbidden {
 		if strings.Contains(logs, s) {
 			t.Errorf("log contains forbidden string %q: %s", s, logs)
@@ -543,28 +539,6 @@ func TestTunnelHandler_GlobalLimit503(t *testing.T) {
 	}
 }
 
-// --- H2: cfValidator nil → 401 ---
-
-func TestTunnelHandler_NilCFValidator(t *testing.T) {
-	pub, priv, _ := lecrypto.GenerateKeyPair()
-	clientIP := "203.0.113.42"
-	token, _ := CreateSessionToken(priv, clientIP)
-	fwd := newTestEchoForwarder()
-	// cfValidator = nil → should reject
-	handler := NewTunnelHandler(pub, nil, NewIPLimiter(IPLimiterMaxPerIP), fwd, nil)
-
-	req := httptest.NewRequest(http.MethodPost, "/tunnel", bytes.NewReader(makeFrame([]byte{0x01})))
-	req.Header.Set("Authorization", "Bearer "+token)
-	req.RemoteAddr = clientIP + ":12345"
-	rec := httptest.NewRecorder()
-
-	handler.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusUnauthorized {
-		t.Errorf("status = %d, want 401 when cfValidator is nil", rec.Code)
-	}
-}
-
 // --- Constructor panics ---
 
 func TestNewTunnelHandler_PanicsOnNilKey(t *testing.T) {
@@ -573,7 +547,7 @@ func TestNewTunnelHandler_PanicsOnNilKey(t *testing.T) {
 			t.Error("expected panic for nil pubKey")
 		}
 	}()
-	NewTunnelHandler(nil, nil, nil, newTestEchoForwarder(), nil)
+	NewTunnelHandler(nil, nil, newTestEchoForwarder(), nil)
 }
 
 func TestNewTunnelHandler_PanicsOnNilForwarder(t *testing.T) {
@@ -583,5 +557,5 @@ func TestNewTunnelHandler_PanicsOnNilForwarder(t *testing.T) {
 			t.Error("expected panic for nil forwarder")
 		}
 	}()
-	NewTunnelHandler(pub, nil, nil, nil, nil)
+	NewTunnelHandler(pub, nil, nil, nil)
 }

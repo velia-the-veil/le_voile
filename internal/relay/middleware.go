@@ -1,8 +1,8 @@
 package relay
 
 import (
+	"net"
 	"net/http"
-	"strings"
 )
 
 // LimitMiddleware wraps an http.Handler with connection limiting.
@@ -23,13 +23,12 @@ func LimitMiddleware(limiter *Limiter, next http.Handler) http.Handler {
 // not be able to exhaust the global pool — most notably /verify, where each
 // request triggers an Ed25519 sign that is cheap but non-trivial under load.
 //
-// The client IP is taken from CF-Connecting-IP when present (Cloudflare
-// front) and falls back to r.RemoteAddr. Returns HTTP 429 when saturated,
-// distinct from the global LimitMiddleware's 503 so monitoring can tell
-// "one noisy client" apart from "relay overall overloaded".
+// Returns HTTP 429 when saturated, distinct from the global LimitMiddleware's
+// 503 so monitoring can tell "one noisy client" apart from "relay overall
+// overloaded".
 func IPLimitMiddleware(limiter *IPLimiter, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		ip := clientIPForLimiter(r)
+		ip := clientIP(r)
 		if ip == "" {
 			// No usable source IP (e.g. tests): skip the per-IP limiter rather
 			// than fail-closed. The global limiter still protects the relay.
@@ -45,25 +44,17 @@ func IPLimitMiddleware(limiter *IPLimiter, next http.Handler) http.Handler {
 	})
 }
 
-// clientIPForLimiter returns the best-available client IP for rate-limiting.
-// Prefers CF-Connecting-IP (trusted only after CFSourceMiddleware has gated
-// the request), then X-Forwarded-For's first hop, then RemoteAddr minus port.
-func clientIPForLimiter(r *http.Request) string {
-	if v := strings.TrimSpace(r.Header.Get("CF-Connecting-IP")); v != "" {
-		return v
-	}
-	if v := strings.TrimSpace(r.Header.Get("X-Forwarded-For")); v != "" {
-		if comma := strings.IndexByte(v, ','); comma >= 0 {
-			v = v[:comma]
-		}
-		return strings.TrimSpace(v)
-	}
+// clientIP returns the client IP from the request's RemoteAddr (host portion,
+// port stripped). The relay is reached directly by clients (DNS-only origin,
+// no CDN fronting), so spoofable hop headers like X-Forwarded-For and
+// CF-Connecting-IP are NOT consulted — trusting them on a direct-to-origin
+// path would let any client impersonate another and hijack its session token.
+func clientIP(r *http.Request) string {
 	if r.RemoteAddr == "" {
 		return ""
 	}
-	// net.SplitHostPort fails on IPs without port; keep it simple.
-	if colon := strings.LastIndexByte(r.RemoteAddr, ':'); colon >= 0 {
-		return r.RemoteAddr[:colon]
+	if h, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
+		return h
 	}
 	return r.RemoteAddr
 }
