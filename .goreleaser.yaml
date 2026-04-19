@@ -251,7 +251,14 @@ signs:
 # Story 7.4 — clé publique release + PEM uploadés comme assets de la GitHub Release.
 # Les utilisateurs peuvent télécharger la clé pour vérifier via openssl ou
 # levoile-verify sans dépendre du contenu du repo.
+#
+# Fix C7 (audit sécurité) : install.sh du relais VPS est aussi inclus dans
+# les release assets. Co-uploadé avec install.sh.sig (signé par le hook
+# ci-dessous via artifacts: all). L'opérateur de relais doit curl les deux,
+# vérifier la sig avec levoile-verify, puis exécuter — remplace le flow
+# précédent "scp + ssh sudo bash" vulnérable au MITM.
 release:
   extra_files:
     - glob: docs/keys/levoile-release.pub
     - glob: docs/keys/levoile-release.pub.pem
+    - glob: deploy/install.sh

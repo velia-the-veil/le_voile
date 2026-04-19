@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"sort"
 	"time"
 
@@ -17,6 +18,43 @@ import (
 	"github.com/velia-the-veil/le_voile/internal/tunnel"
 	"github.com/velia-the-veil/le_voile/internal/uiwatchdog"
 )
+
+// mutatingActions lists every IPC action that writes state — config, service
+// lifecycle, or firewall policy. Used by the strict-auth gate (fix C3 audit
+// sécurité) so operators can flip one environment variable to require a
+// verified token on every mutation and reject the legacy empty-Auth path
+// that previously let any same-user process issue commands.
+var mutatingActions = map[string]struct{}{
+	ipc.ActionConnect:           {},
+	ipc.ActionDisconnect:        {},
+	ipc.ActionQuit:              {},
+	ipc.ActionUIDisconnect:      {},
+	ipc.ActionSetAutoStart:      {},
+	ipc.ActionSetBlocklist:      {},
+	ipc.ActionSetHTTPProxy:      {},
+	ipc.ActionSelectCountry:     {},
+	ipc.ActionRetryCaptive:      {},
+	ipc.ActionSetAllowIPv6Leak:  {},
+	ipc.ActionSetKillSwitchMode: {},
+	ipc.ActionTriggerRecovery:   {},
+}
+
+// isMutatingAction reports whether the given action touches persistent or
+// runtime-authoritative state. Used exclusively by the strict-auth gate.
+func isMutatingAction(a string) bool {
+	_, ok := mutatingActions[a]
+	return ok
+}
+
+// strictIPCAuthRequired returns true when LEVOILE_IPC_STRICT_AUTH=1 is set.
+// Flipping this requires the UI build to ship ui.token handling (see
+// SECURITY.md §C3 follow-up). Off by default so existing installs are not
+// broken by a service upgrade alone; once the fleet is on a UI version that
+// authenticates, operators flip the flag to close the window where an
+// empty-Auth same-user process can issue mutating commands.
+func strictIPCAuthRequired() bool {
+	return os.Getenv("LEVOILE_IPC_STRICT_AUTH") == "1"
+}
 
 // uiSupervisionFromSnapshot maps the in-process uiwatchdog snapshot to
 // the wire-format struct used by GetStatus / GetUISupervision. RFC 3339
@@ -81,6 +119,25 @@ type Options struct {
 
 // Handle dispatches an IPC request to the appropriate service component.
 func Handle(prg *svc.Program, req ipc.Request, opts Options) ipc.Response {
+	// Fix C3 (audit sécurité) — authentication telemetry and opt-in strict
+	// gate for mutating actions. The legacy path accepts req.Auth == "" as a
+	// trusted "UI source" because the UI and malicious same-user processes
+	// are indistinguishable on Windows (same DACL, same pipe). We cannot
+	// close that window architecturally without a DPAPI-bound token, but we
+	// can:
+	//   (1) log every empty-Auth mutating call so operators get a forensic
+	//       trail if malware starts driving the service,
+	//   (2) reject those calls entirely when the operator sets
+	//       LEVOILE_IPC_STRICT_AUTH=1 — the expected posture once the UI
+	//       build that reads a per-machine ui.token is rolled out.
+	if isMutatingAction(req.Action) && req.Auth == "" {
+		fmt.Fprintf(os.Stderr, "SECURITY AUDIT: mutating IPC without req.Auth action=%s strict=%v\n",
+			req.Action, strictIPCAuthRequired())
+		if strictIPCAuthRequired() {
+			return ipc.Response{Status: ipc.StatusError, Error: "auth_required"}
+		}
+	}
+
 	// Story 7.5 / NFR9j — when startup integrity verification failed, refuse
 	// any mutating action. GetStatus stays open so the UI can fetch the
 	// integrity_failed flag and render the recovery banner. Read-only probes

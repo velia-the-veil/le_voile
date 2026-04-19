@@ -2,6 +2,8 @@ package relay
 
 import (
 	"context"
+	"net"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -13,6 +15,15 @@ const (
 
 	// HourlyQuotaBytes is the per-IP hourly download quota (1 GiB).
 	HourlyQuotaBytes int64 = 1 * 1024 * 1024 * 1024
+
+	// SubnetQuotaMultiplier scales the per-IP quota up to the aggregate cap
+	// applied to a whole /24 (IPv4) or /64 (IPv6) prefix. Mitigates H4
+	// (audit sécurité) : an attacker rotating addresses inside a single
+	// subnet hits the subnet cap long before each individual IP's cap,
+	// so the amplification factor is bounded. Set to 4 so a household or
+	// small office NAT'd behind a single public IP — or a cell carrier
+	// CG-NAT pool — still has legitimate headroom.
+	SubnetQuotaMultiplier int64 = 4
 
 	// ThrottleBytesPerSec is the throttled rate once quota is exceeded (5 Mbps = 625 KB/s).
 	ThrottleBytesPerSec int64 = 625_000
@@ -135,6 +146,12 @@ func (bl *BandwidthLimiter) CanOpenTunnel(ip string) bool {
 // AccountAndThrottle counts n downloaded bytes for the given IP and, if any
 // quota is exceeded, sleeps to enforce the throttle rate. The sleep respects
 // context cancellation so the relay goroutine can exit promptly.
+//
+// The counter is applied twice: once keyed by the exact client IP (existing
+// behaviour) and once keyed by the /24 (IPv4) or /64 (IPv6) subnet prefix
+// with a SubnetQuotaMultiplier cap. The subnet bucket is what defends
+// against an attacker rotating addresses inside a single range to
+// multiply throughput (fix H4 audit sécurité).
 func (bl *BandwidthLimiter) AccountAndThrottle(ctx context.Context, ip string, n int) {
 	dailyExceeded, hourlyExceeded := bl.addBytes(ip, n)
 	if hourlyExceeded {
@@ -147,6 +164,17 @@ func (bl *BandwidthLimiter) AccountAndThrottle(ctx context.Context, ip string, n
 			}
 		}
 	}
+
+	// Subnet-level aggregate — bypasses individual-IP limits to catch
+	// rotation attacks. Silent on individual per-IP transitions so we
+	// don't double-count metrics.
+	subnetKey := subnetPrefix(ip)
+	if subnetKey != "" && subnetKey != ip {
+		sDaily, sHourly := bl.addBytesScaled(subnetKey, n, SubnetQuotaMultiplier)
+		dailyExceeded = dailyExceeded || sDaily
+		hourlyExceeded = hourlyExceeded || sHourly
+	}
+
 	if dailyExceeded || hourlyExceeded {
 		sleepDuration := time.Duration(n) * time.Second / time.Duration(ThrottleBytesPerSec)
 		select {
@@ -154,6 +182,65 @@ func (bl *BandwidthLimiter) AccountAndThrottle(ctx context.Context, ip string, n
 		case <-ctx.Done():
 		}
 	}
+}
+
+// addBytesScaled is addBytes with an effective quota multiplied by scale.
+// Used for the subnet-aggregate bucket so legitimate multi-user NAT stays
+// under the cap while rotation attacks still hit it.
+func (bl *BandwidthLimiter) addBytesScaled(key string, n int, scale int64) (bool, bool) {
+	val, _ := bl.ips.LoadOrStore(key, &bandwidthState{})
+	st := val.(*bandwidthState)
+	st.markedForDeletion.Store(false)
+	st.lastSeen.Store(time.Now().Unix())
+
+	today := currentDayUnix()
+	if st.dayTimestamp.Load() < today {
+		st.resetMu.Lock()
+		if st.dayTimestamp.Load() < today {
+			st.bytesUsed.Store(0)
+			st.dayTimestamp.Store(today)
+		}
+		st.resetMu.Unlock()
+	}
+	thisHour := currentHourUnix()
+	if st.hourTimestamp.Load() < thisHour {
+		st.resetMuHour.Lock()
+		if st.hourTimestamp.Load() < thisHour {
+			st.hourlyBytesUsed.Store(0)
+			st.hourlyThrottled.Store(false)
+			st.hourTimestamp.Store(thisHour)
+		}
+		st.resetMuHour.Unlock()
+	}
+
+	dailyTotal := st.bytesUsed.Add(int64(n))
+	hourlyTotal := st.hourlyBytesUsed.Add(int64(n))
+	return dailyTotal >= bl.quota*scale, hourlyTotal >= bl.hourlyQuota*scale
+}
+
+// subnetPrefix returns the /24 (IPv4) or /64 (IPv6) prefix string for use as
+// a quota key. Empty string on parse failure. The prefix form is distinct
+// from bare IPs (contains "/") so the subnet bucket never collides with an
+// individual-IP bucket in the shared sync.Map.
+func subnetPrefix(ip string) string {
+	// Strip any bracketed-IPv6 or zone-id suffix.
+	clean := strings.TrimSpace(ip)
+	if strings.HasPrefix(clean, "[") {
+		if end := strings.IndexByte(clean, ']'); end > 0 {
+			clean = clean[1:end]
+		}
+	}
+	if pct := strings.IndexByte(clean, '%'); pct >= 0 {
+		clean = clean[:pct]
+	}
+	parsed := net.ParseIP(clean)
+	if parsed == nil {
+		return ""
+	}
+	if v4 := parsed.To4(); v4 != nil {
+		return v4.Mask(net.CIDRMask(24, 32)).String() + "/24"
+	}
+	return parsed.Mask(net.CIDRMask(64, 128)).String() + "/64"
 }
 
 // StartCleanup runs a goroutine that periodically cleans up idle entries.

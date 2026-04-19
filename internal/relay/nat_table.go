@@ -2,6 +2,8 @@ package relay
 
 import (
 	"context"
+	cryptorand "crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -11,6 +13,15 @@ import (
 	"sync/atomic"
 	"time"
 )
+
+// randomHex returns 2n hex characters backed by crypto/rand.
+func randomHex(n int) (string, error) {
+	buf := make([]byte, n)
+	if _, err := cryptorand.Read(buf); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(buf), nil
+}
 
 // NAT TTL constants (NFR3).
 const (
@@ -169,9 +180,23 @@ func NewNAT(relayIP net.IP, opts ...NATOption) *NAT {
 	return n
 }
 
-// sessionKey generates a unique key for a TunnelSession.
+// sessionKey returns the authoritative key for a TunnelSession. Prefers the
+// cryptographically random ID populated by tunnel_handler (fix H5) and falls
+// back to the legacy IPHash@UnixNano format only when ID is empty — kept
+// for test code that builds TunnelSession literals and does not care about
+// hijack resistance.
 func sessionKey(s TunnelSession) SessionID {
+	if s.ID != "" {
+		return s.ID
+	}
 	return fmt.Sprintf("%s@%d", s.ClientIPHash, s.OpenedAt.UnixNano())
+}
+
+// newSessionID mints a fresh 32-hex session identifier backed by
+// crypto/rand. Callers MUST treat a non-nil error as fatal for the
+// current tunnel setup — a weak ID trivially re-opens H5.
+func newSessionID() (string, error) {
+	return randomHex(16) // 16 bytes = 32 hex chars, 128 bits entropy
 }
 
 // tupleKey generates a canonical key for the NAT entry lookup.

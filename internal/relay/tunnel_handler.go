@@ -25,6 +25,14 @@ const tunnelIdleTimeout = 90 * time.Second
 
 // TunnelSession holds per-stream metadata. No plaintext IP is stored (NFR20).
 type TunnelSession struct {
+	// ID is a cryptographically random 32-hex identifier minted per tunnel
+	// stream. Acts as the authoritative session key for NAT lookups and
+	// the reverse-channel dispatcher: two clients cannot collide, and an
+	// attacker cannot guess another client's ID to hijack their forward
+	// path (fix H5 audit sécurité — before, sessionKey = IPHash@UnixNano
+	// with ~30 bits of timestamp entropy was brute-forceable within a
+	// second of the victim's connection).
+	ID           string
 	ClientIPHash string
 	OpenedAt     time.Time
 }
@@ -168,7 +176,16 @@ func (h *TunnelHandler) serveTunnel(w http.ResponseWriter, r *http.Request, payl
 		f.Flush()
 	}
 
+	sid, sidErr := newSessionID()
+	if sidErr != nil {
+		// crypto/rand failure is effectively impossible; refuse to open
+		// a session with a weak ID rather than fall back to a predictable
+		// format. Client will see the POST close and retry.
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
 	session := TunnelSession{
+		ID:           sid,
 		ClientIPHash: payload.IPHash,
 		OpenedAt:     time.Now(),
 	}

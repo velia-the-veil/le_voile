@@ -1,7 +1,27 @@
 #!/bin/bash
 # Le Voile - Script de deploiement du relais sur VPS
 #
-# Usage:
+# ATTENTION (fix C7 audit securite 2026-04) :
+# Ce script est publie comme asset de release GitHub avec sa signature
+# detachee Ed25519 (install.sh.sig). Avant de l'executer en prod, le
+# verifier hors-band :
+#
+#   TAG=vX.Y.Z
+#   BASE=https://github.com/velia-the-veil/le_voile/releases/download/${TAG}
+#   curl -fLO ${BASE}/install.sh
+#   curl -fLO ${BASE}/install.sh.sig
+#   curl -fLO ${BASE}/levoile-release.pub
+#   # Outil de verification publie dans la meme release :
+#   curl -fLO ${BASE}/levoile-verify-linux-amd64
+#   chmod +x levoile-verify-linux-amd64
+#   ./levoile-verify-linux-amd64 -pubkey levoile-release.pub -file install.sh -sig install.sh.sig
+#   # Si "signature OK", alors :
+#   sudo bash ./install.sh
+#
+# Ne jamais executer via "curl | bash" direct sans la verif signature —
+# un MITM sur le VPS ou sur GitHub.com romprait toute la chaine d'integrite.
+#
+# Usage ancien (encore valide apres verif) :
 #   scp relay cert.pem key.pem signing.key relay-registry.json deploy/install.sh deploy/levoile-relay.service user@vps:/tmp/
 #   ssh user@vps 'sudo bash /tmp/install.sh'
 #

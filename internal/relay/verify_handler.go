@@ -34,7 +34,20 @@ type VerifyResponse struct {
 }
 
 // SessionTokenPayload is the JSON structure inside a session token.
+//
+// Nonce (fix C4 audit sécurité, 2026-04) is a fresh 16-byte random value
+// minted by the relay at every /verify call. It does not prevent replay
+// by itself — the whole token is still valid for TTL — but it guarantees
+// that two tokens issued for the same client IP are distinct artefacts,
+// giving us:
+//  1. A stable primary key for future server-side replay caches (LRU of
+//     seen nonces until Issued+TTL elapses).
+//  2. Tamper detection: an attacker who captures a token and tries to
+//     splice a new Issued/TTL cannot do so without invalidating the
+//     Ed25519 signature, because the nonce is covered by the signature
+//     and its entropy prevents cheaply recomputing the payload.
 type SessionTokenPayload struct {
+	Nonce  string `json:"nonce"`
 	IPHash string `json:"ip_hash"`
 	Issued int64  `json:"issued"`
 	TTL    int64  `json:"ttl"`
@@ -127,7 +140,12 @@ func (h *VerifyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // CreateSessionToken creates a signed session token for the given client IP.
 func CreateSessionToken(signingKey ed25519.PrivateKey, clientIP string) (string, error) {
 	ipHash := fmt.Sprintf("%x", sha256.Sum256([]byte(clientIP)))
+	nonce, err := tokenNonce()
+	if err != nil {
+		return "", fmt.Errorf("session token: nonce: %w", err)
+	}
 	payload := SessionTokenPayload{
+		Nonce:  nonce,
 		IPHash: ipHash,
 		Issued: time.Now().Unix(),
 		TTL:    SessionTokenTTL,
@@ -143,6 +161,12 @@ func CreateSessionToken(signingKey ed25519.PrivateKey, clientIP string) (string,
 	}
 	sigB64 := base64.RawURLEncoding.EncodeToString(sig)
 	return payloadB64 + "." + sigB64, nil
+}
+
+// tokenNonce returns a 16-byte random value base64-encoded without padding,
+// suitable for use as SessionTokenPayload.Nonce.
+func tokenNonce() (string, error) {
+	return randomHex(16)
 }
 
 // VerifySessionToken verifies a session token signature and returns the payload.
