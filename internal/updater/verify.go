@@ -5,7 +5,6 @@ import (
 	"crypto/ed25519"
 	"crypto/sha256"
 	"crypto/subtle"
-	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -61,7 +60,13 @@ func (v *Verifier) VerifyChecksum(binaryPath, checksumPath string) error {
 }
 
 // VerifySignature verifies that checksums.txt is signed with the relay's Ed25519 key.
-// The signature file contains the base64-encoded Ed25519 signature.
+//
+// The signature file contains the RAW 64-byte Ed25519 signature, matching
+// the format produced by cmd/signpkg and accepted by cmd/verifypkg (the
+// user-facing verification tool). A historical version of this function
+// decoded base64 from the sidecar which diverged from the signpkg output
+// and silently broke auto-update until the next release was cut — fixed.
+//
 // NFR9c: the underlying ed25519.Verify (Go stdlib) is constant-time by construction.
 func (v *Verifier) VerifySignature(checksumPath, signaturePath string) error {
 	checksumData, err := os.ReadFile(checksumPath)
@@ -69,14 +74,17 @@ func (v *Verifier) VerifySignature(checksumPath, signaturePath string) error {
 		return fmt.Errorf("updater: verify signature: read checksums: %w", err)
 	}
 
-	sigData, err := os.ReadFile(signaturePath)
+	sigBytes, err := os.ReadFile(signaturePath)
 	if err != nil {
 		return fmt.Errorf("updater: verify signature: read signature: %w", err)
 	}
 
-	sigBytes, err := base64.StdEncoding.DecodeString(strings.TrimSpace(string(sigData)))
-	if err != nil {
-		return fmt.Errorf("updater: verify signature: decode: %w", err)
+	// Reject obviously-wrong sizes up front with a clear error. A legitimate
+	// Ed25519 signature is exactly 64 bytes per RFC 8032; anything else
+	// points to file corruption, a base64-encoded sig from a broken signer,
+	// or an entirely different file shipped by mistake.
+	if len(sigBytes) != ed25519.SignatureSize {
+		return fmt.Errorf("updater: verify signature: expected 64 bytes, got %d", len(sigBytes))
 	}
 
 	if !crypto.Verify(v.relayPubKey, checksumData, sigBytes) {

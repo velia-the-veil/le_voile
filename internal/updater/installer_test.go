@@ -3,7 +3,6 @@ package updater
 import (
 	"context"
 	"crypto/sha256"
-	"encoding/base64"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -135,9 +134,8 @@ func (e *testInstallerEnv) stageBinary(t *testing.T, content, version string) *S
 	if err != nil {
 		t.Fatalf("sign: %v", err)
 	}
-	sigBase64 := base64.StdEncoding.EncodeToString(sig)
 	sigPath := filepath.Join(e.stagingDir, "checksums.txt.sig")
-	if err := os.WriteFile(sigPath, []byte(sigBase64), 0o600); err != nil {
+	if err := os.WriteFile(sigPath, sig, 0o600); err != nil {
 		t.Fatalf("write signature: %v", err)
 	}
 
@@ -322,8 +320,7 @@ func TestInstaller_Install_CopyFailure_BackupRestored(t *testing.T) {
 	if err != nil {
 		t.Fatalf("sign: %v", err)
 	}
-	sigBase64 := base64.StdEncoding.EncodeToString(sig)
-	os.WriteFile(staged.SignaturePath, []byte(sigBase64), 0o600)
+	os.WriteFile(staged.SignaturePath, sig, 0o600)
 
 	err = inst.Install(context.Background(), staged)
 	if err == nil {

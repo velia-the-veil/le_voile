@@ -2,7 +2,6 @@ package updater
 
 import (
 	"crypto/sha256"
-	"encoding/base64"
 	"errors"
 	"fmt"
 	"os"
@@ -30,7 +29,10 @@ func testVerifier(t *testing.T) (*Verifier, func(data []byte) string) {
 		if err != nil {
 			t.Fatalf("sign: %v", err)
 		}
-		return base64.StdEncoding.EncodeToString(sig)
+		// Raw bytes, matching the on-wire format produced by cmd/signpkg and
+		// accepted by cmd/verifypkg. VerifySignature reads the .sig sidecar
+		// as raw 64 bytes (no base64).
+		return string(sig)
 	}
 
 	return v, signFn
@@ -152,8 +154,8 @@ func TestVerifier_VerifySignature_Invalid(t *testing.T) {
 	dir := t.TempDir()
 
 	checksumPath := writeTestFile(t, dir, "checksums.txt", "checksum content")
-	// Invalid signature (valid base64 but wrong signature)
-	sigPath := writeTestFile(t, dir, "checksums.txt.sig", base64.StdEncoding.EncodeToString(make([]byte, 64)))
+	// Invalid signature (correct 64-byte length but wrong content — all zeros)
+	sigPath := writeTestFile(t, dir, "checksums.txt.sig", string(make([]byte, 64)))
 
 	err := v.VerifySignature(checksumPath, sigPath)
 	if !errors.Is(err, ErrSignatureInvalid) {
@@ -248,7 +250,7 @@ func TestVerifier_VerifyStagedUpdate_SignatureFail_FilesRemoved(t *testing.T) {
 	checksumPath := writeTestFile(t, dir, "checksums.txt", checksumContent)
 
 	// Wrong signature
-	sigPath := writeTestFile(t, dir, "checksums.txt.sig", base64.StdEncoding.EncodeToString(make([]byte, 64)))
+	sigPath := writeTestFile(t, dir, "checksums.txt.sig", string(make([]byte, 64)))
 
 	staged := &StagedUpdate{
 		BinaryPath:    binaryPath,

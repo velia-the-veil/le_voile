@@ -3,7 +3,6 @@ package updater
 import (
 	"context"
 	"crypto/sha256"
-	"encoding/base64"
 	"fmt"
 	"io"
 	"net/http"
@@ -48,7 +47,7 @@ func setupTestUpdaterEnv(t *testing.T, binaryContent string, version string) *te
 	if err != nil {
 		t.Fatalf("sign: %v", err)
 	}
-	sigBase64 := base64.StdEncoding.EncodeToString(sig)
+	sigBytes := sig
 
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		path := r.URL.Path
@@ -66,7 +65,7 @@ func setupTestUpdaterEnv(t *testing.T, binaryContent string, version string) *te
 		case strings.HasSuffix(path, binaryName):
 			w.Write([]byte(binaryContent))
 		case strings.HasSuffix(path, "checksums.txt.sig"):
-			w.Write([]byte(sigBase64))
+			w.Write(sigBytes)
 		case strings.HasSuffix(path, "checksums.txt"):
 			w.Write([]byte(checksumContent))
 		default:
@@ -515,7 +514,7 @@ func TestUpdater_CheckAndDownload_VerificationFail(t *testing.T) {
 		case strings.HasSuffix(path, binaryName):
 			w.Write([]byte("the binary"))
 		case strings.HasSuffix(path, "checksums.txt.sig"):
-			w.Write([]byte(base64.StdEncoding.EncodeToString(make([]byte, 64))))
+			w.Write(make([]byte, 64))
 		case strings.HasSuffix(path, "checksums.txt"):
 			// Wrong checksum
 			w.Write([]byte("0000000000000000000000000000000000000000000000000000000000000000  " + binaryName + "\n"))
