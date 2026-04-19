@@ -41,11 +41,23 @@ if [[ ! -f "${LEVOILE_SIGNING_KEY_PATH}" ]]; then
   fail "signing key not found: ${LEVOILE_SIGNING_KEY_PATH}
          generate one with: go run ./cmd/genkey -out \"\$HOME/.levoile/signing\" -pem"
 fi
-PERM="$(stat -c %a "${LEVOILE_SIGNING_KEY_PATH}" 2>/dev/null || stat -f %Lp "${LEVOILE_SIGNING_KEY_PATH}" 2>/dev/null || echo "unknown")"
-case "${PERM}" in
-  600|0600) log "signing key mode OK (0600)" ;;
-  unknown)  log "warning: cannot stat permissions — verify ACLs manually (Windows?)" ;;
-  *)        fail "signing key must be mode 0600 (got ${PERM})" ;;
+# On MSYS/MINGW/Cygwin (git bash on Windows), stat reports POSIX perms
+# synthesized from NTFS ACLs and does not honour chmod — the ACL is what
+# matters (verified out-of-band via icacls). Skip the numeric check there
+# and only warn.
+OSTYPE_LOWER="$(uname -s | tr '[:upper:]' '[:lower:]')"
+case "${OSTYPE_LOWER}" in
+  *mingw*|*msys*|*cygwin*)
+    log "running on ${OSTYPE_LOWER} — POSIX mode unreliable, trusting NTFS ACL (verify with icacls if unsure)"
+    ;;
+  *)
+    PERM="$(stat -c %a "${LEVOILE_SIGNING_KEY_PATH}" 2>/dev/null || stat -f %Lp "${LEVOILE_SIGNING_KEY_PATH}" 2>/dev/null || echo "unknown")"
+    case "${PERM}" in
+      600|0600) log "signing key mode OK (0600)" ;;
+      unknown)  log "warning: cannot stat permissions — verify ACLs manually" ;;
+      *)        fail "signing key must be mode 0600 (got ${PERM})" ;;
+    esac
+    ;;
 esac
 
 # 4. Tests green.
