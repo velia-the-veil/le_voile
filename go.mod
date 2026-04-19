@@ -2,6 +2,8 @@ module github.com/velia-the-veil/le_voile
 
 go 1.26
 
+toolchain go1.26.2
+
 require (
 	fyne.io/systray v1.12.0
 	github.com/BurntSushi/toml v1.5.0
