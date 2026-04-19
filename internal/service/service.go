@@ -1893,6 +1893,15 @@ func (p *Program) tryInstallStagedUpdate(ctx context.Context) {
 		fmt.Fprintf(serviceStderr, "service: write rollback state: %v\n", err)
 	}
 
+	// Sync the in-memory version with the binary we just put on disk. The
+	// running image was loaded from the *previous* binary, so without this
+	// assignment CurrentVersion() keeps reporting the pre-swap version for
+	// the entire life of this process — which makes the updater cycle see
+	// every subsequent CheckLatest of the just-installed release as "newer"
+	// and re-download it in a loop until the next full restart. The fix is
+	// scoped to this package var only; no persistent state depends on it.
+	updater.Version = staged.Version
+
 	fmt.Fprintf(serviceStderr, "updater: installed v%s\n", staged.Version)
 	p.updateMu.Lock()
 	p.installedVersion = staged.Version

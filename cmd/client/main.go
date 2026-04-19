@@ -306,7 +306,13 @@ func main() {
 	relayDomainFlag := flag.String("relay-domain", "", "relay domain name (overrides config file)")
 	relayPubKeyFlag := flag.String("relay-pubkey", "", "relay Ed25519 public key (overrides config file)")
 	insecureFlag := flag.Bool("insecure", false, "skip TLS certificate verification (development only)")
+	versionFlag := flag.Bool("version", false, "print version info and exit")
 	flag.Parse()
+
+	if *versionFlag {
+		fmt.Printf("main.version=%q updater.Version=%q CurrentVersion()=%q\n", version, updater.Version, updater.CurrentVersion())
+		os.Exit(0)
+	}
 
 	// Handle service management sub-commands first (no relay config needed).
 	args := flag.Args()
