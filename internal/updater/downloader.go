@@ -22,9 +22,14 @@ const (
 )
 
 // allowedRedirectHosts are hosts that GitHub legitimately redirects release downloads to.
+// As of 2026-04 GitHub routes release assets through release-assets.githubusercontent.com
+// (replacing the older objects.githubusercontent.com path). Both are kept whitelisted
+// because GitHub may re-route between CDNs without notice — removing one would break
+// auto-update silently the next time the backend flips.
 var allowedRedirectHosts = map[string]bool{
-	"github.com":                     true,
-	"objects.githubusercontent.com":  true,
+	"github.com":                           true,
+	"objects.githubusercontent.com":        true,
+	"release-assets.githubusercontent.com": true,
 }
 
 // StagedUpdate holds paths to downloaded and verified update files.
