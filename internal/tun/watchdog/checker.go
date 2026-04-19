@@ -85,6 +85,16 @@ func NewNetChecker(cfg CheckerConfig) (*NetChecker, error) {
 //   - absente → StatusMissing
 //   - down ou MTU ≠ ExpectedMTU → StatusInvalid (AC4, MTU strict == 1420)
 //   - sinon → StatusOK
+//
+// NOTE Windows/Wintun : la stdlib lit le MTU NDIS exposé par le driver
+// Wintun, qui reste fixé à 65535 (taille max théorique d'un frame) quelle
+// que soit la valeur passée à `wintun.CreateAdapter(...).SetMTU()`. Le MTU
+// « applicatif » de 1420 est géré côté framing tunnel uniquement, pas côté
+// NDIS. Comparer les deux produisait un false positive permanent → watchdog
+// déclenchait RecoverFromAnomaly toutes les 3s. Sur Windows on skip donc le
+// strict MTU compare — la détection d'altération reste couverte par
+// StatusMissing (interface supprimée) et FlagUp (interface désactivée).
+// Sur Linux/TUN le MTU NDIS = MTU tunnel, le check reste strict.
 func (c *NetChecker) Check(ctx context.Context) (Status, error) {
 	if err := ctx.Err(); err != nil {
 		return StatusMissing, err
@@ -99,7 +109,7 @@ func (c *NetChecker) Check(ctx context.Context) (Status, error) {
 	if iface.Flags&net.FlagUp == 0 {
 		return StatusInvalid, nil
 	}
-	if iface.MTU != c.cfg.ExpectedMTU {
+	if !mtuMatches(iface.MTU, c.cfg.ExpectedMTU) {
 		return StatusInvalid, nil
 	}
 	return StatusOK, nil
