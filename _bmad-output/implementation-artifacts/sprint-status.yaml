@@ -81,7 +81,7 @@ development_status:
 
   # Epic 4: Decouverte & Failover Multi-Pays
   # Largement existant (issu de l'ancien Epic 9). 4.2 a enrichir avec DoH bootstrap (NFR9i).
-  epic-4: in-progress
+  epic-4: done
   4-1-endpoint-well-known-relay-registry-json-signe-ed25519: done
   4-2-bootstrap-via-relais-hardcode-au-premier-lancement: done
   4-3-selection-relais-par-pays-avec-round-robin-intra-pays: done
@@ -91,7 +91,7 @@ development_status:
   # Epic 5: Interface Desktop Cross-Platform (Tray + Webview)
   # Stories 5.1-5.5 et 5.8 substantiellement existantes (ancien Epic 10).
   # 5.6 (fallback service down), 5.7 (supervision UI Linux), 5.9 (mode degrade) = NOUVEAU.
-  epic-5: in-progress
+  epic-5: done
   5-1-binaire-ui-unique-systray-webview-serveur-http-local-avec-affichage-de-statut: done
   5-2-affichage-du-pays-selectionne-du-relais-actif-et-de-l-ip-visible: done
   5-3-selecteur-de-pays-avec-drapeaux-et-nombre-de-relais: done
@@ -105,7 +105,7 @@ development_status:
 
   # Epic 6: Validation Anti-Fuite (STUN + Watchdog TUN)
   # 6.1 existant (STUN Binding). 6.2 refactor (role redefini : validation TUN au lieu de relay STUN). 6.3 partiel.
-  epic-6: in-progress
+  epic-6: done
   6-1-emission-de-stun-binding-requests-via-la-tun: done
   6-2-comparaison-ip-stun-vs-ip-tunnel-attendue: done
   6-3-reconnexion-automatique-alerte-ui-log-en-cas-d-anomalie: done
@@ -113,7 +113,7 @@ development_status:
 
   # Epic 7: Distribution & Installation Cross-Platform Signee
   # 7.1 (NSIS Windows) et 7.5 (config TOML) existants. 7.2/7.3/7.4 = NOUVEAU (packaging Linux + signature paquets).
-  epic-7: in-progress
+  epic-7: done
   7-1-installeur-nsis-windows-service-scm-ui-autostart-wintun-dll: done
   7-2-paquets-linux-deb-rpm-apk-via-goreleaser-nfpm: done
   7-3-pkgbuild-aur-publication-github-action: done

@@ -21,8 +21,13 @@ LEVOILE_SIGNING_KEY_PATH ?= $(HOME)/.levoile/signing.key
 wintun:
 	@bash scripts/fetch-wintun.sh
 
+# Sortie des binaires locaux — évite de polluer la racine du repo.
+# Production release passe par goreleaser (-> dist/), pas par ce target.
+BIN_DIR ?= bin
+
 build:
-	@go build ./...
+	@mkdir -p $(BIN_DIR)
+	@go build -o ./$(BIN_DIR)/ ./cmd/...
 
 test:
 	@go test -race -count=1 ./...
@@ -31,6 +36,7 @@ tun-test:
 	@go test -race -count=1 ./internal/tun/... ./internal/service/... ./internal/config/...
 
 clean:
+	@rm -rf $(BIN_DIR)
 	@rm -f internal/tun/wintun/wintun.dll internal/tun/wintun_dll_windows.go
 
 # ---- Story 7.4 : release signing ---------------------------------------------
