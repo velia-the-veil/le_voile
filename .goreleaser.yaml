@@ -1,5 +1,20 @@
 version: 2
 
+# Fix C7 (audit sécurité) : `signs: artifacts: all` plus bas ne couvre que
+# les artefacts produits par goreleaser (archives, binaires, packages,
+# checksums). Les `extra_files` sont uploadés tels quels, sans .sig. Pour
+# que install.sh arrive avec sa signature détachée dans la release, on
+# appelle signpkg ici en amont ; le fichier résultant deploy/install.sh.sig
+# est ensuite référencé par extra_files.
+#
+# `signpkg` doit être dans $PATH — release-sign.sh le construit avant
+# d'invoquer goreleaser. En snapshot/CI smoke test (test-release-signing.sh),
+# la clé éphémère est écrite à l'emplacement pointé par
+# LEVOILE_SIGNING_KEY_PATH pour que cette étape réussisse.
+before:
+  hooks:
+    - bash -c 'signpkg -signing-key="${LEVOILE_SIGNING_KEY_PATH}" deploy/install.sh'
+
 builds:
   - id: service
     main: ./cmd/client
@@ -262,3 +277,4 @@ release:
     - glob: docs/keys/levoile-release.pub
     - glob: docs/keys/levoile-release.pub.pem
     - glob: deploy/install.sh
+    - glob: deploy/install.sh.sig

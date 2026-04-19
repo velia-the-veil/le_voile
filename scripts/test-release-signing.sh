@@ -127,11 +127,26 @@ fi
 
 log "phase 2 : goreleaser snapshot build + sign all artifacts"
 log "running: goreleaser release --snapshot --skip=publish --clean"
+# Cleanup deploy/install.sh.sig from any prior run so we can assert the
+# before.hook really produced it this run (fix C7 defensive smoke).
+rm -f deploy/install.sh.sig
 goreleaser release --snapshot --skip=publish --clean >"${WORK}/goreleaser.log" 2>&1 || {
   tail -60 "${WORK}/goreleaser.log" >&2
   fail "goreleaser failed — see log above (may need CGO Linux toolchain; retry with --fast on Windows)"
 }
 log "goreleaser snapshot OK"
+
+# Assert the before.hook produced install.sh.sig — otherwise the extra_files
+# entry in .goreleaser.yaml would ship install.sh alone, defeating C7.
+if [[ ! -s deploy/install.sh.sig ]]; then
+  fail "deploy/install.sh.sig missing after goreleaser — before.hook regressed?"
+fi
+if ! verifypkg -pubkey "${PUB_B64}" deploy/install.sh deploy/install.sh.sig >/dev/null 2>&1; then
+  fail "deploy/install.sh.sig does not verify against ephemeral key"
+fi
+log "  ✓ deploy/install.sh.sig produced and verifies"
+# Clean up so the repo tree stays spotless after the smoke run.
+rm -f deploy/install.sh.sig
 
 # Verify every .sig in dist/ against the ephemeral pubkey.
 SIG_COUNT=0

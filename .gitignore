@@ -57,6 +57,11 @@ signing.key.*
 /backup/
 **/backup/signing.key.*
 
+# Signature détachée générée au release time par le before.hook goreleaser
+# pour install.sh (fix C7 audit). Jamais commitée — re-créée à chaque release
+# avec la clé master active.
+deploy/install.sh.sig
+
 # Runtime config (may contain credentials)
 config.toml
 # …mais conserver les skeletons shippés dans les paquets (story 7.2).
