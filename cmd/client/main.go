@@ -19,9 +19,18 @@ import (
 	"github.com/velia-the-veil/le_voile/internal/ipchandler"
 	svc "github.com/velia-the-veil/le_voile/internal/service"
 	"github.com/velia-the-veil/le_voile/internal/tun"
+	"github.com/velia-the-veil/le_voile/internal/updater"
 )
 
 var version string
+
+func init() {
+	// Propagate the ldflags-injected version to the updater package so
+	// CurrentVersion() returns the real build version instead of "dev".
+	if version != "" {
+		updater.Version = version
+	}
+}
 
 const defaultRelayDomain = "levoile.dev"
 
