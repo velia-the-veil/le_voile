@@ -30,8 +30,7 @@ type PolicyManager interface {
 
 // policyPersistedState is the JSON structure saved to disk for crash recovery.
 type policyPersistedState struct {
-	Browsers  []browserSavedState   `json:"browsers"`
-	Extension *extensionDeployState `json:"extension,omitempty"`
+	Browsers []browserSavedState `json:"browsers"`
 }
 
 // browserSavedState stores the original policy state for one browser.
@@ -46,30 +45,7 @@ type browserSavedState struct {
 	// OriginalValues stores multiple original values for Firefox registry prefs.
 	// Key = pref name, value = original DWORD as string. Missing key = didn't exist.
 	OriginalValues map[string]string `json:"original_values,omitempty"`
-	// ExtPolicyPath stores the registry key or file path for ExtensionSettings.
-	ExtPolicyPath string `json:"ext_policy_path,omitempty"`
-	// ExtOriginalValue stores the original ExtensionSettings JSON string.
-	ExtOriginalValue string `json:"ext_original_value,omitempty"`
-	// ExtHadOriginal indicates whether ExtensionSettings existed before Le Voile.
-	ExtHadOriginal bool `json:"ext_had_original,omitempty"`
 }
-
-// extensionDeployState stores paths of deployed extension files for cleanup.
-type extensionDeployState struct {
-	DeployDir string `json:"deploy_dir,omitempty"`
-}
-
-// ExtensionID is the Chrome extension ID derived from the PEM public key.
-// This must be set at build time or computed from the embedded CRX.
-var ExtensionID string
-
-// ChromeStoreUpdateURL, if non-empty, overrides the local file:// update URL
-// for Chromium extension policies. Required for non-managed devices where Chrome
-// blocks force_installed extensions from non-CWS sources.
-var ChromeStoreUpdateURL string
-
-// FirefoxGeckoID is the Firefox extension ID from manifest_firefox.json.
-const FirefoxGeckoID = "levoile@plateformeliberte.fr"
 
 const policyStateFile = "browser-policies-original.json"
 
@@ -175,11 +151,6 @@ func loadOrphanTemp() ([]byte, error) {
 // removePersistedState deletes the persisted state file.
 func removePersistedState() {
 	os.Remove(policyStateFilePath())
-}
-
-// extensionDeployDir returns the directory where extension files are deployed.
-func extensionDeployDir() string {
-	return filepath.Join(policyStatePath(), "extension")
 }
 
 // cleanOrphanTemps removes any browser-policies-*.tmp files.

@@ -1,9 +1,5 @@
 version: 2
 
-before:
-  hooks:
-    - go run ./tools/crxgen -key extension/levoile.pem -src extension -out internal/browser/extension_assets/build/levoile.crx -sync-assets internal/browser/extension_assets/src
-
 builds:
   - id: service
     main: ./cmd/client

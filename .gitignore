@@ -66,10 +66,6 @@ config.toml
 # BMAD framework
 /_bmad/
 
-# Browser extension build artifacts
-extension.zip
-web-ext-artifacts/
-
 # OS files
 .DS_Store
 Thumbs.db

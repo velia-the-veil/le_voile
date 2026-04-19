@@ -224,8 +224,7 @@ func TestE2E_CrashRecovery_OrphanPolicies(t *testing.T) {
 
 	// Write a minimal orphan state file.
 	state := map[string]interface{}{
-		"browsers":  []interface{}{},
-		"extension": nil,
+		"browsers": []interface{}{},
 	}
 	data, _ := json.Marshal(state)
 	if err := os.WriteFile(statePath, data, 0644); err != nil {

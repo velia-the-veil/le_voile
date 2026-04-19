@@ -74,10 +74,6 @@ type TUNConfig struct {
 // BrowserPoliciesConfig holds browser WebRTC policy settings.
 type BrowserPoliciesConfig struct {
 	Enabled bool `toml:"enabled"`
-	// ChromeStoreUpdateURL overrides the local file:// update URL for Chrome extension
-	// installation. Required for non-managed devices (no Active Directory domain).
-	// Set to "https://clients2.google.com/service/update2/crx" for CWS-hosted extensions.
-	ChromeStoreUpdateURL string `toml:"chrome_store_update_url,omitempty"`
 }
 
 // HTTPProxyConfig holds HTTP CONNECT proxy settings for IP camouflage.

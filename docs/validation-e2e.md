@@ -38,7 +38,7 @@ E2E=1 go test -tags e2e -run TestE2E ./internal/browser/ -v
 |-----------|----------------|-----------|
 | Élévation admin | DNS restore, DNS port 53, Chromium policies, recovery | `t.Skip("requires admin")` |
 | Port 53 libre | `TestE2E_DNSPort53Real` | `t.Skip("port 53 unavailable")` |
-| Navigateur Chromium installé | `TestE2E_ChromiumExtensionSettingsApplied`, `TestE2E_WebRTCPoliciesApplied_Chromium` | `t.Skip("no Chromium browser detected")` |
+| Navigateur Chromium installé | `TestE2E_WebRTCPoliciesApplied_Chromium` | `t.Skip("no Chromium browser detected")` |
 | IPv6 actif | `TestE2E_DNSIPv6Resolver` | `t.Skip("IPv6 not available")` |
 
 ### Linux / macOS
@@ -74,10 +74,6 @@ Les politiques Chromium sont appliquées via le registre Windows (`HKLM\SOFTWARE
 
 Le proxy système WinINET (registre `Internet Settings`) est spécifique à Windows.
 
-### Bypass > 50 Mo = extension JavaScript
-
-Le bypass des gros téléchargements est implémenté dans l'extension navigateur (JavaScript). Non testable en Go automatiquement — couvert par le test manuel 7.9.
-
 ### Tests avec relais réel nécessitent `RELAY_ADDR`
 
 Les tests E2E automatisés utilisent des mock relays locaux. Pour tester avec un relais réel (vérification IP visible, latence réseau), configurer `RELAY_ADDR` et `RELAY_PUBKEY`.
@@ -96,7 +92,7 @@ Les tests E2E automatisés utilisent des mock relays locaux. Pour tester avec un
 |----|-------------|----------------------|
 | AC1 | Zéro fuite DNS | `TestE2E_DNSProxyResolution`, `TestE2E_KillSwitchActivation`, `TestE2E_DNSIPv6Resolver`, `TestE2E_DNSPort53Real` |
 | AC2 | Zéro fuite IP | `TestE2E_IPCamouflage` |
-| AC3 | Zéro fuite WebRTC | `TestE2E_ChromiumExtensionSettingsApplied`, `TestE2E_WebRTCPoliciesApplied_Chromium`, `TestE2E_FirefoxPoliciesApplied`, `TestE2E_WebRTCPoliciesApplied_Firefox` |
+| AC3 | Zéro fuite WebRTC | `TestE2E_WebRTCPoliciesApplied_Chromium`, `TestE2E_WebRTCPoliciesApplied_Firefox` |
 | AC4 | Failover + UI sync | `TestE2E_FailoverSameCountry`, `TestE2E_FailoverIPConsistency`, `TestE2E_FailoverKillSwitchProtection`, `TestE2E_ReconnectInitiation` |
 | AC5 | Changement pays cohérent | `TestE2E_IPCCountryChange`, `TestE2E_IPCConcurrentCountryChange` |
 | AC6 | Post-shutdown fonctionnel | `TestE2E_CleanShutdown_DNSRestored`, `TestE2E_CleanShutdown_BrowserPoliciesRestored`, `TestE2E_DNSRestoredAfterShutdown` |
@@ -122,12 +118,10 @@ La checklist de validation manuelle complète (tests visuels, UI tray/webview, s
 | 7.6 | Failover (relais down → bascule < 5s) | AC4 |
 | 7.7 | Shutdown propre (DNS, SysProxy, processus) | AC6 |
 | 7.8 | Crash recovery (taskkill → SCM restart) | AC7 |
-| 7.9 | Extension fallback DIRECT quand proxy down | AC8 |
-| 7.10 | Fermeture webview indépendante du tray | AC6 |
-| 7.11 | Proxy CONNECT résilient (pas de hang) | AC8 |
-| 7.12 | WinINET recovery après crash UI | AC7 |
-| 7.13 | Extension bypass gros fichiers (> 50 Mo) | AC8 |
-| 7.14 | Blocklist DNS (activation/désactivation) | AC1 |
+| 7.9 | Fermeture webview indépendante du tray | AC6 |
+| 7.10 | Proxy CONNECT résilient (pas de hang) | AC8 |
+| 7.11 | WinINET recovery après crash UI | AC7 |
+| 7.12 | Blocklist DNS (activation/désactivation) | AC1 |
 
 ## Architecture
 
