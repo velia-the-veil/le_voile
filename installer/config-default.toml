@@ -24,3 +24,18 @@ bootstrap_doh_enabled = true
 
 [browser_policies]
 enabled = true
+
+# Capture L3 machine-wide via interface virtuelle (Wintun sur Windows, TUN sur
+# Linux). Doit etre true en prod, sinon le service tombe en mode proxy-HTTP-only
+# (seul le browser passe par le VPN, PowerShell / jeux / Steam fuient direct).
+[tun]
+enabled = true
+name = "levoile0"
+mtu = 1420
+
+# Kill-switch firewall OS-level (WFP Windows, nftables Linux). Active au
+# Connect() pour bloquer tout le trafic sortant sauf TUN + IP relais.
+# Doit etre true en prod pour tenir les garanties NFR9b.
+[firewall]
+enable_killswitch = true
+allow_ipv6_leak = false
