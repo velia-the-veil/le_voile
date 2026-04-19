@@ -324,6 +324,17 @@ func renameWithRetry(src, dst string) error {
 }
 
 // atomicCopyFile copies src to dst using a temporary file and rename.
+//
+// On Windows, the rename step fails with ERROR_ACCESS_DENIED when dst is a
+// currently-running executable (e.g. the service replacing its own binary
+// during tryInstallStagedUpdate at boot). Windows does NOT allow
+// MoveFileEx(..., MOVEFILE_REPLACE_EXISTING) to overwrite a file held open
+// for execute, even though moving the RUNNING file *out* of the way is
+// permitted (a running process keeps its image mapped by handle, not by
+// path). Work around that by renaming dst -> dst+".old" before placing the
+// fresh file — the running process continues to execute from ".old", and
+// the old file is cleaned up at the next service start (stop_bak is
+// harmless once the process image has been flushed on reboot).
 func atomicCopyFile(src, dst string) error {
 	tmpDst := dst + ".tmp"
 
@@ -352,6 +363,24 @@ func atomicCopyFile(src, dst string) error {
 	if err := dstFile.Close(); err != nil {
 		os.Remove(tmpDst)
 		return fmt.Errorf("close temp: %w", err)
+	}
+
+	// Windows-specific: move the existing dst out of the way first so the
+	// subsequent rename doesn't hit ERROR_ACCESS_DENIED on a running exe.
+	// Best-effort — on non-Windows or when dst doesn't exist, skip.
+	if runtime.GOOS == "windows" {
+		if _, err := os.Stat(dst); err == nil {
+			oldPath := dst + ".old"
+			// Remove any stale .old from a previous install (may still be
+			// locked if a previous service generation is somehow still
+			// running, in which case we leave it and the rename below will
+			// fail loudly).
+			_ = os.Remove(oldPath)
+			if err := os.Rename(dst, oldPath); err != nil {
+				os.Remove(tmpDst)
+				return fmt.Errorf("rename existing dst to .old: %w", err)
+			}
+		}
 	}
 
 	// Rename with retry for Windows (antivirus may temporarily lock the file)
