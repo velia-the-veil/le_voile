@@ -107,11 +107,22 @@ type fakeRouteMgr struct {
 	teardownCalls atomic.Int32
 	cleanupCalls  atomic.Int32
 	setupErr      error
+	mu            sync.Mutex
+	lastRelayIP   net.IP
 }
 
-func (f *fakeRouteMgr) Setup(_ string, _ net.IP, _ net.IP, _ string) error {
+func (f *fakeRouteMgr) Setup(_ string, relayIP net.IP, _ net.IP, _ string) error {
 	f.setupCalls.Add(1)
+	f.mu.Lock()
+	f.lastRelayIP = relayIP
+	f.mu.Unlock()
 	return f.setupErr
+}
+
+func (f *fakeRouteMgr) LastRelayIP() net.IP {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.lastRelayIP
 }
 
 func (f *fakeRouteMgr) Teardown() error         { f.teardownCalls.Add(1); return nil }
@@ -127,14 +138,23 @@ type fakeFirewall struct {
 	deactivateCalls  int
 	isActive         bool
 	observedInactive int
+	lastRelayIP      net.IP
 }
 
-func (f *fakeFirewall) Activate(_ context.Context, _ firewall.ActivateParams) error {
+func (f *fakeFirewall) Activate(_ context.Context, p firewall.ActivateParams) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.activateCalls++
+	f.lastRelayIP = p.RelayIP
 	f.isActive = true
 	return nil
+}
+
+// LastRelayIP returns the RelayIP from the most recent Activate call.
+func (f *fakeFirewall) LastRelayIP() net.IP {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.lastRelayIP
 }
 
 func (f *fakeFirewall) Deactivate(_ context.Context) error {

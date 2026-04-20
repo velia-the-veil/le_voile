@@ -768,9 +768,25 @@ func handleSelectCountry(prg *svc.Program, req ipc.Request, opts Options) ipc.Re
 	// discoverer deduplicates concurrent triggers so rapid clicks stay cheap.
 	disc.TriggerBackgroundDiscover(prg.Context())
 
-	// Update the tunnel to use the new relay.
+	// Update the tunnel to use the new relay (resolves and stores the new
+	// relay IP via DNS, swaps the public key for /verify).
 	if err := tc.UpdateRelay(relay.Domain, relay.PublicKey); err != nil {
 		return ipc.Response{Status: ipc.StatusError, Error: fmt.Sprintf("ipchandler: update relay: %v", err)}
+	}
+
+	// Re-apply routing /32 + WFP allow-rule for the new relay IP. Without
+	// this the kill-switch keeps allowing only the OLD relay IP and every
+	// Connect attempt below times out at 5s, the reconnector burns its 5
+	// retries (~12s of backoff), the circuit breaker trips, and the user
+	// is stranded with the kill-switch active and no working tunnel. Pre-fix
+	// behaviour was identical because the reconfigure step was simply absent.
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	newRelayIP := tc.RelayIP()
+	if newRelayIP != nil {
+		if err := prg.ReconfigureForRelay(ctx, newRelayIP); err != nil {
+			return ipc.Response{Status: ipc.StatusError, Error: fmt.Sprintf("ipchandler: reconfigure: %v", err)}
+		}
 	}
 
 	// Stop reconnector and drop current tunnel before switching.
@@ -780,8 +796,6 @@ func handleSelectCountry(prg *svc.Program, req ipc.Request, opts Options) ipc.Re
 	_ = tc.Disconnect()
 
 	// Connect through the new relay.
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
 	if err := tc.Connect(ctx); err != nil {
 		if r := prg.Reconnector(); r != nil {
 			go r.Start(prg.Context())

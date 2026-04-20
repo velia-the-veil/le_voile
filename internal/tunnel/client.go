@@ -441,6 +441,28 @@ func (c *Client) RelayDomain() string {
 	return c.relayDomain
 }
 
+// RelayIP returns the resolved IPv4 address (as net.IP) of the current relay.
+// Returns nil if the stored value is not a valid IP. Used by callers that
+// must reconfigure routing or firewall after UpdateRelay (e.g. country
+// switch) — those layers need the IP, not the domain.
+func (c *Client) RelayIP() net.IP {
+	c.mu.RLock()
+	raw := c.relayIP
+	c.mu.RUnlock()
+	host := raw
+	if h, _, err := net.SplitHostPort(raw); err == nil {
+		host = h
+	}
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return nil
+	}
+	if v4 := ip.To4(); v4 != nil {
+		return v4
+	}
+	return ip
+}
+
 // SessionToken returns the current session token (thread-safe).
 func (c *Client) SessionToken() string {
 	c.mu.RLock()

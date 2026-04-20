@@ -2673,6 +2673,87 @@ func (p *Program) resolvedRelayIP() net.IP {
 	return ip
 }
 
+// ReconfigureForRelay re-applies routing (/32 to relay via original gateway)
+// and firewall (kill-switch allow rule for relay IP:443/UDP) for the given
+// new relay IP. Used by handleSelectCountry when the user picks a different
+// country: without this, WFP keeps allowing only the OLD relay IP and
+// every Connect attempt to the new relay times out (5s × 5 retries → 12s
+// → circuit breaker → killswitch stays active and locks the user out of
+// the internet). Idempotent: routing.Setup and firewall.Activate are both
+// flush+replace under the hood.
+//
+// Order matters — firewall first, then routing — so a routing change never
+// admits a packet through a stale-allow filter pointing at the previous
+// relay (matches the C5 ordering rationale in recoverTUN).
+//
+// Safe to call concurrently with the tunnel client; does not touch
+// tunDev or the QUIC connection.
+func (p *Program) ReconfigureForRelay(ctx context.Context, newRelayIP net.IP) error {
+	if newRelayIP == nil {
+		return fmt.Errorf("service: reconfigure: nil relay IP")
+	}
+	ip4 := newRelayIP.To4()
+	if ip4 == nil {
+		return fmt.Errorf("service: reconfigure: relay IP %s is not IPv4", newRelayIP)
+	}
+
+	// Update the cached IP first so any concurrent recoverTUN or watchdog
+	// trigger reads the new value.
+	p.firewallRelayIP.Store(ip4)
+
+	// 1. Firewall re-activate with new RelayIP (idempotent: flush+replace).
+	if p.config.FirewallEnabled {
+		p.mu.Lock()
+		fw := p.firewallMgr
+		tunDev := p.tunDev
+		p.mu.Unlock()
+		if fw != nil && tunDev != nil {
+			params := firewall.ActivateParams{
+				Mode:    firewall.ModeFull,
+				RelayIP: ip4,
+				TunName: tunDev.Name(),
+			}
+			if err := fw.Activate(ctx, params); err != nil {
+				return fmt.Errorf("service: reconfigure: firewall activate: %w", err)
+			}
+		}
+	}
+
+	// 2. Routing teardown of the old /32 + setup with the new one.
+	p.mu.Lock()
+	oldRouteMgr := p.routeMgr
+	p.routeMgr = nil
+	p.mu.Unlock()
+	if oldRouteMgr != nil {
+		if err := oldRouteMgr.Teardown(); err != nil {
+			fmt.Fprintf(serviceStderr, "service: reconfigure: old routing teardown: %v\n", err)
+			// Non-fatal — Setup below will overwrite.
+		}
+	}
+	p.mu.Lock()
+	tunDev := p.tunDev
+	p.mu.Unlock()
+	if tunDev == nil {
+		return nil // routing only meaningful when TUN is up
+	}
+	rm := routingFactory()
+	if err := rm.Cleanup(); err != nil {
+		fmt.Fprintf(serviceStderr, "service: reconfigure: routing cleanup: %v\n", err)
+	}
+	origGW, origIface, err := captureOriginalRouteFunc()
+	if err != nil {
+		return fmt.Errorf("service: reconfigure: capture original route: %w", err)
+	}
+	if err := rm.Setup(tunDev.Name(), ip4, origGW, origIface); err != nil {
+		return fmt.Errorf("service: reconfigure: routing setup: %w", err)
+	}
+	p.mu.Lock()
+	p.routeMgr = rm
+	p.mu.Unlock()
+
+	return nil
+}
+
 // waitForCaptiveClear blocks until the captive portal is cleared. It runs a
 // periodic re-probe (15s) and also listens for a manual retry (RetryCaptiveCheck
 // cancels captiveCancel). When the portal is cleared, it deactivates the captive
