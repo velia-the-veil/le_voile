@@ -282,7 +282,7 @@ func TestNAT_PortExhaustionTriggersSweep(t *testing.T) {
 		parentCtx: ctx,
 		dialTCP:   func(_, _ *net.TCPAddr) (net.Conn, error) { return mc, nil },
 		dialUDP:   func(_, _ *net.UDPAddr) (net.Conn, error) { return mc, nil },
-		sessions:  make(map[SessionID]chan []byte),
+		sessions:  make(map[SessionID]*sessionChan),
 	}
 	ctx2, cancel2 := context.WithCancel(ctx)
 	nat.cancel = cancel2
@@ -842,4 +842,63 @@ type testDNSResolverHelper struct {
 	*DNSResolver
 	queryWire []byte
 	respWire  []byte
+}
+
+// TestNAT_SendToSession_BlocksThenUnblocksOnCleanup validates the back-pressure
+// contract: sendToSession must block when the channel is full (so the upstream
+// reverseLoop stalls and the kernel socket buffer carries back-pressure to the
+// remote peer) AND must unblock when the session is cleaned up (so the
+// reverseLoop goroutine doesn't leak after its natEntry's conn is closed).
+func TestNAT_SendToSession_BlocksThenUnblocksOnCleanup(t *testing.T) {
+	nat := NewNAT(net.IPv4(1, 2, 3, 4).To4())
+	defer nat.Shutdown(context.Background())
+
+	ch, cleanup := nat.OpenSession(context.Background(), TunnelSession{ID: "testsid"})
+
+	// Fill the channel to capacity (no drainer on `ch`).
+	filler := []byte{0x45, 0, 0, 20, 0, 0, 0, 0, 64, 6, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8}
+	for i := 0; i < natReverseBufSz; i++ {
+		nat.sendToSession("testsid", filler)
+	}
+	if len(ch) != natReverseBufSz {
+		t.Fatalf("ch len=%d, want %d", len(ch), natReverseBufSz)
+	}
+
+	// The next send must block (channel full, no drainer).
+	sent := make(chan struct{})
+	go func() {
+		nat.sendToSession("testsid", filler)
+		close(sent)
+	}()
+	select {
+	case <-sent:
+		t.Fatal("sendToSession returned on a full channel — must block for back-pressure")
+	case <-time.After(50 * time.Millisecond):
+		// Expected: still blocked.
+	}
+
+	// Cleanup must unblock the parked sender within a short deadline.
+	dropsBefore := nat.reverseDrops.Load()
+	cleanup()
+	select {
+	case <-sent:
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("sendToSession stayed blocked after cleanup — goroutine would leak")
+	}
+	if got := nat.reverseDrops.Load(); got != dropsBefore+1 {
+		t.Errorf("reverseDrops = %d, want %d (cleanup-path drop must be counted)", got, dropsBefore+1)
+	}
+}
+
+// TestNAT_SendToSession_IdempotentCleanup guarantees the double-close safety
+// (close on a closed channel would panic) when cleanup is invoked twice,
+// which legitimately happens when the /tunnel handler runs its deferred
+// cleanup AFTER the NAT has evicted the session via Shutdown.
+func TestNAT_SendToSession_IdempotentCleanup(t *testing.T) {
+	nat := NewNAT(net.IPv4(1, 2, 3, 4).To4())
+	defer nat.Shutdown(context.Background())
+
+	_, cleanup := nat.OpenSession(context.Background(), TunnelSession{ID: "sid-idem"})
+	cleanup()
+	cleanup() // must not panic
 }

@@ -9,6 +9,7 @@ import (
 	"io"
 	"math/rand"
 	"net"
+	"os"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -137,6 +138,14 @@ type NAT struct {
 	entriesCount atomic.Int64
 	portsUsed    atomic.Int64
 
+	// reverseDrops counts packets dropped in sendToSession because the
+	// session was torn down while they were in flight (session cleanup
+	// raced the reverseLoop). Used to be triggered by a full-channel
+	// default-drop that collapsed throughput to ~10 KB/s under load
+	// (TCP saw artificial loss); back-pressure is now provided by blocking.
+	// Non-zero values are normal at disconnect time.
+	reverseDrops atomic.Int64
+
 	clock     func() time.Time
 	parentCtx context.Context
 	cancel    context.CancelFunc
@@ -149,8 +158,21 @@ type NAT struct {
 	stopped atomic.Bool
 
 	sessionsMu     sync.RWMutex
-	sessions       map[SessionID]chan []byte
+	sessions       map[SessionID]*sessionChan
 	sessionCounter atomic.Int64
+}
+
+// sessionChan pairs a reverse-path channel with a cancellation signal.
+// sendToSession blocks on `ch <- pkt` so upstream TCP back-pressure propagates
+// to the sending server (kernel socket buffer fills → Linux pauses reading →
+// remote peer's TCP window shrinks). Dropping here instead caused artificial
+// packet loss that TCP interpreted as congestion, collapsing the window and
+// pinning throughput at ~10 KB/s regardless of actual bandwidth.
+// `done` is closed by cleanup so a blocked sender unblocks when the session
+// goes away (prevents goroutine leaks in tcpReverseLoop / udpReverseLoop).
+type sessionChan struct {
+	ch   chan []byte
+	done chan struct{}
 }
 
 // Compile-time check that NAT implements PacketForwarder.
@@ -169,7 +191,7 @@ func NewNAT(relayIP net.IP, opts ...NATOption) *NAT {
 		dialUDP: func(laddr, raddr *net.UDPAddr) (net.Conn, error) {
 			return net.DialUDP("udp4", laddr, raddr)
 		},
-		sessions: make(map[SessionID]chan []byte),
+		sessions: make(map[SessionID]*sessionChan),
 	}
 	for _, opt := range opts {
 		opt(n)
@@ -213,19 +235,26 @@ func tupleKey(session SessionID, srcIP net.IP, srcPort uint16, dstIP net.IP, dst
 // OpenSession creates a session channel for reverse-path packets.
 func (n *NAT) OpenSession(_ context.Context, session TunnelSession) (<-chan []byte, func()) {
 	sid := sessionKey(session)
-	ch := make(chan []byte, natReverseBufSz)
+	sc := &sessionChan{
+		ch:   make(chan []byte, natReverseBufSz),
+		done: make(chan struct{}),
+	}
 
 	n.sessionsMu.Lock()
-	n.sessions[sid] = ch
+	n.sessions[sid] = sc
 	n.sessionsMu.Unlock()
 
+	var cleanupOnce sync.Once
 	cleanup := func() {
-		n.sessionsMu.Lock()
-		delete(n.sessions, sid)
-		n.sessionsMu.Unlock()
-		n.closeSessionEntries(sid)
+		cleanupOnce.Do(func() {
+			n.sessionsMu.Lock()
+			delete(n.sessions, sid)
+			n.sessionsMu.Unlock()
+			close(sc.done)
+			n.closeSessionEntries(sid)
+		})
 	}
-	return ch, cleanup
+	return sc.ch, cleanup
 }
 
 // Forward delivers an inbound IP packet from a tunnel client.
@@ -609,15 +638,21 @@ func (n *NAT) udpReverseLoop(entry *natEntry) {
 
 func (n *NAT) sendToSession(session SessionID, pkt []byte) {
 	n.sessionsMu.RLock()
-	ch, ok := n.sessions[session]
+	sc, ok := n.sessions[session]
 	n.sessionsMu.RUnlock()
 	if !ok {
 		return
 	}
+	// Block on a full channel so the reverseLoop stalls and the kernel socket
+	// buffer holds bytes — remote TCP window then shrinks, which is proper
+	// back-pressure. The previous default-drop variant produced artificial
+	// packet loss that TCP read as congestion (→ ~10 KB/s collapse).
+	// `sc.done` ensures a dead session unblocks the sender so the
+	// reverseLoop goroutine can observe its own conn.Close and exit cleanly.
 	select {
-	case ch <- pkt:
-	default:
-		// Channel full — drop packet (back-pressure).
+	case sc.ch <- pkt:
+	case <-sc.done:
+		n.reverseDrops.Add(1)
 	}
 }
 
@@ -636,12 +671,17 @@ func (n *NAT) closeSessionEntries(session SessionID) {
 func (n *NAT) sweepLoop(ctx context.Context) {
 	ticker := time.NewTicker(natSweepInterval)
 	defer ticker.Stop()
+	var lastDrops int64
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
 			n.sweepOnce(n.clock())
+			if cur := n.reverseDrops.Load(); cur != lastDrops {
+				fmt.Fprintf(os.Stderr, "nat: reverse-path drops total=%d delta=%d\n", cur, cur-lastDrops)
+				lastDrops = cur
+			}
 		}
 	}
 }
