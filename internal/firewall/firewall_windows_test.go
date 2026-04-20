@@ -249,6 +249,62 @@ func TestIntegrationWFP_CrashRecovery(t *testing.T) {
 	}
 }
 
+// TestIntegrationWFP_EnumFiltersAfterActivate is the regression test for the
+// quartet of bugs that left WFP empty in production:
+//  1. wrong GUID for FWPM_LAYER_ALE_AUTH_RECV_ACCEPT_V6 made FwpmFilterAdd0
+//     return FWP_E_LAYER_NOT_FOUND on filter "Block Inbound V6", aborting
+//     the activate transaction.
+//  2. fwpV4AddrMask=19 instead of 0x100 made the relay-IP filter fail with
+//     FWP_E_TYPE_MISMATCH.
+//  3. wrong GUIDs for IP_REMOTE_PORT / IP_LOCAL_PORT triggered
+//     FWP_E_CONDITION_NOT_FOUND.
+//  4. enumFiltersByProvider passed a non-NULL template that Windows 11
+//     rejects with FWP_E_NEVER_MATCH, so the watchdog saw zero filters one
+//     tick after Activate added 13 — entering an infinite restore loop.
+//
+// Uses ModeCaptive so the test does not require a TUN interface. After
+// Activate, enumFiltersByProvider must return at least the filters we just
+// added (LAN-gateway in/out + DNS/HTTP/HTTPS captive + loopback in/out +
+// DHCP in/out + V6 blocks + V6 loopbacks).
+func TestIntegrationWFP_EnumFiltersAfterActivate(t *testing.T) {
+	if !isElevated() {
+		t.Skip("requires admin/LocalSystem elevation")
+	}
+	ctx := context.Background()
+	fw := New(nil, Options{})
+
+	// Ensure clean state.
+	_, _ = fw.CleanupOrphans(ctx)
+
+	if err := fw.Activate(ctx, ActivateParams{
+		Mode:       ModeCaptive,
+		LanGateway: net.ParseIP("192.0.2.1"),
+	}); err != nil {
+		t.Fatalf("Activate (captive): %v", err)
+	}
+	defer fw.Deactivate(ctx)
+
+	wfp := fw.(*wfpFirewall)
+	want := wfp.expectedFilterCount
+	if want == 0 {
+		t.Fatal("expectedFilterCount is zero after Activate — Activate stored nothing")
+	}
+
+	engine, err := openEngine()
+	if err != nil {
+		t.Fatalf("openEngine: %v", err)
+	}
+	defer engine.close()
+
+	ids, err := engine.enumFiltersByProvider(&leVoileProviderKey)
+	if err != nil {
+		t.Fatalf("enumFiltersByProvider: %v", err)
+	}
+	if len(ids) != want {
+		t.Errorf("enumFiltersByProvider returned %d ids, want %d (would trigger watchdog restore loop)", len(ids), want)
+	}
+}
+
 // --- Helpers ---
 
 func isElevated() bool {
