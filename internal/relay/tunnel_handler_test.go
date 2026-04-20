@@ -539,6 +539,125 @@ func TestTunnelHandler_GlobalLimit503(t *testing.T) {
 	}
 }
 
+// rejectingForwarder fails Forward() for every packet whose first byte is
+// in the rejected set, but accepts (and echoes) the rest. Used to verify
+// the handler keeps the stream alive after a per-packet forwarder error
+// (regression: previously the handler returned on the first error, taking
+// down the entire client tunnel and forcing a reconnect every time the
+// kernel leaked an ICMP/IPv6/multicast packet through to the relay).
+type rejectingForwarder struct {
+	mu       sync.Mutex
+	reject   map[byte]bool
+	echoCh   chan<- []byte
+	rejected int
+	accepted int
+}
+
+func newRejectingForwarder(reject ...byte) *rejectingForwarder {
+	r := &rejectingForwarder{reject: make(map[byte]bool)}
+	for _, b := range reject {
+		r.reject[b] = true
+	}
+	return r
+}
+
+func (r *rejectingForwarder) OpenSession(_ context.Context, _ TunnelSession) (<-chan []byte, func()) {
+	ch := make(chan []byte, 64)
+	r.mu.Lock()
+	r.echoCh = ch
+	r.mu.Unlock()
+	return ch, func() {}
+}
+
+func (r *rejectingForwarder) Forward(_ context.Context, _ TunnelSession, pkt []byte) error {
+	if len(pkt) > 0 && r.reject[pkt[0]] {
+		r.mu.Lock()
+		r.rejected++
+		r.mu.Unlock()
+		return fmt.Errorf("rejecting forwarder: byte %#x", pkt[0])
+	}
+	r.mu.Lock()
+	r.accepted++
+	ch := r.echoCh
+	r.mu.Unlock()
+	if ch != nil {
+		cp := make([]byte, len(pkt))
+		copy(cp, pkt)
+		select {
+		case ch <- cp:
+		default:
+		}
+	}
+	return nil
+}
+
+func TestTunnelHandler_TolerantOnForwarderError(t *testing.T) {
+	pub, priv, _ := lecrypto.GenerateKeyPair()
+	clientIP := "203.0.113.42"
+	token, _ := CreateSessionToken(priv, clientIP)
+	logBuf := &safeLogBuf{}
+	fwd := newRejectingForwarder(0xBA, 0xBE) // reject any packet starting with 0xBA or 0xBE
+	handler := NewTunnelHandler(pub, NewIPLimiter(IPLimiterMaxPerIP), fwd, logBuf.Write)
+
+	// Send 4 frames: accepted, rejected, accepted, rejected.
+	var body bytes.Buffer
+	body.Write(makeFrame([]byte{0x01, 0x02, 0x03}))
+	body.Write(makeFrame([]byte{0xBA, 0x55}))
+	body.Write(makeFrame([]byte{0x04, 0x05, 0x06}))
+	body.Write(makeFrame([]byte{0xBE, 0xEF}))
+
+	req := httptest.NewRequest(http.MethodPost, "/tunnel", &body)
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.RemoteAddr = clientIP + ":12345"
+	rec := httptest.NewRecorder()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		handler.ServeHTTP(rec, req)
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("handler did not complete within timeout")
+	}
+
+	// All four packets should have been processed (forwarder hit 4 times,
+	// half rejected, half accepted) — proves the stream stayed open past
+	// the first rejection.
+	fwd.mu.Lock()
+	gotAccepted, gotRejected := fwd.accepted, fwd.rejected
+	fwd.mu.Unlock()
+	if gotAccepted != 2 || gotRejected != 2 {
+		t.Errorf("forwarder counts: accepted=%d rejected=%d, want accepted=2 rejected=2", gotAccepted, gotRejected)
+	}
+
+	// Response must contain the 2 accepted packets echoed back.
+	resp := rec.Body.Bytes()
+	got := [][]byte{}
+	for len(resp) >= TunnelFrameHeaderSize {
+		n := binary.BigEndian.Uint16(resp[:TunnelFrameHeaderSize])
+		resp = resp[TunnelFrameHeaderSize:]
+		if int(n) > len(resp) {
+			break
+		}
+		got = append(got, append([]byte(nil), resp[:n]...))
+		resp = resp[n:]
+	}
+	if len(got) != 2 {
+		t.Fatalf("got %d echoed frames, want 2", len(got))
+	}
+	if !bytes.Equal(got[0], []byte{0x01, 0x02, 0x03}) || !bytes.Equal(got[1], []byte{0x04, 0x05, 0x06}) {
+		t.Errorf("echoed frames mismatch: got %v", got)
+	}
+
+	// Log must mention the dropped-packet behavior so operators can spot
+	// pathological clients without it looking like a stream abort.
+	if !strings.Contains(logBuf.String(), "dropping packet") {
+		t.Errorf("log missing 'dropping packet' note: %q", logBuf.String())
+	}
+}
+
 // --- Constructor panics ---
 
 func TestNewTunnelHandler_PanicsOnNilKey(t *testing.T) {

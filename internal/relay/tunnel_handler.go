@@ -215,10 +215,20 @@ func (h *TunnelHandler) serveTunnel(w http.ResponseWriter, r *http.Request, payl
 				return
 			}
 			if err := h.forwarder.Forward(sessionCtx, session, buf[:n]); err != nil {
+				// Drop the offending packet but keep the stream alive.
+				// Most "forwarder errors" are non-fatal per-packet conditions
+				// the client cannot avoid: ICMP / IPv6 / multicast leaking
+				// through, NAT port-pool exhaustion (transient), TCP RST to
+				// an expired NAT entry, etc. Closing the whole tunnel on
+				// every such packet kicks the client into a reconnect loop
+				// that takes down ALL its in-flight TCP flows for ~1 second
+				// — far worse than dropping one packet. NFR9b kill-switch
+				// guarantees still hold: the client side never sees the
+				// dropped packet leak elsewhere.
 				if h.logFunc != nil {
-					h.logFunc("tunnel: forwarder error")
+					h.logFunc("tunnel: forwarder error (dropping packet, stream stays open)")
 				}
-				return
+				continue
 			}
 		}
 	}()

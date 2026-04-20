@@ -168,10 +168,16 @@ func resolveRelayPublicIP(flagValue string) net.IP {
 		}
 		fmt.Fprintf(os.Stderr, "relay: invalid -public-ip %q, falling back to auto-detect\n", flagValue)
 	}
-	// Try common interface names.
-	for _, name := range []string{"eth0", "ens3", "ens5", "enp0s3"} {
-		iface, err := net.InterfaceByName(name)
-		if err != nil {
+	// Iterate every UP interface and pick the first IPv4 that's neither
+	// loopback, link-local nor a private/CG-NAT range. The previous version
+	// hardcoded {eth0, ens3, ens5, enp0s3} and failed on Hetzner-style
+	// names (ens6, enp1s0, …) → fell back to 0.0.0.0 → the kernel still
+	// auto-fills the source IP on send, but the WARNING in the logs is
+	// alarming and tools that read public-ip via the management endpoint
+	// got 0.0.0.0.
+	ifaces, _ := net.Interfaces()
+	for _, iface := range ifaces {
+		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
 			continue
 		}
 		addrs, err := iface.Addrs()
@@ -183,10 +189,16 @@ func resolveRelayPublicIP(flagValue string) net.IP {
 			if !ok {
 				continue
 			}
-			if ip4 := ipNet.IP.To4(); ip4 != nil && !ip4.IsLoopback() {
-				fmt.Fprintf(os.Stderr, "relay: auto-detected public IP %s from %s\n", ip4, name)
-				return ip4
+			ip4 := ipNet.IP.To4()
+			if ip4 == nil {
+				continue
 			}
+			if ip4.IsLoopback() || ip4.IsLinkLocalUnicast() ||
+				ip4.IsPrivate() || ip4.IsUnspecified() {
+				continue
+			}
+			fmt.Fprintf(os.Stderr, "relay: auto-detected public IP %s from %s\n", ip4, iface.Name)
+			return ip4
 		}
 	}
 	fmt.Fprintf(os.Stderr, "relay: WARNING: could not detect public IP, using 0.0.0.0\n")
