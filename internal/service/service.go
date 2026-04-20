@@ -130,6 +130,7 @@ type Program struct {
 	config Config
 
 	tunDev          tun.Device         // interface TUN/Wintun (Epic 2), nil si TUNEnabled=false
+	tunOutbound     chan []byte        // packets read from tunDev, drained by RunPump (Story 1.1 étendue)
 	tunWatchdog     *tunwatchdog.Watchdog // watchdog TUN (story 2.2), nil si TUNEnabled=false
 	routeMgr        routing.RouteManager // routage système (Epic 2 — story 2.4), nil si TUNEnabled=false
 	firewallMgr     firewall.Firewall    // kill switch kernel-level (Epic 2 — stories 2.6/2.7), nil si FirewallEnabled=false
@@ -1097,6 +1098,10 @@ func (p *Program) run() {
 		if err := p.ensureTUN(); err != nil {
 			fmt.Fprintf(serviceStderr, "service: tun setup: %v\n", err)
 		} else {
+			// Start the long-lived TUN reader before any other consumer of
+			// the device. The reader populates p.tunOutbound which
+			// runTUNPump (started after Connect) drains.
+			p.startTUNReader(ctx)
 			tunCleanup = func() {
 				// Ordre strict shutdown erreur : firewall → routing → tun.
 				if p.firewallMgr != nil {
@@ -1229,6 +1234,17 @@ func (p *Program) run() {
 	// levoile0 et déclenche un reconnect complet si détecté.
 	if p.tunDev != nil {
 		p.startTUNWatchdog(ctx)
+	}
+
+	// --- 1a-bis. TUN ↔ relay pump (Story 1.1 étendue) ---
+	// L'interface levoile0 reçoit des paquets IP du kernel via la route /0
+	// posée par routing.Setup. Sans pump, ces paquets stagnent dans le ring
+	// buffer Wintun jusqu'à overflow → black-hole → DNS/ICMP/TCP coupés
+	// pendant que le killswitch WFP bloque tout autre chemin. La goroutine
+	// runTUNPump ouvre POST /tunnel vers le relais et fait circuler les
+	// paquets dans les deux sens. Auto-restart sur erreur (post-reconnect).
+	if p.tunDev != nil && p.tunnelClient != nil {
+		go p.runTUNPump(ctx)
 	}
 
 	// --- 1b. Detect visible exit IP (best-effort, non-blocking) ---
@@ -2213,6 +2229,191 @@ func (p *Program) startTUNWatchdog(ctx context.Context) {
 	}()
 }
 
+// pumpRetryBackoff bounds how often runTUNPump retries opening POST /tunnel
+// after a stream error or when the tunnel is not yet (re)connected. Tight
+// enough to recover quickly when reconnect succeeds, slow enough to avoid
+// spinning on persistent failure (e.g. relay 5xx or session token rejected).
+const pumpRetryBackoff = 1 * time.Second
+
+// pumpOutboundQueueSize bounds the channel that buffers packets from the TUN
+// reader to the pump. Small enough that backpressure propagates to dev.Read
+// (the kernel sees congestion, TCP backs off) before unbounded memory growth
+// can occur on a stalled relay.
+const pumpOutboundQueueSize = 64
+
+// startTUNReader launches a long-lived goroutine that reads IP packets from
+// the TUN device and feeds them into p.tunOutbound. The channel is the
+// bridge between the device-bound goroutine (which lives across pump
+// reconnects) and the per-stream pump goroutine. Closes the channel on dev
+// EOF / error so subsequent RunPump calls return cleanly.
+//
+// Lifetime: started once per TUN device (after ensureTUN). Recreated by
+// recoverTUN when the device is rebuilt. Exits when dev.Read errors —
+// typically because dev.Close was called during shutdown or recovery.
+func (p *Program) startTUNReader(ctx context.Context) {
+	if p.tunDev == nil {
+		return
+	}
+	dev := p.tunDev
+	out := make(chan []byte, pumpOutboundQueueSize)
+	p.tunOutbound = out
+	mtu := dev.MTU()
+	if mtu == 0 {
+		mtu = 1420
+	}
+	go func() {
+		defer close(out)
+		buf := make([]byte, mtu)
+		// Light periodic telemetry (60s) — only printed when counters
+		// change since last tick, so an idle TUN never generates noise.
+		// Goes to serviceStderr (Event Log on Windows when service is run
+		// under SCM with ERR redirection; foreground stderr otherwise).
+		var nRead, nFwd, nDrop uint64
+		statsTick := time.NewTicker(60 * time.Second)
+		defer statsTick.Stop()
+		go func() {
+			var lastRead, lastFwd, lastDrop uint64
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-statsTick.C:
+					if nRead == lastRead && nFwd == lastFwd && nDrop == lastDrop {
+						continue
+					}
+					fmt.Fprintf(serviceStderr, "service: tun reader stats: read=%d forwarded=%d dropped=%d\n", nRead, nFwd, nDrop)
+					lastRead, lastFwd, lastDrop = nRead, nFwd, nDrop
+				}
+			}
+		}()
+		for {
+			n, err := dev.Read(buf)
+			if err != nil {
+				return
+			}
+			if n == 0 {
+				continue
+			}
+			nRead++
+			// Drop packets the relay's NAT can't process (parseIPv4 +
+			// SSRF-block in internal/relay/nat_packet.go +
+			// internal/relay/connect_handler.go::isBlockedIP). Forwarding
+			// them anyway makes the relay close the stream on the FIRST
+			// rejected packet (tunnel_handler.go:217 returns on
+			// forwarder error), which kicks off an infinite "open → first
+			// junk packet → reject → close" reconnect loop. Background
+			// chatter on a freshly opened TUN routinely contains IPv6
+			// link-local, mDNS multicast, ARP-like and DHCP renewals that
+			// all qualify as junk from the relay's perspective.
+			if !forwardablePacket(buf[:n]) {
+				nDrop++
+				continue
+			}
+			cp := make([]byte, n)
+			copy(cp, buf[:n])
+			select {
+			case out <- cp:
+				nFwd++
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+}
+
+// forwardablePacket returns true only for IPv4 TCP/UDP packets bound to a
+// public destination IP — the subset the relay's NAT can actually translate.
+// Mirrors the relay-side checks (parseIPv4 + isBlockedIP). Dropping at the
+// source saves bandwidth and avoids the relay's hard "drop stream on first
+// reject" behaviour.
+func forwardablePacket(pkt []byte) bool {
+	if len(pkt) < 20 {
+		return false
+	}
+	if pkt[0]>>4 != 4 {
+		return false // IPv6, ARP-likes, garbage
+	}
+	proto := pkt[9]
+	if proto != 6 && proto != 17 { // TCP, UDP
+		return false
+	}
+	dst := net.IPv4(pkt[16], pkt[17], pkt[18], pkt[19])
+	if dst.IsLoopback() || dst.IsPrivate() ||
+		dst.IsLinkLocalUnicast() || dst.IsLinkLocalMulticast() ||
+		dst.IsMulticast() || dst.IsUnspecified() ||
+		dst.Equal(net.IPv4bcast) {
+		return false
+	}
+	return true
+}
+
+// runTUNPump is the long-lived L3 pump goroutine. It bridges levoile0 ↔ relay
+// /tunnel by opening a POST stream and shuttling IP packets in both
+// directions. Each iteration of the loop:
+//
+//  1. Bail out if ctx is cancelled.
+//  2. Wait for tunnel.StateConnected (the reconnector owns Connect calls;
+//     we never trigger reconnects from here, just observe state).
+//  3. Refresh session token if needed.
+//  4. Call tunnel.Client.RunPump which blocks until the stream errors,
+//     EOFs, or ctx is cancelled.
+//  5. Sleep pumpRetryBackoff and loop.
+//
+// Without this goroutine, the kernel routes all traffic into levoile0 (per
+// routing.Setup's /0 default) but the Wintun ring buffer fills and drops
+// packets — every non-proxy app loses connectivity even though the WFP
+// killswitch correctly allows the TUN interface.
+func (p *Program) runTUNPump(ctx context.Context) {
+	if p.tunDev == nil || p.tunnelClient == nil || p.tunOutbound == nil {
+		return
+	}
+	for {
+		if ctx.Err() != nil {
+			return
+		}
+		if p.tunnelClient.State().Get() != tunnel.StateConnected {
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(pumpRetryBackoff):
+			}
+			continue
+		}
+		if err := p.tunnelClient.EnsureSessionToken(ctx); err != nil {
+			fmt.Fprintf(serviceStderr, "service: tun pump: token refresh: %v\n", err)
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(pumpRetryBackoff):
+			}
+			continue
+		}
+		// Snapshot dev under lock — recoverTUN may swap p.tunDev.
+		p.mu.Lock()
+		dev := p.tunDev
+		p.mu.Unlock()
+		if dev == nil {
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(pumpRetryBackoff):
+			}
+			continue
+		}
+		if err := p.tunnelClient.RunPump(ctx, p.tunOutbound, dev.Write); err != nil && ctx.Err() == nil {
+			fmt.Fprintf(serviceStderr, "service: tun pump: %v\n", err)
+		}
+		if ctx.Err() != nil {
+			return
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(pumpRetryBackoff):
+		}
+	}
+}
+
 // recoverTUN est le callback du watchdog TUN (Story 2.2 — AC2/AC3).
 // Séquence stricte : recreate TUN → routing.Setup → firewall.Activate →
 // tunnel.Connect. Le firewall n'est PAS désactivé durant la procédure (AC3).
@@ -2257,6 +2458,12 @@ func (p *Program) recoverTUN(ctx context.Context) error {
 	p.tunDev = dev
 	p.mu.Unlock()
 	fmt.Fprintf(serviceStderr, "service: tun recovery: interface %s recreated\n", dev.Name())
+
+	// Restart the long-lived TUN reader on the new device. The previous
+	// reader exited when the old dev was closed at line 2374 (dev.Read
+	// returns an error after Close). Without this, runTUNPump would block
+	// forever waiting on a stale, never-fed channel.
+	p.startTUNReader(ctx)
 
 	// 2. Firewall re-activate (SANS Deactivate préalable — AC3).
 	// Réutilise l'instance existante si possible (évite fuite goroutine
