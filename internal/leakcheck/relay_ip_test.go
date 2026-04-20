@@ -30,15 +30,32 @@ func (s *stubDoH) Resolve(_ context.Context, _ string) (netip.Addr, error) {
 	return s.addr, s.err
 }
 
-func TestNewRelayIPResolver_EmptyDomain(t *testing.T) {
-	if _, err := NewRelayIPResolver("", nil); !errors.Is(err, ErrRelayDomainEmpty) {
+// staticDomain returns a domainFn that always yields the same domain.
+// Used by tests that don't exercise domain switches.
+func staticDomain(d string) func() string {
+	return func() string { return d }
+}
+
+func TestNewRelayIPResolver_NilDomainFn(t *testing.T) {
+	if _, err := NewRelayIPResolver(nil, nil); !errors.Is(err, ErrRelayDomainEmpty) {
 		t.Fatalf("expected ErrRelayDomainEmpty, got %v", err)
+	}
+}
+
+func TestRelayIPResolver_EmptyDomainAtResolveTime(t *testing.T) {
+	doh := &stubDoH{addr: netip.MustParseAddr("198.51.100.7")}
+	r, err := NewRelayIPResolver(staticDomain(""), doh)
+	if err != nil {
+		t.Fatalf("NewRelayIPResolver: %v", err)
+	}
+	if _, err := r.ExpectedIP(context.Background()); !errors.Is(err, ErrRelayDomainEmpty) {
+		t.Fatalf("expected ErrRelayDomainEmpty when domainFn returns empty, got %v", err)
 	}
 }
 
 func TestRelayIPResolver_FreshLookup(t *testing.T) {
 	doh := &stubDoH{addr: netip.MustParseAddr("198.51.100.7")}
-	r, err := NewRelayIPResolver("relay.example.com", doh)
+	r, err := NewRelayIPResolver(staticDomain("relay.example.com"), doh)
 	if err != nil {
 		t.Fatalf("NewRelayIPResolver: %v", err)
 	}
@@ -57,7 +74,7 @@ func TestRelayIPResolver_FreshLookup(t *testing.T) {
 
 func TestRelayIPResolver_CacheHit(t *testing.T) {
 	doh := &stubDoH{addr: netip.MustParseAddr("198.51.100.7")}
-	r, err := NewRelayIPResolver("relay.example.com", doh)
+	r, err := NewRelayIPResolver(staticDomain("relay.example.com"), doh)
 	if err != nil {
 		t.Fatalf("NewRelayIPResolver: %v", err)
 	}
@@ -74,6 +91,43 @@ func TestRelayIPResolver_CacheHit(t *testing.T) {
 	}
 }
 
+// TestRelayIPResolver_DomainChangeInvalidatesCache is the regression test
+// for the "leak every 10 min after country switch" bug. When domainFn
+// returns a new domain, ExpectedIP must skip the cache and re-query DoH
+// against the new domain — otherwise STUN observations of the new relay
+// would be compared against the old relay's IP, firing a faux LEAK_DETECTED
+// on every scheduler tick until the service restarts.
+func TestRelayIPResolver_DomainChangeInvalidatesCache(t *testing.T) {
+	doh := &stubDoH{
+		sequence: []netip.Addr{
+			netip.MustParseAddr("198.51.100.1"), // old relay (gb-...)
+			netip.MustParseAddr("203.0.113.5"),  // new relay (es-...)
+		},
+	}
+	domain := "gb-001.levoile.dev"
+	r, err := NewRelayIPResolver(func() string { return domain }, doh)
+	if err != nil {
+		t.Fatalf("NewRelayIPResolver: %v", err)
+	}
+
+	ip, err := r.ExpectedIP(context.Background())
+	if err != nil || ip.String() != "198.51.100.1" {
+		t.Fatalf("first = %v, %v; want 198.51.100.1, nil", ip, err)
+	}
+
+	// Simulate a country switch: the domain callback now returns a new
+	// relay domain, even though the cache is still within TTL.
+	domain = "es-001.levoile.dev"
+
+	ip, err = r.ExpectedIP(context.Background())
+	if err != nil || ip.String() != "203.0.113.5" {
+		t.Fatalf("after domain change = %v, %v; want 203.0.113.5, nil", ip, err)
+	}
+	if got := doh.calls.Load(); got != 2 {
+		t.Errorf("doh calls = %d, want 2 (domain change forces re-query)", got)
+	}
+}
+
 func TestRelayIPResolver_CacheExpiry(t *testing.T) {
 	doh := &stubDoH{
 		sequence: []netip.Addr{
@@ -81,7 +135,7 @@ func TestRelayIPResolver_CacheExpiry(t *testing.T) {
 			netip.MustParseAddr("198.51.100.2"),
 		},
 	}
-	r, err := NewRelayIPResolver("relay.example.com", doh)
+	r, err := NewRelayIPResolver(staticDomain("relay.example.com"), doh)
 	if err != nil {
 		t.Fatalf("NewRelayIPResolver: %v", err)
 	}
@@ -109,7 +163,7 @@ func TestRelayIPResolver_CacheExpiry(t *testing.T) {
 
 func TestRelayIPResolver_ResolverError_DoesNotPolluteCache(t *testing.T) {
 	doh := &stubDoH{err: errors.New("upstream down")}
-	r, err := NewRelayIPResolver("relay.example.com", doh)
+	r, err := NewRelayIPResolver(staticDomain("relay.example.com"), doh)
 	if err != nil {
 		t.Fatalf("NewRelayIPResolver: %v", err)
 	}
@@ -129,7 +183,7 @@ func TestRelayIPResolver_ResolverError_DoesNotPolluteCache(t *testing.T) {
 
 func TestRelayIPResolver_EmptyResult(t *testing.T) {
 	doh := &stubDoH{addr: netip.Addr{}} // invalid
-	r, err := NewRelayIPResolver("relay.example.com", doh)
+	r, err := NewRelayIPResolver(staticDomain("relay.example.com"), doh)
 	if err != nil {
 		t.Fatalf("NewRelayIPResolver: %v", err)
 	}
@@ -140,7 +194,7 @@ func TestRelayIPResolver_EmptyResult(t *testing.T) {
 }
 
 func TestRelayIPResolver_NilResolver(t *testing.T) {
-	r, err := NewRelayIPResolver("relay.example.com", nil)
+	r, err := NewRelayIPResolver(staticDomain("relay.example.com"), nil)
 	if err != nil {
 		t.Fatalf("NewRelayIPResolver: %v", err)
 	}
@@ -157,7 +211,7 @@ func TestRelayIPResolver_Invalidate(t *testing.T) {
 			netip.MustParseAddr("198.51.100.2"),
 		},
 	}
-	r, err := NewRelayIPResolver("relay.example.com", doh)
+	r, err := NewRelayIPResolver(staticDomain("relay.example.com"), doh)
 	if err != nil {
 		t.Fatalf("NewRelayIPResolver: %v", err)
 	}

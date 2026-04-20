@@ -27,36 +27,45 @@ type DoHResolver interface {
 }
 
 // ErrRelayDomainEmpty is returned when the resolver is constructed without a
-// relay domain. The service must not start the leak scheduler in that case.
+// domain function, or when the function returns an empty string at resolve
+// time (the active relay domain hasn't been set yet, or was cleared).
 var ErrRelayDomainEmpty = errors.New("leakcheck: relay domain is empty")
 
 // RelayIPResolver resolves the active relay's public IP via DoH and caches
 // the result for a short TTL so each leak-check cycle doesn't hit the DoH
 // upstream. Callers inject a DoHResolver to keep the leakcheck package
 // free of a hard dependency on the registry package.
+//
+// The domain is read through a callback on every ExpectedIP() call so the
+// resolver automatically tracks country switches and inter-country failovers
+// (the Client.RelayDomain method value is the typical source). The cache is
+// keyed by domain — a domain change auto-invalidates the cached IP, closing
+// the false-LEAK_DETECTED window that a figé domain would leave open.
 type RelayIPResolver struct {
-	domain   string
+	domainFn func() string
 	resolver DoHResolver
 	ttl      time.Duration
 
-	mu        sync.Mutex
-	cachedIP  net.IP
-	expiresAt time.Time
+	mu           sync.Mutex
+	cachedIP     net.IP
+	cachedDomain string
+	expiresAt    time.Time
 	// nowFn is injectable so tests can advance time without sleeping.
 	nowFn func() time.Time
 }
 
-// NewRelayIPResolver creates a resolver for the given relay domain using
-// the supplied DoH resolver. Returns ErrRelayDomainEmpty if domain is empty.
-// A nil resolver is accepted at construction but every ExpectedIP call will
-// return an error — the service is expected to provide a working resolver
-// or disable the leak scheduler entirely.
-func NewRelayIPResolver(domain string, resolver DoHResolver) (*RelayIPResolver, error) {
-	if domain == "" {
+// NewRelayIPResolver creates a resolver backed by domainFn (evaluated on
+// every ExpectedIP call) using the supplied DoH resolver. Returns
+// ErrRelayDomainEmpty if domainFn is nil. A nil DoH resolver is accepted
+// at construction but every ExpectedIP call will return an error — the
+// service is expected to provide a working resolver or disable the leak
+// scheduler entirely.
+func NewRelayIPResolver(domainFn func() string, resolver DoHResolver) (*RelayIPResolver, error) {
+	if domainFn == nil {
 		return nil, ErrRelayDomainEmpty
 	}
 	return &RelayIPResolver{
-		domain:   domain,
+		domainFn: domainFn,
 		resolver: resolver,
 		ttl:      defaultRelayIPCacheTTL,
 		nowFn:    time.Now,
@@ -78,12 +87,17 @@ func (r *RelayIPResolver) WithNowFunc(fn func() time.Time) *RelayIPResolver {
 }
 
 // ExpectedIP returns the relay's public IP. It serves a cached value until
-// TTL expires, then re-queries DoH. On DoH failure the previous cache is
-// NOT reused — the caller receives an error so a stale value cannot turn
-// a real leak into a false OK.
+// TTL expires OR the domain changes, then re-queries DoH. On DoH failure
+// the previous cache is NOT reused — the caller receives an error so a
+// stale value cannot turn a real leak into a false OK.
 func (r *RelayIPResolver) ExpectedIP(ctx context.Context) (net.IP, error) {
+	domain := r.domainFn()
+	if domain == "" {
+		return nil, ErrRelayDomainEmpty
+	}
+
 	r.mu.Lock()
-	if r.cachedIP != nil && r.nowFn().Before(r.expiresAt) {
+	if r.cachedIP != nil && r.cachedDomain == domain && r.nowFn().Before(r.expiresAt) {
 		ip := cloneIP(r.cachedIP)
 		r.mu.Unlock()
 		return ip, nil
@@ -94,21 +108,22 @@ func (r *RelayIPResolver) ExpectedIP(ctx context.Context) (net.IP, error) {
 		return nil, fmt.Errorf("leakcheck: relay ip resolver: no DoH resolver configured")
 	}
 
-	addr, err := r.resolver.Resolve(ctx, r.domain)
+	addr, err := r.resolver.Resolve(ctx, domain)
 	if err != nil {
 		return nil, fmt.Errorf("leakcheck: relay ip resolver: %w", err)
 	}
 	if !addr.IsValid() {
-		return nil, fmt.Errorf("leakcheck: relay ip resolver: upstream returned no ip for %s", r.domain)
+		return nil, fmt.Errorf("leakcheck: relay ip resolver: upstream returned no ip for %s", domain)
 	}
 
 	ip := net.IP(addr.AsSlice())
 	if ip == nil {
-		return nil, fmt.Errorf("leakcheck: relay ip resolver: upstream returned no ip for %s", r.domain)
+		return nil, fmt.Errorf("leakcheck: relay ip resolver: upstream returned no ip for %s", domain)
 	}
 
 	r.mu.Lock()
 	r.cachedIP = ip
+	r.cachedDomain = domain
 	r.expiresAt = r.nowFn().Add(r.ttl)
 	r.mu.Unlock()
 
@@ -116,11 +131,15 @@ func (r *RelayIPResolver) ExpectedIP(ctx context.Context) (net.IP, error) {
 }
 
 // Invalidate drops the cached IP so the next ExpectedIP call re-queries
-// DoH. Useful after a failover event (story 4.4) where the active relay
-// changed and the previous cached IP is no longer the reference.
+// DoH. Redundant for domain-change scenarios (ExpectedIP auto-invalidates
+// when domainFn returns a different value) but kept for cases where the
+// caller wants a fresh lookup even for the same domain (e.g. intra-country
+// failover where the relay changed but the domain happens to match, or a
+// defensive refresh after a TUN recovery).
 func (r *RelayIPResolver) Invalidate() {
 	r.mu.Lock()
 	r.cachedIP = nil
+	r.cachedDomain = ""
 	r.expiresAt = time.Time{}
 	r.mu.Unlock()
 }

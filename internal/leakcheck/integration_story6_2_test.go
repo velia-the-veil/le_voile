@@ -18,7 +18,7 @@ func TestIntegration_CheckerWithRelayIPResolver_OK(t *testing.T) {
 	defer cleanup()
 
 	doh := &stubDoH{addr: netip.MustParseAddr(relayIP.String())}
-	resolver, err := NewRelayIPResolver("relay.example.com", doh)
+	resolver, err := NewRelayIPResolver(staticDomain("relay.example.com"), doh)
 	if err != nil {
 		t.Fatalf("NewRelayIPResolver: %v", err)
 	}
@@ -57,7 +57,7 @@ func TestIntegration_CheckerWithRelayIPResolver_LeakDetected(t *testing.T) {
 	defer cleanup()
 
 	doh := &stubDoH{addr: netip.MustParseAddr(relayIP.String())}
-	resolver, err := NewRelayIPResolver("relay.example.com", doh)
+	resolver, err := NewRelayIPResolver(staticDomain("relay.example.com"), doh)
 	if err != nil {
 		t.Fatalf("NewRelayIPResolver: %v", err)
 	}
@@ -93,7 +93,7 @@ func TestIntegration_CheckerWithRelayIPResolver_TUNDownHeuristic(t *testing.T) {
 	defer cleanup()
 
 	doh := &stubDoH{addr: netip.MustParseAddr(relayIP.String())}
-	resolver, err := NewRelayIPResolver("relay.example.com", doh)
+	resolver, err := NewRelayIPResolver(staticDomain("relay.example.com"), doh)
 	if err != nil {
 		t.Fatalf("NewRelayIPResolver: %v", err)
 	}
@@ -124,7 +124,7 @@ func TestIntegration_CheckerWithRelayIPResolver_DoHFailurePropagates(t *testing.
 	defer cleanup()
 
 	doh := &stubDoH{err: errDoHDown{}}
-	resolver, err := NewRelayIPResolver("relay.example.com", doh)
+	resolver, err := NewRelayIPResolver(staticDomain("relay.example.com"), doh)
 	if err != nil {
 		t.Fatalf("NewRelayIPResolver: %v", err)
 	}

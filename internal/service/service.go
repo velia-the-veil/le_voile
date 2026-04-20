@@ -1473,7 +1473,13 @@ func (p *Program) run() {
 		if dohErr != nil {
 			fmt.Fprintf(serviceStderr, "service: leakcheck doh: invalid configuration, leak comparison disabled: %v\n", dohErr)
 		} else {
-			relayResolver, resErr := leakcheck.NewRelayIPResolver(relayDomain, dohForLeakCheck)
+			// Read the active relay domain dynamically so country switches
+			// and inter-country failovers automatically retarget the DoH
+			// lookup — a domain figé here would fire a faux LEAK_DETECTED
+			// every tick for 10 min until the next restart (STUN sees the
+			// new relay's IP, ExpectedIP stays on the old domain → mismatch
+			// → RecoverFromAnomaly fires ≈600ms every cycle).
+			relayResolver, resErr := leakcheck.NewRelayIPResolver(client.RelayDomain, dohForLeakCheck)
 			if resErr != nil {
 				fmt.Fprintf(serviceStderr, "service: leakcheck: relay resolver init failed, leak comparison disabled: %v\n", resErr)
 			} else {
