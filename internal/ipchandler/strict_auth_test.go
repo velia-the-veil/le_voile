@@ -1,30 +1,31 @@
 package ipchandler
 
 import (
-	"os"
 	"testing"
 
 	"github.com/velia-the-veil/le_voile/internal/ipc"
 )
 
-// TestStrictAuth_Off_AllowsEmpty covers the default: without the env flag,
-// empty req.Auth is still accepted for mutating actions (backward compat).
-// The audit line still fires but the action proceeds.
-func TestStrictAuth_Off_AllowsEmpty(t *testing.T) {
-	os.Unsetenv("LEVOILE_IPC_STRICT_AUTH")
-	if strictIPCAuthRequired() {
-		t.Fatal("strictIPCAuthRequired = true without env set")
+// TestLegacyAuth_Default_Strict covers the 2026-04 flip: by default empty
+// req.Auth on a mutating action is rejected — legacyEmptyAuthAllowed must
+// return false when LEVOILE_IPC_LEGACY_AUTH is unset. t.Setenv("", "")
+// is not a thing, so we use the empty-string override which is still
+// falsy under our ==1 check. The parent TestMain sets LEGACY=1 for the
+// package; t.Setenv scopes this override to the current test only.
+func TestLegacyAuth_Default_Strict(t *testing.T) {
+	t.Setenv("LEVOILE_IPC_LEGACY_AUTH", "")
+	if legacyEmptyAuthAllowed() {
+		t.Fatal("legacyEmptyAuthAllowed = true when env is empty — default must be strict")
 	}
 }
 
-// TestStrictAuth_On_Enforced : when the operator sets LEVOILE_IPC_STRICT_AUTH=1,
-// the gate triggers and rejects empty-Auth mutating calls at the Handle
-// dispatch boundary — covered by returning an "auth_required" error
-// without ever touching service state.
-func TestStrictAuth_On_Enforced(t *testing.T) {
-	t.Setenv("LEVOILE_IPC_STRICT_AUTH", "1")
-	if !strictIPCAuthRequired() {
-		t.Fatal("strictIPCAuthRequired = false with env=1")
+// TestLegacyAuth_Opt_In : setting LEVOILE_IPC_LEGACY_AUTH=1 re-enables the
+// pre-2026-04 contract where mutating actions with empty Auth still
+// proceeded (for hosts stuck on an old UI build that cannot send a token).
+func TestLegacyAuth_Opt_In(t *testing.T) {
+	t.Setenv("LEVOILE_IPC_LEGACY_AUTH", "1")
+	if !legacyEmptyAuthAllowed() {
+		t.Fatal("legacyEmptyAuthAllowed = false with env=1")
 	}
 }
 

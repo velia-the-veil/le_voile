@@ -52,7 +52,13 @@ const CircuitBreakerAlertMessage = "Connexion impossible après 5 tentatives —
 // rollbackTimeout is the maximum time to wait for a tunnel connection after
 // a fresh install. If the tunnel doesn't connect within this time, a rollback
 // is triggered. Only applies when a new binary was just installed.
-const rollbackTimeout = 30 * time.Second
+// rollbackTimeout bounds how long the first Connect after a fresh install
+// waits before the post-install failure path kicks in. Sized to tolerate a
+// slow ADSL + QUIC handshake so a legitimately slow network does not trigger
+// a spurious rollback — the classifier in shouldRollbackOnConnectErr
+// distinguishes "binary actually broken" from "network just slow" regardless
+// of whether the timeout hits.
+const rollbackTimeout = 90 * time.Second
 
 // Config holds the parameters needed to construct a Program.
 type Config struct {
@@ -166,6 +172,12 @@ type Program struct {
 	done     chan struct{}
 	mu       sync.Mutex
 	stopOnce sync.Once // ensures Stop/RequestStop shutdown runs only once (AC6)
+
+	// bgWG tracks long-running background goroutines whose lifetime is tied
+	// to p.ctx but that do not expose a blocking Stop() (e.g. the updater
+	// loop, or the launcher wrapper goroutines). shutdown() waits on it
+	// with a timeout so we know everything is unwound before os.Exit(0).
+	bgWG sync.WaitGroup
 
 	// updateMu protects update-related state accessed by IPC handlers.
 	updateMu             sync.Mutex
@@ -501,6 +513,19 @@ func (p *Program) Start(s service.Service) error {
 	go p.run()
 	return nil
 }
+
+// shutdownStepTimeout bounds each individual teardown step so a single
+// stuck system call (WFP probe, policy registry, DNS resolver) cannot
+// swallow the whole 10s shutdownTimeout budget and leave later restore
+// steps unrun. Sized so 5 consecutive timeouts stay under shutdownTimeout.
+const shutdownStepTimeout = 2 * time.Second
+
+// bgWaitTimeout bounds how long shutdown() blocks waiting for launcher
+// goroutines (updater, watchdog launchers, ipcStart wrapper) to unwind
+// after p.ctx is cancelled. Short on purpose — these goroutines observe
+// ctx.Done() on their next tick, so anything above ~1s means something
+// is wedged and we prefer to exit rather than stall the SCM.
+const bgWaitTimeout = 1500 * time.Millisecond
 
 // shutdownTimeout is the maximum time Stop waits for graceful shutdown
 // before returning to let the OS terminate the process.
@@ -915,7 +940,9 @@ func (p *Program) run() {
 	ipcStart := p.ipcStart
 	p.mu.Unlock()
 	if ipcStart != nil {
+		p.bgWG.Add(1)
 		go func() {
+			defer p.bgWG.Done()
 			if err := ipcStart(ctx); err != nil {
 				fmt.Fprintf(serviceStderr, "service: ipc start: %v\n", err)
 			}
@@ -1012,7 +1039,7 @@ func (p *Program) run() {
 	}
 
 	// --- 0e. Detect real IP before tunnel connect ---
-	p.detectRealIP(ctx)
+	p.DetectRealIP(ctx)
 
 	// --- 0e-bis. Preflight : détection d'un VPN concurrent (story 2.3) ---
 	// Scan purement read-only : aucune interface, règle firewall, ni route
@@ -1214,12 +1241,19 @@ func (p *Program) run() {
 			connectCancel()
 		}
 		fmt.Fprintf(serviceStderr, "service: connect: %v\n", err)
-		// Attempt rollback if this failure happened after a fresh install.
-		// On success, schedule an OS service restart so the restored binary is loaded.
-		// Retrying the tunnel in the current process would still execute the new binary's
-		// code — a proper restart is required to pick up the restored binary from disk.
-		if p.tryRollbackIfNeeded(ctx, err) {
-			p.scheduleServiceRestart()
+		// Post-install rollback is gated to errors that actually implicate
+		// the new binary (bad signature, cert pinning mismatch, verify
+		// failure). A plain network timeout, DNS failure, or transient
+		// connection refused on a lossy ADSL is classified as "not the
+		// binary" and left to the normal reconnect loop — burning a
+		// rollback on a slow uplink would ship users back to the previous
+		// version and trap them there until the next update cycle.
+		if shouldRollbackOnConnectErr(err) {
+			if p.tryRollbackIfNeeded(ctx, err) {
+				p.scheduleServiceRestart()
+			}
+		} else if justInstalled {
+			fmt.Fprintf(serviceStderr, "service: connect: transient failure after fresh install, skipping rollback: %v\n", err)
 		}
 		// Clean up tunnel client that never connected to avoid leaking resources.
 		p.tunnelClient = nil
@@ -1519,7 +1553,9 @@ func (p *Program) run() {
 		func() { /* onRecovery: tray sees "pass" on next poll */ },
 	)
 	p.leakScheduler = lkScheduler
+	p.bgWG.Add(1)
 	go func() {
+		defer p.bgWG.Done()
 		if err := lkScheduler.Start(ctx); err != nil {
 			fmt.Fprintf(serviceStderr, "service: leak scheduler start: %v\n", err)
 		}
@@ -1534,7 +1570,9 @@ func (p *Program) run() {
 		blMgr := blocklist.NewManager(interval)
 		p.blocklistManager = blMgr
 		p.blocklistActive.Store(true)
+		p.bgWG.Add(1)
 		go func() {
+			defer p.bgWG.Done()
 			if err := blMgr.Start(ctx); err != nil {
 				fmt.Fprintf(serviceStderr, "service: blocklist manager start: %v\n", err)
 			}
@@ -1584,7 +1622,13 @@ func (p *Program) run() {
 				p.updateMu.Unlock()
 			})
 			p.updater = upd
-			go upd.Start(ctx)
+			p.bgWG.Add(1)
+			go func() {
+				defer p.bgWG.Done()
+				if err := upd.Start(ctx); err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+					fmt.Fprintf(serviceStderr, "service: updater exit: %v\n", err)
+				}
+			}()
 		}
 	}
 
@@ -1611,7 +1655,9 @@ func (p *Program) run() {
 					fmt.Fprintf(serviceStderr, "service: ui watchdog: init failed: %v\n", wdErr)
 				} else {
 					p.uiWatchdog = wd
+					p.bgWG.Add(1)
 					go func() {
+						defer p.bgWG.Done()
 						if err := wd.Start(ctx); err != nil {
 							fmt.Fprintf(serviceStderr, "service: ui watchdog: %v\n", err)
 						}
@@ -1691,10 +1737,11 @@ func (p *Program) shutdown() {
 
 	// 3. Deactivate kill switch if active
 	if p.killSwitch != nil && p.killSwitch.IsActive() {
-		restoreCtx := context.Background()
+		restoreCtx, restoreCancel := context.WithTimeout(context.Background(), shutdownStepTimeout)
 		if err := p.killSwitch.Deactivate(restoreCtx); err != nil {
 			fmt.Fprintf(serviceStderr, "service: kill switch deactivate: %v\n", err)
 		}
+		restoreCancel()
 	}
 
 	// 4. Restore browser policies (service owns this — AC5)
@@ -1703,28 +1750,31 @@ func (p *Program) shutdown() {
 	p.browserPolicyMgr = nil
 	p.browserPolicyMu.Unlock()
 	if bpMgr != nil {
-		restoreCtx := context.Background()
+		restoreCtx, restoreCancel := context.WithTimeout(context.Background(), shutdownStepTimeout)
 		if err := bpMgr.RestorePolicies(restoreCtx); err != nil {
 			fmt.Fprintf(serviceStderr, "service: browser policies restore: %v\n", err)
 		}
+		restoreCancel()
 	}
 
 	// 5. Restore DNS resolver (service owns this — AC5)
 	if p.dnsManager != nil {
-		restoreCtx := context.Background()
+		restoreCtx, restoreCancel := context.WithTimeout(context.Background(), shutdownStepTimeout)
 		if err := p.dnsManager.RestoreResolver(restoreCtx); err != nil {
 			fmt.Fprintf(serviceStderr, "service: dns restore resolver: %v\n", err)
 		}
+		restoreCancel()
 	}
 
 	// 6. Verify DNS restoration via watchdog
 	if p.dnsManager != nil && p.watchdog != nil {
 		originalDNS := p.dnsManager.OriginalResolver()
 		if originalDNS != "" {
-			restoreCtx := context.Background()
+			restoreCtx, restoreCancel := context.WithTimeout(context.Background(), shutdownStepTimeout)
 			if err := p.watchdog.VerifyAndRestore(restoreCtx, originalDNS); err != nil {
 				fmt.Fprintf(serviceStderr, "service: watchdog verify: %v\n", err)
 			}
+			restoreCancel()
 		}
 	}
 
@@ -1754,9 +1804,11 @@ func (p *Program) shutdown() {
 	// 8a. Deactivate firewall kill switch (après tunnel disconnect, avant routing teardown).
 	// Ordre strict : tunnel → firewall → routing → tun.Close.
 	if p.firewallMgr != nil {
-		if err := p.firewallMgr.Deactivate(context.Background()); err != nil {
+		fwCtx, fwCancel := context.WithTimeout(context.Background(), shutdownStepTimeout)
+		if err := p.firewallMgr.Deactivate(fwCtx); err != nil {
 			fmt.Fprintf(serviceStderr, "service: firewall deactivate: %v\n", err)
 		}
+		fwCancel()
 		p.firewallMgr = nil
 	}
 
@@ -1793,6 +1845,22 @@ func (p *Program) shutdown() {
 	p.mu.Unlock()
 	if ipcStop != nil {
 		ipcStop()
+	}
+
+	// 10. Wait for launcher goroutines (updater loop, watchdog launcher
+	// wrappers, ipcStart wrapper) to exit. Their ctx has already been
+	// cancelled via p.cancel() in Stop(); this is just a best-effort
+	// join so os.Exit(0) does not race them mid-log. Bounded so a truly
+	// wedged goroutine cannot hold the SCM shutdown hostage.
+	bgDone := make(chan struct{})
+	go func() {
+		p.bgWG.Wait()
+		close(bgDone)
+	}()
+	select {
+	case <-bgDone:
+	case <-time.After(bgWaitTimeout):
+		fmt.Fprintf(serviceStderr, "service: background goroutines still running after %s — exiting anyway\n", bgWaitTimeout)
 	}
 }
 
@@ -1932,6 +2000,43 @@ func (p *Program) tryInstallStagedUpdate(ctx context.Context) {
 
 // tryRollbackIfNeeded checks if a rollback should be performed after a tunnel failure.
 // Returns true if rollback was performed successfully, false otherwise.
+// shouldRollbackOnConnectErr reports whether a Connect error is a strong
+// signal that the *new* binary is at fault (bad crypto, corrupted signature
+// path, cert pinning mismatch) rather than a transient network problem. Only
+// the former should trigger a rollback — the latter is routinely caused by
+// a slow uplink, a DNS flake, or a relay restart during the first tunnel
+// handshake on a freshly installed version.
+//
+// Classification:
+//   - ErrVerificationFailed / ErrPinningFailed → rollback (binary vs crypto)
+//   - context.DeadlineExceeded / Canceled     → transient (don't rollback)
+//   - net.Error (Timeout/Temporary) or DNS    → transient (don't rollback)
+//   - anything else                           → rollback (unknown,
+//     original behaviour preserved so genuine "new binary segfaults in
+//     Connect" paths still escalate)
+func shouldRollbackOnConnectErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, tunnel.ErrVerificationFailed) || errors.Is(err, tunnel.ErrPinningFailed) {
+		return true
+	}
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+		return false
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) {
+		if netErr.Timeout() {
+			return false
+		}
+	}
+	var dnsErr *net.DNSError
+	if errors.As(err, &dnsErr) {
+		return false
+	}
+	return true
+}
+
 func (p *Program) tryRollbackIfNeeded(ctx context.Context, tunnelErr error) bool {
 	if p.config.UpdateStagingDir == "" {
 		return false
@@ -2228,7 +2333,9 @@ func (p *Program) startTUNWatchdog(ctx context.Context) {
 		return
 	}
 	p.tunWatchdog = wd
+	p.bgWG.Add(1)
 	go func() {
+		defer p.bgWG.Done()
 		if err := wd.Start(ctx); err != nil {
 			fmt.Fprintf(serviceStderr, "service: tun watchdog exit: %v\n", err)
 		}
@@ -2819,13 +2926,34 @@ func (p *Program) waitForCaptiveClear(ctx context.Context, lanGW net.IP) {
 	}
 }
 
-// detectRealIP fetches the client's real public IP before tunnel connection.
-// Uses a public API; best-effort with a 5s timeout.
-func (p *Program) detectRealIP(ctx context.Context) {
+// DetectRealIP fetches the client's real public IP from the relay's /ip
+// endpoint (best-effort, 5 s timeout). Using the relay — rather than a
+// third-party echo like api.ipify.org — has two properties we need:
+//  1. The endpoint is reachable even once the kill switch is armed, since
+//     the relay is the one address the firewall keeps allowed. This lets
+//     us re-detect the real IP on every manual Connect, catching ISP
+//     address rotations that happened after service boot.
+//  2. No extra DNS/TLS footprint leaked to a third party — the host was
+//     going to resolve and TLS-handshake the relay anyway.
+// Exported so ipchandler can refresh the value on each Connect.
+func (p *Program) DetectRealIP(ctx context.Context) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	detectCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
-	req, err := http.NewRequestWithContext(detectCtx, http.MethodGet, "https://api.ipify.org", nil)
+	relayDomain := p.config.RelayDomain
+	if tc := p.tunnelClient; tc != nil {
+		if d := tc.RelayDomain(); d != "" {
+			relayDomain = d
+		}
+	}
+	if relayDomain == "" {
+		return
+	}
+
+	req, err := http.NewRequestWithContext(detectCtx, http.MethodGet, "https://"+relayDomain+"/ip", nil)
 	if err != nil {
 		return
 	}

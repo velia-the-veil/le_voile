@@ -46,7 +46,7 @@ principal touché.
 |----|---------|------------|-------------|
 | C1 | Pas d'anti-downgrade persistant | `max_seen_version.txt` persistant (0600), rejet `ErrDowngradeRejected` si release candidate < version max vue | [internal/updater/rollback.go](internal/updater/rollback.go), [updater.go](internal/updater/updater.go) |
 | C2 | HTTP `/api/*` sans vérif Origin/Host | Middleware `originGuard` : rejette toute requête dont `Host`, `Origin` ou `Referer` pointe hors loopback (bloque DNS rebinding + page web malveillante) | [internal/ui/httpserver.go](internal/ui/httpserver.go) |
-| C3 | Windows pipe DACL permissive + empty `req.Auth` accepté | Audit-log stderr pour chaque action mutante sans Auth + gate `LEVOILE_IPC_STRICT_AUTH=1` qui rejette (Status=error, `auth_required`). Limite architecturale du même-user documentée ci-dessous. | [internal/ipchandler/handler.go](internal/ipchandler/handler.go) |
+| C3 | Windows pipe DACL permissive + empty `req.Auth` accepté | **Strict par défaut depuis 2026-04-21** : toute action mutante avec `req.Auth == ""` est rejetée avec `auth_required`. Audit-log stderr conservé. Opt-out legacy via `LEVOILE_IPC_LEGACY_AUTH=1` pour hosts bloqués sur une vieille UI. `cmd/ui` charge le token `ctlauth` à l'init et l'envoie sur chaque IPC mutant. Limite architecturale du même-user documentée ci-dessous. | [internal/ipchandler/handler.go](internal/ipchandler/handler.go), [internal/ui/httpserver.go](internal/ui/httpserver.go), [cmd/ui/main.go](cmd/ui/main.go) |
 | C4 | Session token relay sans nonce | Champ `Nonce` (16 bytes hex aléatoires) ajouté à `SessionTokenPayload` ; couvert par la signature Ed25519 ; deux tokens pour la même IP sont garantis distincts → plumbing en place pour cache de replay server-side. | [internal/relay/verify_handler.go](internal/relay/verify_handler.go) |
 | C5 | Race TUN↔firewall dans `recoverTUN` | Réordonné : `firewall.Activate` AVANT `routing.Setup`. Le flush+replace atomique (nftables/WFP) ferme la fenêtre microscopique où le routing pouvait pointer sur un TUN sans règles à jour. | [internal/service/service.go](internal/service/service.go) |
 | C6 | Extension navigateur : permissions `<all_urls>` + bypass sans `proxyAlive` | **Extension supprimée intégralement** (WebRTC couvert par les policies firefox/chromium + SysProxy + STUN watchdog). Voir [commit 879fc18](https://github.com/velia-the-veil/le_voile/commit/879fc18) | — |
@@ -78,12 +78,23 @@ même compte utilisateur sans Integrity Levels (AppContainer), qui
 nécessite une restructuration complète du binaire.
 
 **Mitigation appliquée** :
-- Chaque action mutante sans `req.Auth` émet une ligne
-  `SECURITY AUDIT: mutating IPC without req.Auth action=X` sur stderr
-  (journald / Event Log) — un SIEM détecte les patterns anormaux.
-- `LEVOILE_IPC_STRICT_AUTH=1` rejette ces actions : déploiement-par-déploiement,
-  une fois que la UI ship un token ctl/ui valide, les opérateurs
-  flippent ce flag pour fermer la voie empty-Auth.
+- **Strict par défaut depuis 2026-04-21** : toute action mutante avec
+  `req.Auth == ""` est refusée avec `Status=error, Error=auth_required`.
+  Opt-out explicite via `LEVOILE_IPC_LEGACY_AUTH=1` uniquement pour les
+  hosts qui n'ont pas encore une `levoile-ui` à jour.
+- Chaque action mutante sans `req.Auth` émet malgré tout une ligne
+  `SECURITY AUDIT: mutating IPC without req.Auth action=X legacy=...`
+  sur stderr (journald / Event Log) — un SIEM détecte les patterns anormaux
+  que le mode soit strict ou legacy.
+- `cmd/ui/main.go` charge le token `ctlauth` via `ctlauth.Load()` au
+  démarrage et l'envoie en `req.Auth` sur chaque appel IPC (quit +
+  `/api/*` mutants). Les hosts où le token n'est pas encore écrit
+  (service pas encore bootstrappé) tombent dans le rejet strict et
+  l'utilisateur relance l'UI une fois le service démarré.
+- L'ancien flag `LEVOILE_IPC_STRICT_AUTH` est devenu no-op (ignoré) pour
+  éviter qu'un `=1` résiduel sur un host déployé ne casse une logique
+  inverse ; la var `LEVOILE_IPC_LEGACY_AUTH=1` prend la place pour
+  opter explicitement dans le comportement pré-flip.
 
 **Fix cryptographique futur** : token `ui.token` distribué par le service
 au démarrage dans un emplacement lisible uniquement par l'user interactif,

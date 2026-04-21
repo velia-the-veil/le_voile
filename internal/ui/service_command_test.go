@@ -15,8 +15,8 @@ func TestServiceStartHintForOS_Windows(t *testing.T) {
 	if h.OS != "windows" {
 		t.Errorf("OS = %q, want windows", h.OS)
 	}
-	if h.Command != "sc start levoile-service" {
-		t.Errorf("Command = %q, want 'sc start levoile-service'", h.Command)
+	if h.Command != "sc start LeVoile" {
+		t.Errorf("Command = %q, want 'sc start LeVoile'", h.Command)
 	}
 	if !strings.Contains(h.HumanMessage, "Services.msc") {
 		t.Errorf("HumanMessage should mention Services.msc, got %q", h.HumanMessage)

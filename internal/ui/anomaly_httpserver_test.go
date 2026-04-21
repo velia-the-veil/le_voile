@@ -54,7 +54,7 @@ func TestAPIStatus_AnomalyPassThrough(t *testing.T) {
 					AnomalyReason:  tc.reason,
 				},
 			}
-			srv := NewHTTPServer(NewSafeIPCClient(client), nil)
+			srv := NewHTTPServer(NewSafeIPCClient(client), nil, "")
 
 			req := httptest.NewRequest(http.MethodGet, "/api/status", nil)
 			w := httptest.NewRecorder()

@@ -457,7 +457,7 @@ func TestUpdateTrayState_LeaveDegraded_RestoresConnectedTooltip(t *testing.T) {
 // AC1 — TriggerUIEvent + /api/ui-event have read-and-clear semantics, used by
 // handleKillSwitchMenu to ask the frontend to display the destructive modal.
 func TestTriggerUIEvent_ReadAndClear(t *testing.T) {
-	srv := NewHTTPServer(NewSafeIPCClient(&mockIPCClient{}), nil)
+	srv := NewHTTPServer(NewSafeIPCClient(&mockIPCClient{}), nil, "")
 	srv.TriggerUIEvent("killswitch_modal")
 
 	if got := srv.pendingUIEvent.take(); got != "killswitch_modal" {

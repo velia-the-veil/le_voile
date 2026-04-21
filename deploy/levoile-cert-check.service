@@ -1,0 +1,7 @@
+[Unit]
+Description=Le Voile TLS cert expiry watchdog
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/levoile/cert-expiry-check.sh

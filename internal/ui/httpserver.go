@@ -85,17 +85,30 @@ type HTTPServer struct {
 	// loopback TCP listener to a unix socket with restrictive perms (deferred
 	// Epic 7 follow-up).
 	csrfToken string
+
+	// authToken is the hex-encoded ctlauth machine-local token that the
+	// service expects on mutating IPC requests once strict-auth is on. Loaded
+	// once at UI start from ctlauth.DefaultPath(). Empty string when the file
+	// could not be read (service not yet bootstrapped, non-default install
+	// path, or a permission mismatch); sendIPC then falls back to the
+	// pre-strict-auth contract and the service still accepts the call while
+	// emitting a "SECURITY AUDIT" stderr line that operators can monitor.
+	authToken string
 }
 
 // NewHTTPServer creates an HTTP server bound to 127.0.0.1 with a dynamic port.
 // frontendFS should be an embed.FS containing the frontend assets (index.html, src/, assets/).
-func NewHTTPServer(ipcClient *SafeIPCClient, frontendFS fs.FS) *HTTPServer {
+// authToken is the hex-encoded ctlauth token used on mutating IPC calls; pass
+// empty string when running without an authenticated IPC channel (tests, or a
+// service that has not yet bootstrapped the token file).
+func NewHTTPServer(ipcClient *SafeIPCClient, frontendFS fs.FS, authToken string) *HTTPServer {
 	s := &HTTPServer{
 		mux:       http.NewServeMux(),
 		ipc:       ipcClient,
 		ready:     make(chan struct{}),
 		prefs:     NewPrefsStore(),
 		csrfToken: newCSRFToken(),
+		authToken: authToken,
 	}
 
 	// Serve frontend assets at root.
@@ -531,7 +544,7 @@ func (s *HTTPServer) handleCountry(w http.ResponseWriter, r *http.Request) {
 // build their own response structs and ignore the Error field, preserving
 // their pre-existing silent-fallback UX.
 func (s *HTTPServer) sendIPC(ctx context.Context, action, value string) ipc.Response {
-	resp, err := s.ipc.SendContext(ctx, ipc.Request{Action: action, Value: value})
+	resp, err := s.ipc.SendContext(ctx, ipc.Request{Action: action, Value: value, Auth: s.authToken})
 	if err != nil {
 		return ipc.Response{Status: ipc.StatusDisconnected, Error: "service_unreachable"}
 	}

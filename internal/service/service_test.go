@@ -3,6 +3,9 @@ package service
 import (
 	"bytes"
 	"context"
+	"errors"
+	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -678,8 +681,39 @@ func TestService_TunnelSuccess_ClearsRollbackState(t *testing.T) {
 }
 
 func TestService_RollbackTimeout_Constant(t *testing.T) {
-	if rollbackTimeout != 30*time.Second {
-		t.Errorf("rollbackTimeout = %v, want 30s", rollbackTimeout)
+	// Sized to tolerate a slow ADSL + QUIC handshake on a freshly installed
+	// version before the post-install path kicks in (see 2026-04-21 fix).
+	if rollbackTimeout != 90*time.Second {
+		t.Errorf("rollbackTimeout = %v, want 90s", rollbackTimeout)
+	}
+}
+
+// TestShouldRollbackOnConnectErr documents the 2026-04-21 classifier flip:
+// transient network/DNS/timeout errors MUST NOT trigger a post-install
+// rollback (they used to on a slow ADSL and trapped users on the prior
+// version), while cryptographic / pinning failures MUST still rollback
+// because those implicate the new binary itself.
+func TestShouldRollbackOnConnectErr(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"nil error", nil, false},
+		{"deadline exceeded", context.DeadlineExceeded, false},
+		{"context canceled", context.Canceled, false},
+		{"verification failed", tunnel.ErrVerificationFailed, true},
+		{"pinning failed", tunnel.ErrPinningFailed, true},
+		{"wrapped verification failed", fmt.Errorf("tunnel: connect: %w", tunnel.ErrVerificationFailed), true},
+		{"DNS error", &net.DNSError{Err: "no such host"}, false},
+		{"unknown error", errors.New("some other failure"), true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := shouldRollbackOnConnectErr(tc.err); got != tc.want {
+				t.Errorf("shouldRollbackOnConnectErr(%v) = %v, want %v", tc.err, got, tc.want)
+			}
+		})
 	}
 }
 

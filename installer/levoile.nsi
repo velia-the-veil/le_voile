@@ -43,8 +43,20 @@ L'installation va déposer le service, l'UI et la DLL Wintun signée Microsoft\
  dans :$\r$\n\
 $PROGRAMFILES64\${APP_KEY}"
 
+; Post-install launch via MUI finish page.
+; Canonical NSIS pattern : MUI_FINISHPAGE_RUN spawns the target through
+; ShellExecute in the user's shell context. Replaces the former `Sleep 3000 +
+; Exec` tail of the Install section, which created a WebView2 cold-start race :
+; the UI process inherited handles/env from the elevated NSIS installer and the
+; webview came up blank (native titlebar visible, body empty) on the very first
+; post-install launch. Second launches via the shortcut worked fine because
+; ShellExecute wasn't going through the Exec inheritance path.
+!define MUI_FINISHPAGE_RUN "$INSTDIR\${UI_EXE}"
+!define MUI_FINISHPAGE_RUN_TEXT "Lancer Le Voile maintenant"
+
 !insertmacro MUI_PAGE_WELCOME
 !insertmacro MUI_PAGE_INSTFILES
+!insertmacro MUI_PAGE_FINISH
 
 !insertmacro MUI_LANGUAGE "French"
 
@@ -102,9 +114,7 @@ Section "Install"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Run" \
     "${APP_KEY}" '"$INSTDIR\${UI_EXE}"'
 
-  ; Launch UI after service has had time to initialize.
-  Sleep 3000
-  Exec '"$INSTDIR\${UI_EXE}"'
+  ; Post-install launch is now driven by MUI_FINISHPAGE_RUN (see MUI Settings).
 
   ; Desktop shortcut — starts the UI (run as admin)
   CreateShortCut "$DESKTOP\${APP_NAME}.lnk" "$INSTDIR\${UI_EXE}" "" \

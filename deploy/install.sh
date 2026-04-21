@@ -90,6 +90,28 @@ systemctl daemon-reload
 # Activer et demarrer le service (AC3: enable --now)
 systemctl enable --now "${SERVICE_NAME}"
 
+# ---
+# Ops auxiliaires (audit-fixes-relais-2026-04-21) : cert-expiry watchdog +
+# deploy hook certbot. Installation OPPORTUNISTE : si les artefacts sont
+# presents dans le repertoire de staging, on les pose ; sinon on saute
+# pour rester compatible avec les packages de release plus anciens.
+if [ -f "${SCRIPT_DIR}/cert-expiry-check.sh" ] \
+   && [ -f "${SCRIPT_DIR}/levoile-cert-check.service" ] \
+   && [ -f "${SCRIPT_DIR}/levoile-cert-check.timer" ]; then
+    install -m 0755 "${SCRIPT_DIR}/cert-expiry-check.sh" "${INSTALL_DIR}/cert-expiry-check.sh"
+    install -m 0644 "${SCRIPT_DIR}/levoile-cert-check.service" /etc/systemd/system/levoile-cert-check.service
+    install -m 0644 "${SCRIPT_DIR}/levoile-cert-check.timer"   /etc/systemd/system/levoile-cert-check.timer
+    systemctl daemon-reload
+    systemctl enable --now levoile-cert-check.timer
+    echo "Installed: cert expiry watchdog (journalctl -t levoile-cert-expiry)"
+fi
+
+if [ -f "${SCRIPT_DIR}/renewal-hook-restart-relay.sh" ]; then
+    install -m 0755 -D "${SCRIPT_DIR}/renewal-hook-restart-relay.sh" \
+        /etc/letsencrypt/renewal-hooks/deploy/restart-levoile-relay.sh
+    echo "Installed: certbot deploy hook (restart levoile-relay on renewal)"
+fi
+
 echo "Le Voile relay installed and started successfully."
 echo "Check status: systemctl status ${SERVICE_NAME}"
 echo "View health:  curl -k https://localhost/health"

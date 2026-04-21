@@ -46,14 +46,23 @@ func isMutatingAction(a string) bool {
 	return ok
 }
 
-// strictIPCAuthRequired returns true when LEVOILE_IPC_STRICT_AUTH=1 is set.
-// Flipping this requires the UI build to ship ui.token handling (see
-// SECURITY.md §C3 follow-up). Off by default so existing installs are not
-// broken by a service upgrade alone; once the fleet is on a UI version that
-// authenticates, operators flip the flag to close the window where an
-// empty-Auth same-user process can issue mutating commands.
-func strictIPCAuthRequired() bool {
-	return os.Getenv("LEVOILE_IPC_STRICT_AUTH") == "1"
+// legacyEmptyAuthAllowed returns true when the operator explicitly opted
+// back into the pre-2026-04 contract that accepted mutating IPC requests
+// with an empty req.Auth. Set LEVOILE_IPC_LEGACY_AUTH=1 to re-enable that
+// path — only useful on a host where a stale UI build has not yet been
+// upgraded to the token-aware one and the mismatch is producing
+// "auth_required" errors on every click.
+//
+// Default (env unset or any other value) is strict: empty-Auth mutations
+// are rejected. The flip from opt-in-strict (pre-2026-04) to opt-out-legacy
+// is deliberate — the window where any same-user process can drive the
+// service is closed by default now that cmd/ui loads the ctlauth token on
+// startup (see cmd/ui/main.go).
+//
+// The older LEVOILE_IPC_STRICT_AUTH variable is now a no-op and is kept
+// only so a leftover =1 from previous rollouts does not surprise anyone.
+func legacyEmptyAuthAllowed() bool {
+	return os.Getenv("LEVOILE_IPC_LEGACY_AUTH") == "1"
 }
 
 // uiSupervisionFromSnapshot maps the in-process uiwatchdog snapshot to
@@ -119,30 +128,16 @@ type Options struct {
 
 // Handle dispatches an IPC request to the appropriate service component.
 func Handle(prg *svc.Program, req ipc.Request, opts Options) ipc.Response {
-	// Fix C3 (audit sécurité) — authentication telemetry and opt-in strict
-	// gate for mutating actions. The legacy path accepts req.Auth == "" as a
-	// trusted "UI source" because the UI and malicious same-user processes
-	// are indistinguishable on Windows (same DACL, same pipe). We cannot
-	// close that window architecturally without a DPAPI-bound token, but we
-	// can:
-	//   (1) log every empty-Auth mutating call so operators get a forensic
-	//       trail if malware starts driving the service,
-	//   (2) reject those calls entirely when the operator sets
-	//       LEVOILE_IPC_STRICT_AUTH=1 — the expected posture once the UI
-	//       build that reads a per-machine ui.token is rolled out.
-	if isMutatingAction(req.Action) && req.Auth == "" {
-		fmt.Fprintf(os.Stderr, "SECURITY AUDIT: mutating IPC without req.Auth action=%s strict=%v\n",
-			req.Action, strictIPCAuthRequired())
-		if strictIPCAuthRequired() {
-			return ipc.Response{Status: ipc.StatusError, Error: "auth_required"}
-		}
-	}
-
 	// Story 7.5 / NFR9j — when startup integrity verification failed, refuse
 	// any mutating action. GetStatus stays open so the UI can fetch the
 	// integrity_failed flag and render the recovery banner. Read-only probes
 	// (leakcheck, update status, registry) also stay open: they don't persist
 	// anything and the UI still needs them to show accurate state.
+	//
+	// This gate runs BEFORE the auth gate so an installation whose config was
+	// tampered with returns the actionable integrity_failed signal (which the
+	// UI maps to a recovery banner) rather than a generic auth_required that
+	// would mask the real failure mode.
 	if prg.IntegrityFailed() {
 		switch req.Action {
 		case ipc.ActionConnect,
@@ -157,6 +152,21 @@ func Handle(prg *svc.Program, req ipc.Request, opts Options) ipc.Response {
 				Error:           "integrity_failed",
 				IntegrityFailed: true,
 			}
+		}
+	}
+
+	// Fix C3 (audit sécurité) — strict-by-default authentication gate. A
+	// mutating action with an empty req.Auth is rejected unless the operator
+	// has explicitly opted back into the pre-2026-04 legacy path via
+	// LEVOILE_IPC_LEGACY_AUTH=1 (documented in SECURITY.md §C3). The audit
+	// line still fires in both postures so operators can spot missing tokens
+	// even when legacy mode is keeping the install functional.
+	if isMutatingAction(req.Action) && req.Auth == "" {
+		legacy := legacyEmptyAuthAllowed()
+		fmt.Fprintf(os.Stderr, "SECURITY AUDIT: mutating IPC without req.Auth action=%s legacy=%v\n",
+			req.Action, legacy)
+		if !legacy {
+			return ipc.Response{Status: ipc.StatusError, Error: "auth_required"}
 		}
 	}
 	switch req.Action {
@@ -305,7 +315,24 @@ func handleGetStatus(prg *svc.Program) ipc.Response {
 		RelayDomain: relayDomain,
 	}
 
-	// Populate relay metadata from discoverer (best-effort).
+	// Populate relay metadata from discoverer (best-effort). We also
+	// self-heal two pieces of drift-prone state on every status read:
+	//
+	//  - prg.CurrentCountryCode can be stale when handleSelectCountry
+	//    updated tc.RelayDomain but tc.Connect failed, and the reconnector
+	//    later succeeded on the new relay without any code path calling
+	//    SetCurrentCountry again. The frontend then shows a green
+	//    "Connecter" button even though the tunnel IS on the requested
+	//    country. Deriving the code from tc.RelayDomain here and pushing
+	//    it back into the program keeps both aligned at the cost of one
+	//    map lookup + one atomic store per poll (~1 µs).
+	//
+	//  - VisibleIP lags the same way: if SetVisibleIP("") + DetectVisibleIP
+	//    never fired (Connect error path), the stale IP from the previous
+	//    relay keeps showing. Trigger a re-detect here when the tunnel is
+	//    connected but VisibleIP is empty or still matches the pre-switch
+	//    relay domain; DetectVisibleIP is cheap and idempotent.
+	derivedCode := ""
 	if disc := prg.Discoverer(); disc != nil {
 		for _, r := range disc.Relays() {
 			if r.Domain == relayDomain {
@@ -313,14 +340,20 @@ func handleGetStatus(prg *svc.Program) ipc.Response {
 				if lat := disc.LatencyFor(r.ID); lat > 0 {
 					resp.RelayLatency = fmt.Sprintf("%dms", lat.Milliseconds())
 				}
-				code := registry.ExtractCountryCode(r.ID, r.Domain)
-				if meta, ok := registry.CountryMetaMap[code]; ok {
+				derivedCode = registry.ExtractCountryCode(r.ID, r.Domain)
+				if meta, ok := registry.CountryMetaMap[derivedCode]; ok {
 					resp.Country = meta.Name
 					resp.CountryFlag = meta.Flag
 				}
 				break
 			}
 		}
+	}
+	if derivedCode != "" && prg.CurrentCountryCode() != derivedCode {
+		prg.SetCurrentCountry(derivedCode)
+	}
+	if state == tunnel.StateConnected && visibleIP == "" {
+		go prg.DetectVisibleIP(prg.Context())
 	}
 
 	// Include rollback info for tray polling (highest priority)
@@ -409,6 +442,11 @@ func handleConnect(prg *svc.Program) ipc.Response {
 	if r := prg.Reconnector(); r != nil {
 		r.Stop()
 	}
+	// Refresh the stored real IP in the background. Relay /ip is allowed
+	// through the kill switch so this works any time, and catches ISP
+	// address rotations that happened since the last boot-time detection
+	// at service.go:0e. Best-effort — a stale value is better than empty.
+	go prg.DetectRealIP(prg.Context())
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if err := tc.Connect(ctx); err != nil {

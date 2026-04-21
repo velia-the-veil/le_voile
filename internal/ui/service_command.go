@@ -27,11 +27,16 @@ var osForHint = func() string { return runtime.GOOS }
 func ServiceStartHintForOS(goos string) ServiceStartHint {
 	switch goos {
 	case "windows":
+		// The service is registered by kardianos/service under the name
+		// `LeVoile` (see internal/service/service.go: ServiceName = "LeVoile").
+		// `sc start levoile-service` was copy-pasted from the Linux systemd
+		// unit name and does not match the Windows SCM entry, so the command
+		// shown on the fallback screen would fail with error 1060.
 		return ServiceStartHint{
 			OS:      "windows",
-			Command: "sc start levoile-service",
+			Command: "sc start LeVoile",
 			HumanMessage: "Le service Le Voile n'est pas démarré. " +
-				"Ouvrez Services.msc et démarrez « Le Voile Service », " +
+				"Ouvrez Services.msc et démarrez « Le Voile », " +
 				"ou exécutez la commande ci-dessous dans une invite en tant qu'administrateur :",
 		}
 	case "linux":

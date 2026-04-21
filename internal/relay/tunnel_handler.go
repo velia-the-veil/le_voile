@@ -153,19 +153,21 @@ func (h *TunnelHandler) serveTunnel(w http.ResponseWriter, r *http.Request, payl
 	// the underlying reader prevents the "read on closed body" error.
 	body := r.Body
 
+	// Mint the session ID BEFORE sending the 200 — if crypto/rand fails we
+	// can still emit a clean 500. Doing it after WriteHeader meant the
+	// header line was already flushed, so the subsequent http.Error call
+	// was silently ignored and the client got a 200 with a stream that
+	// closed without any frame (misleading status).
+	sid, sidErr := newSessionID()
+	if sidErr != nil {
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
+
 	// Send 200 and flush to unblock client.
 	w.WriteHeader(http.StatusOK)
 	if f, ok := w.(http.Flusher); ok {
 		f.Flush()
-	}
-
-	sid, sidErr := newSessionID()
-	if sidErr != nil {
-		// crypto/rand failure is effectively impossible; refuse to open
-		// a session with a weak ID rather than fall back to a predictable
-		// format. Client will see the POST close and retry.
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-		return
 	}
 	session := TunnelSession{
 		ID:           sid,

@@ -279,16 +279,41 @@ func runStatus(stdout, stderr io.Writer) int {
 	}
 	fmt.Fprintf(stdout, "tunnel: %s\n", or(resp.Status, "inconnu"))
 	if resp.Country != "" {
-		fmt.Fprintf(stdout, "pays:   %s\n", resp.Country)
+		fmt.Fprintf(stdout, "pays: %s\n", resp.Country)
+	}
+	if resp.CurrentCountryCode != "" {
+		fmt.Fprintf(stdout, "pays (code): %s\n", resp.CurrentCountryCode)
+	}
+	if resp.RelayID != "" {
+		fmt.Fprintf(stdout, "relay: %s\n", resp.RelayID)
 	}
 	if resp.IP != "" {
-		fmt.Fprintf(stdout, "ip:     %s\n", resp.IP)
+		fmt.Fprintf(stdout, "ip dévoilée: %s\n", resp.IP)
+	}
+	if resp.RealIP != "" {
+		fmt.Fprintf(stdout, "ip réelle: %s\n", resp.RealIP)
 	}
 	mode := resp.KillSwitchMode
 	if mode == "" {
 		mode = ipc.KillSwitchModeNormal
 	}
 	fmt.Fprintf(stdout, "killswitch: %s\n", mode)
+
+	// Dump the registry view so the caller can compare `current_country_code`
+	// to the country flagged `active:true` here — that's the only pair that
+	// drives the webview's Connect/Déconnecter button state, so surfacing it
+	// from the CLI is the quickest way to diagnose a button mismatch.
+	regResp, regCode := sendIPC(ipc.Request{Action: ipc.ActionGetRegistry}, stderr)
+	if regCode == exitOK && len(regResp.RegistryCountries) > 0 {
+		fmt.Fprintln(stdout, "registre (pays actif marqué *) :")
+		for _, c := range regResp.RegistryCountries {
+			mark := " "
+			if c.Active {
+				mark = "*"
+			}
+			fmt.Fprintf(stdout, "  %s %s (%s) — %d relais\n", mark, c.Code, c.Name, c.RelayCount)
+		}
+	}
 	return exitOK
 }
 

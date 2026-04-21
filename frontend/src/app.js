@@ -133,7 +133,7 @@ function integrityRecoveryHint() {
     var isWindows = platform.indexOf('win') === 0 || ua.indexOf('windows') !== -1;
     var isLinux = platform.indexOf('linux') === 0 || ua.indexOf('linux') !== -1;
     if (isWindows) {
-        return "Recuperation : arretez le service 'levoile-service' (services.msc), supprimez %AppData%\\LeVoile\\config.toml et config.toml.hmac, puis redemarrez le service.";
+        return "Recuperation : arretez le service 'LeVoile' (services.msc), supprimez %AppData%\\LeVoile\\config.toml et config.toml.hmac, puis redemarrez le service.";
     }
     if (isLinux) {
         return "Recuperation : sudo systemctl stop levoile.service && sudo rm /etc/levoile/config.toml /etc/levoile/config.toml.hmac && sudo systemctl start levoile.service";
@@ -152,8 +152,8 @@ function clientSideServiceHint() {
     if (isWindows) {
         return {
             os: 'windows',
-            command: 'sc start levoile-service',
-            human_message: "Le service Le Voile n'est pas démarré. Ouvrez Services.msc et démarrez « Le Voile Service », ou exécutez la commande ci-dessous dans une invite en tant qu'administrateur :",
+            command: 'sc start LeVoile',
+            human_message: "Le service Le Voile n'est pas démarré. Ouvrez Services.msc et démarrez « Le Voile », ou exécutez la commande ci-dessous dans une invite en tant qu'administrateur :",
         };
     }
     if (isLinux) {
@@ -281,11 +281,16 @@ function updateUI(s) {
     }
 
     // Failover alert banner (Story 4.4) — inter-country switch message.
+    // The service-side failover_alert always takes priority, but when it's
+    // empty we preserve any sticky switch-error posted by selectCountry so
+    // the user actually gets to read the failure message instead of seeing
+    // it flash for 2 s before the next poll wipes it.
     if (dom.failoverBanner) {
         if (s.failover_alert) {
             dom.failoverBannerText.textContent = s.failover_alert;
             dom.failoverBanner.style.display = '';
-        } else {
+            switchErrorSticky = false;
+        } else if (!switchErrorSticky) {
             dom.failoverBanner.style.display = 'none';
         }
     }
@@ -495,16 +500,79 @@ function renderCountryList(countries) {
 }
 
 async function selectCountry(code, name) {
+    // Keep the optimistic selection live even on error: the service's
+    // reconnector can still succeed on the requested relay asynchronously,
+    // and the backend self-heals current_country_code from tc.RelayDomain
+    // on every status poll (handler.go handleGetStatus). If the switch
+    // definitively fails, a cross-country failover sets the authoritative
+    // current_country_code to whatever is actually active — at which point
+    // the mismatch re-evaluates naturally and the button goes back to
+    // "Connecter", telling the user they're not on the requested country.
     selectedCountryName = name || '';
     selectedCountryCode = code || '';
     try {
-        await fetch('/api/country', {
+        const resp = await fetch('/api/country', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ code: code })
         });
+        let data = {};
+        try { data = await resp.json(); } catch (_) {}
+        if (data && data.error) {
+            // Show the reason immediately without clobbering the selection.
+            stickySwitchError(name || code, data.error);
+            loadRegistry();
+            return;
+        }
+        // Clear any lingering error and refresh registry shortly — the
+        // switch returned 200 OK, so the successful state is imminent.
+        clearSwitchError();
         setTimeout(loadRegistry, 2000);
-    } catch (e) {}
+    } catch (e) {
+        stickySwitchError(name || code, 'connexion au service impossible');
+        loadRegistry();
+    }
+}
+
+// stickySwitchError renders a persistent switch-failure banner in the
+// failover-banner slot. It stays visible until the user retries or the
+// service takes an explicit action that clears it (see updateUI). The
+// previous 8 s auto-hide was too short — the user would finish reading
+// right as the banner disappeared.
+let switchErrorSticky = false;
+function stickySwitchError(target, reason) {
+    if (!dom.failoverBanner || !dom.failoverBannerText) {
+        return;
+    }
+    dom.failoverBannerText.textContent =
+        'Échec du basculement vers ' + target + ' — ' + humanizeSwitchError(reason);
+    dom.failoverBanner.style.display = '';
+    switchErrorSticky = true;
+}
+
+function clearSwitchError() {
+    if (!dom.failoverBanner) return;
+    switchErrorSticky = false;
+    // Don't hide if the service is displaying its own failover_alert —
+    // that message is authoritative and updateUI owns its lifecycle.
+    if (lastStatus && lastStatus.failover_alert) return;
+    dom.failoverBanner.style.display = 'none';
+    dom.failoverBannerText.textContent = '';
+}
+
+function humanizeSwitchError(code) {
+    switch (code) {
+        case 'service_not_ready':
+            return 'service non prêt';
+        case 'unknown_country_code':
+            return 'code pays inconnu';
+        case 'no_relays_for_country':
+            return 'aucun relais disponible pour ce pays';
+        case 'service_unreachable':
+            return 'service injoignable';
+        default:
+            return code || 'erreur inconnue';
+    }
 }
 
 // === Connect / Disconnect ===

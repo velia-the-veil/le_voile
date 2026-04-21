@@ -26,6 +26,14 @@ const (
 	// response is purely informational (no lifecycle work), so a short
 	// timeout is fine — if the service is unreachable we exit anyway.
 	uiDisconnectTimeout = 2 * time.Second
+	// webviewServiceReadyTimeout caps how long handleOpenWebview waits for
+	// the first successful IPC poll before navigating anyway. Post-install
+	// race mitigation : on a cold install the service may still be
+	// bootstrapping (config+HMAC+ctlauth+IPC pipe) when the installer
+	// launches the UI. Navigating before /api/status can answer left the
+	// webview blank on some WebView2 versions. When the gate times out we
+	// still open the webview — the fallback screen renders cleanly.
+	webviewServiceReadyTimeout = 10 * time.Second
 )
 
 // IPCClient abstracts the IPC client for testability.
@@ -77,7 +85,8 @@ func (defaultSystrayMenuAPI) Quit()         { systray.Quit() }
 // Config holds UI configuration.
 type Config struct {
 	RelayDomain string
-	FrontendFS  fs.FS // embedded frontend assets
+	FrontendFS  fs.FS  // embedded frontend assets
+	AuthToken   string // hex-encoded ctlauth token; empty disables IPC auth (pre-bootstrap installs, tests)
 }
 
 // UI combines systray + webview + local HTTP server in a single process.
@@ -129,16 +138,23 @@ type UI struct {
 	menuUpdate        updateMenuController
 	menuUpdateClicked chan struct{}
 	lastShownUpdateVersion string
+
+	// serviceReady is closed on the first successful /api/status poll so
+	// the webview opener can gate the Navigate call on the backend being
+	// able to answer. See webviewServiceReadyTimeout for the bound.
+	serviceReady     chan struct{}
+	serviceReadyOnce sync.Once
 }
 
 // New creates a UI instance with real systray API.
 func New(client IPCClient, cfg Config) *UI {
 	u := &UI{
-		api:      defaultSystrayAPI{},
-		menuAPI:  defaultSystrayMenuAPI{},
-		client:   NewSafeIPCClient(client),
-		config:   cfg,
-		sysProxy: NewSysProxy(cfg.RelayDomain),
+		api:          defaultSystrayAPI{},
+		menuAPI:      defaultSystrayMenuAPI{},
+		client:       NewSafeIPCClient(client),
+		config:       cfg,
+		sysProxy:     NewSysProxy(cfg.RelayDomain),
+		serviceReady: make(chan struct{}),
 	}
 	u.quitFn = u.handleQuit
 	return u
@@ -147,14 +163,21 @@ func New(client IPCClient, cfg Config) *UI {
 // newWithDeps creates a UI with injected dependencies (for testing).
 func newWithDeps(api SystrayAPI, menuAPI SystrayMenuAPI, client IPCClient, cfg Config, sysProxy *SysProxy) *UI {
 	u := &UI{
-		api:      api,
-		menuAPI:  menuAPI,
-		client:   NewSafeIPCClient(client),
-		config:   cfg,
-		sysProxy: sysProxy,
+		api:          api,
+		menuAPI:      menuAPI,
+		client:       NewSafeIPCClient(client),
+		config:       cfg,
+		sysProxy:     sysProxy,
+		serviceReady: make(chan struct{}),
 	}
 	u.quitFn = u.handleQuit
 	return u
+}
+
+// markServiceReady signals that the IPC has answered at least once.
+// Idempotent — safe to call on every successful poll.
+func (u *UI) markServiceReady() {
+	u.serviceReadyOnce.Do(func() { close(u.serviceReady) })
 }
 
 // Run starts the systray event loop. Blocks and must be called from the main goroutine.
@@ -204,15 +227,26 @@ func (u *UI) onReady() {
 	u.cancel = cancel
 
 	// Start HTTP server for webview.
-	u.httpServer = NewHTTPServer(u.client, u.config.FrontendFS)
+	u.httpServer = NewHTTPServer(u.client, u.config.FrontendFS, u.config.AuthToken)
 	go u.httpServer.Start(ctx)
 
 	go u.connectAndPoll(ctx)
 	go u.menuHandler(ctx)
 
-	// Open webview once HTTP server is ready (in goroutine to avoid blocking systray).
+	// Open webview once HTTP server AND the backend IPC are ready. Waiting
+	// on serviceReady prevents the post-install race where the webview
+	// would navigate to /api/status endpoints the service can't yet answer,
+	// leaving the window visually blank on cold WebView2 start. A bounded
+	// timeout keeps the UX graceful when the service is genuinely down —
+	// the fallback "Service non démarré" screen then renders normally.
 	go func() {
 		u.httpServer.Addr() // blocks until listener is bound
+		select {
+		case <-u.serviceReady:
+		case <-time.After(webviewServiceReadyTimeout):
+		case <-ctx.Done():
+			return
+		}
 		u.handleOpenWebview()
 	}()
 }
@@ -395,13 +429,14 @@ func (u *UI) handleQuit() {
 
 const httpShutdownTimeout = 3 * time.Second
 
-// shutdown performs the UI-only shutdown sequence. Idempotent via sync.Once.
-// Story 5.8: the UI process exits independently of the service. The service
-// keeps the tunnel, firewall, routing and TUN alive under systemd/SCM control
-// until someone explicitly stops it (`sc stop levoile-service` /
-// `systemctl stop levoile.service`).
+// shutdown performs the full shutdown sequence. Idempotent via sync.Once.
+// Per design decision (2026-04-20) ✕ and tray-"Quitter" stop the service
+// as well as the UI: the modal copy "Votre protection sera interrompue"
+// documents the user-visible contract. Supersedes the Story 5.8 policy
+// where only the UI exited and the service kept the tunnel alive.
 // Sequence: shutdownInProgress → destroy webview → restore proxy →
-// shutdown HTTP server → ActionUIDisconnect notification → cancel ctx → close IPC.
+// shutdown HTTP server → ActionQuit (service stops + restores config) →
+// cancel ctx → close IPC.
 func (u *UI) shutdown() {
 	u.shutdownOnce.Do(u.doShutdown)
 }
@@ -435,13 +470,14 @@ func (u *UI) doShutdown() {
 		shutdownCancel()
 	}
 
-	// 5. Notify the service that this UI is going away. The service
-	// acknowledges with StatusOK and does NOT stop the tunnel — Story 5.8
-	// AC1/AC5. The short timeout is deliberate: we're exiting the UI
-	// either way, the notification is best-effort.
-	disconnectCtx, disconnectCancel := context.WithTimeout(context.Background(), uiDisconnectTimeout)
-	u.client.SendContext(disconnectCtx, ipc.Request{Action: ipc.ActionUIDisconnect})
-	disconnectCancel()
+	// 5. Tell the service to stop. handleQuit acknowledges immediately and
+	// schedules the real stop 100 ms later, giving this send a chance to
+	// return before the IPC socket dies. The service then runs its own
+	// shutdown sequence (DNS → firewall → routing → TUN) which is what
+	// actually restores the host's network config.
+	quitCtx, quitCancel := context.WithTimeout(context.Background(), uiDisconnectTimeout)
+	u.client.SendContext(quitCtx, ipc.Request{Action: ipc.ActionQuit, Auth: u.config.AuthToken})
+	quitCancel()
 
 	// 6. Cancel polling context and close IPC connection.
 	if u.cancel != nil {
@@ -452,6 +488,14 @@ func (u *UI) doShutdown() {
 
 func (u *UI) connectAndPoll(ctx context.Context) {
 	u.reconnectIPC(ctx)
+
+	// Immediate first poll so serviceReady fires within one IPC round-trip
+	// instead of waiting a full pollInterval. Keeps the webview gate tight
+	// on the happy path while the ticker below handles ongoing updates.
+	if resp, err := u.client.SendContext(ctx, ipc.Request{Action: ipc.ActionGetStatus}); err == nil {
+		u.markServiceReady()
+		u.updateTrayState(resp)
+	}
 
 	ticker := time.NewTicker(pollInterval)
 	defer ticker.Stop()
@@ -466,6 +510,7 @@ func (u *UI) connectAndPoll(ctx context.Context) {
 				u.handleIPCError(ctx)
 				continue
 			}
+			u.markServiceReady()
 			u.updateTrayState(resp)
 		}
 	}

@@ -10,9 +10,10 @@ import (
 )
 
 // Story 6.3 — Task 8. handleTriggerRecovery must reject requests that
-// don't carry a valid machine-local ctl token. The kill-switch toggle
-// accepts empty Auth as "UI source" for convenience; trigger_recovery
-// is deliberately stricter because no UI surface needs to call it.
+// don't carry a valid machine-local ctl token. Since the 2026-04 strict
+// default, an empty-Auth mutating request is rejected at the global gate
+// with "auth_required" before reaching the action-specific "auth_failed"
+// check — both outcomes are acceptable (the request never touches state).
 func TestHandle_TriggerRecovery_NoAuth_Rejected(t *testing.T) {
 	prg := svc.NewProgram(svc.Config{})
 	prg.SetCtlToken([]byte("token-32-bytes-secret-aaaaaaaaaa"))
@@ -21,8 +22,8 @@ func TestHandle_TriggerRecovery_NoAuth_Rejected(t *testing.T) {
 	if resp.Status != ipc.StatusError {
 		t.Fatalf("Status = %q; want error", resp.Status)
 	}
-	if resp.Error != "auth_failed" {
-		t.Errorf("Error = %q; want auth_failed", resp.Error)
+	if resp.Error != "auth_required" && resp.Error != "auth_failed" {
+		t.Errorf("Error = %q; want auth_required or auth_failed", resp.Error)
 	}
 }
 

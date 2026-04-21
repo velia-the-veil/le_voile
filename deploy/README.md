@@ -48,7 +48,14 @@ scp relay cert.pem key.pem signing.key relay-registry.json install.sh levoile-re
 ssh root@{vps} 'cd /tmp/levoile-install && bash install.sh'
 ```
 
-`install.sh` valide la présence des 6 fichiers, crée le user `levoile`, pose les bons modes (signing.key 0600, registry 0644), installe l'unit systemd et fait `enable --now`.
+`install.sh` valide la présence des 6 fichiers requis, crée le user `levoile`, pose les bons modes (signing.key 0600, registry 0644), installe l'unit systemd et fait `enable --now`.
+
+En plus, `install.sh` pose **de façon opportuniste** (seulement s'ils sont présents dans le répertoire de staging) les artefacts ops introduits par [audit-fixes-relais-2026-04-21](../docs/audit-fixes-relais-2026-04-21.md) :
+
+- `cert-expiry-check.sh` + `levoile-cert-check.{service,timer}` — watchdog quotidien qui alerte dans journald si le cert TLS arrive à <30 j. Lecture : `journalctl -t levoile-cert-expiry --since -7d`.
+- `renewal-hook-restart-relay.sh` — deploy hook certbot installé dans `/etc/letsencrypt/renewal-hooks/deploy/restart-levoile-relay.sh`. Redémarre `levoile-relay` après chaque renewal réussi (le process lit le cert une seule fois au démarrage, cf. `server.go`). ~1-2 s de downtime TCP/443 par renewal trimestriel.
+
+Pour un relais déjà déployé sans ces artefacts, voir la procédure manuelle en fin de [audit-fixes-relais-2026-04-21.md](../docs/audit-fixes-relais-2026-04-21.md).
 
 ### 6. Propager le registry mis à jour aux autres relais
 
@@ -108,4 +115,9 @@ Au premier lancement, le client résout `relay.levoile.dev` (hardcodé dans `ins
 |------|---------|
 | `install.sh` | Installs relay binary, certs, systemd unit on a VPS |
 | `levoile-relay.service` | systemd unit with hardening directives |
+| `cert-expiry-check.sh` | Daily watchdog — logs to journald if cert <30 d from expiry |
+| `levoile-cert-check.service` | Oneshot systemd unit that runs `cert-expiry-check.sh` |
+| `levoile-cert-check.timer` | Daily timer (`RandomizedDelaySec=1h`) for the watchdog |
+| `renewal-hook-restart-relay.sh` | Certbot deploy hook — restarts `levoile-relay` after successful renewal |
+| `smoke_registry.sh` | Post-install smoke test of the registry endpoint |
 | `README.md` | This file |

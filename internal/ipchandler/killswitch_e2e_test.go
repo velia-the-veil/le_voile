@@ -49,6 +49,11 @@ func TestE2E_KillSwitch_NormalToDegraded_PersistsAndDeactivates(t *testing.T) {
 	}
 
 	prg := svc.NewProgram(svc.Config{FirewallEnabled: true})
+	// Strict-auth gate (2026-04 flip) requires a non-empty req.Auth, and
+	// handleSetKillSwitchMode additionally calls VerifyCtlToken on non-empty
+	// Auth — so seed the same token in both places for this E2E path.
+	const testToken = "token-32-bytes-secret-aaaaaaaaaa"
+	prg.SetCtlToken([]byte(testToken))
 	stub := &stubFirewall{}
 	stub.activated.Store(true)
 	prg.InjectFirewallForTest(stub, net.IPv4(1, 2, 3, 4))
@@ -67,7 +72,7 @@ func TestE2E_KillSwitch_NormalToDegraded_PersistsAndDeactivates(t *testing.T) {
 	})
 
 	resp := Handle(prg,
-		ipc.Request{Action: ipc.ActionSetKillSwitchMode, Value: ipc.KillSwitchModeDegraded},
+		ipc.Request{Action: ipc.ActionSetKillSwitchMode, Value: ipc.KillSwitchModeDegraded, Auth: testToken},
 		Options{ConfigPathFn: func() string { return cfgPath }})
 
 	if resp.Status != ipc.StatusOK {

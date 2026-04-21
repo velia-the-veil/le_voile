@@ -50,7 +50,7 @@ func TestGetStatus_Connected(t *testing.T) {
 			Uptime:       "1h30m",
 		},
 	}
-	srv := NewHTTPServer(NewSafeIPCClient(mock), testFS())
+	srv := NewHTTPServer(NewSafeIPCClient(mock), testFS(), "")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/status", nil)
 	w := httptest.NewRecorder()
@@ -89,7 +89,7 @@ func TestGetStatus_Disconnected(t *testing.T) {
 	mock := &mockIPCClient{
 		resp: ipc.Response{Status: ipc.StatusDisconnected},
 	}
-	srv := NewHTTPServer(NewSafeIPCClient(mock), testFS())
+	srv := NewHTTPServer(NewSafeIPCClient(mock), testFS(), "")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/status", nil)
 	w := httptest.NewRecorder()
@@ -110,7 +110,7 @@ func TestGetStatus_IPCError(t *testing.T) {
 	mock := &mockIPCClient{
 		err: fmt.Errorf("pipe broken"),
 	}
-	srv := NewHTTPServer(NewSafeIPCClient(mock), testFS())
+	srv := NewHTTPServer(NewSafeIPCClient(mock), testFS(), "")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/status", nil)
 	w := httptest.NewRecorder()
@@ -139,7 +139,7 @@ func TestGetStatus_IPCError(t *testing.T) {
 // fix that silently absorbed IPC errors into a disconnected status.
 func TestGetStatus_ServiceUnreachable_EmitsHint(t *testing.T) {
 	mock := &mockIPCClient{err: fmt.Errorf("pipe broken")}
-	srv := NewHTTPServer(NewSafeIPCClient(mock), testFS())
+	srv := NewHTTPServer(NewSafeIPCClient(mock), testFS(), "")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/status", nil)
 	w := httptest.NewRecorder()
@@ -164,8 +164,8 @@ func TestGetStatus_ServiceUnreachable_EmitsHint(t *testing.T) {
 	}
 	// OS-specific sanity: the hint must match the OS this test process runs
 	// on (CurrentServiceStartHint uses runtime.GOOS indirectly).
-	if runtime.GOOS == "windows" && resp.ServiceStartHint.Command != "sc start levoile-service" {
-		t.Errorf("windows command = %q, want 'sc start levoile-service'", resp.ServiceStartHint.Command)
+	if runtime.GOOS == "windows" && resp.ServiceStartHint.Command != "sc start LeVoile" {
+		t.Errorf("windows command = %q, want 'sc start LeVoile'", resp.ServiceStartHint.Command)
 	}
 	if runtime.GOOS == "linux" && resp.ServiceStartHint.Command != "sudo systemctl start levoile.service" {
 		t.Errorf("linux command = %q, want 'sudo systemctl start levoile.service'", resp.ServiceStartHint.Command)
@@ -181,7 +181,7 @@ func TestGetStatus_ServiceReachable_NoHint(t *testing.T) {
 	mock := &mockIPCClient{
 		resp: ipc.Response{Status: ipc.StatusDisconnected},
 	}
-	srv := NewHTTPServer(NewSafeIPCClient(mock), testFS())
+	srv := NewHTTPServer(NewSafeIPCClient(mock), testFS(), "")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/status", nil)
 	w := httptest.NewRecorder()
@@ -207,7 +207,7 @@ func TestGetStatus_Connecting(t *testing.T) {
 	mock := &mockIPCClient{
 		resp: ipc.Response{Status: ipc.StatusConnecting},
 	}
-	srv := NewHTTPServer(NewSafeIPCClient(mock), testFS())
+	srv := NewHTTPServer(NewSafeIPCClient(mock), testFS(), "")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/status", nil)
 	w := httptest.NewRecorder()
@@ -226,7 +226,7 @@ func TestGetStatus_Connecting(t *testing.T) {
 
 func TestServeAssets(t *testing.T) {
 	mock := &mockIPCClient{}
-	srv := NewHTTPServer(NewSafeIPCClient(mock), testFS())
+	srv := NewHTTPServer(NewSafeIPCClient(mock), testFS(), "")
 
 	// Request "/" which serves index.html via FileServer.
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
@@ -245,7 +245,7 @@ func TestConnect(t *testing.T) {
 	mock := &mockIPCClient{
 		resp: ipc.Response{Status: ipc.StatusConnected},
 	}
-	srv := NewHTTPServer(NewSafeIPCClient(mock), testFS())
+	srv := NewHTTPServer(NewSafeIPCClient(mock), testFS(), "")
 
 	req := httptest.NewRequest(http.MethodPost, "/api/connect", nil)
 	w := httptest.NewRecorder()
@@ -266,7 +266,7 @@ func TestDisconnect(t *testing.T) {
 	mock := &mockIPCClient{
 		resp: ipc.Response{Status: ipc.StatusDisconnected},
 	}
-	srv := NewHTTPServer(NewSafeIPCClient(mock), testFS())
+	srv := NewHTTPServer(NewSafeIPCClient(mock), testFS(), "")
 
 	req := httptest.NewRequest(http.MethodPost, "/api/disconnect", nil)
 	w := httptest.NewRecorder()
@@ -287,7 +287,7 @@ func TestConnect_IPCError_ReturnsDisconnected(t *testing.T) {
 	mock := &mockIPCClient{
 		err: fmt.Errorf("pipe broken"),
 	}
-	srv := NewHTTPServer(NewSafeIPCClient(mock), testFS())
+	srv := NewHTTPServer(NewSafeIPCClient(mock), testFS(), "")
 
 	req := httptest.NewRequest(http.MethodPost, "/api/connect", nil)
 	w := httptest.NewRecorder()
@@ -314,7 +314,7 @@ func TestDisconnect_IPCError_ReturnsDisconnected(t *testing.T) {
 	mock := &mockIPCClient{
 		err: fmt.Errorf("pipe broken"),
 	}
-	srv := NewHTTPServer(NewSafeIPCClient(mock), testFS())
+	srv := NewHTTPServer(NewSafeIPCClient(mock), testFS(), "")
 
 	req := httptest.NewRequest(http.MethodPost, "/api/disconnect", nil)
 	w := httptest.NewRecorder()
@@ -338,7 +338,7 @@ func TestConnect_ErrorFieldIncluded(t *testing.T) {
 	mock := &mockIPCClient{
 		resp: ipc.Response{Status: ipc.StatusError, Error: "no relay available"},
 	}
-	srv := NewHTTPServer(NewSafeIPCClient(mock), testFS())
+	srv := NewHTTPServer(NewSafeIPCClient(mock), testFS(), "")
 
 	req := httptest.NewRequest(http.MethodPost, "/api/connect", nil)
 	w := httptest.NewRecorder()
@@ -359,7 +359,7 @@ func TestDisconnect_ErrorFieldIncluded(t *testing.T) {
 	mock := &mockIPCClient{
 		resp: ipc.Response{Status: ipc.StatusError, Error: "tunnel teardown failed"},
 	}
-	srv := NewHTTPServer(NewSafeIPCClient(mock), testFS())
+	srv := NewHTTPServer(NewSafeIPCClient(mock), testFS(), "")
 
 	req := httptest.NewRequest(http.MethodPost, "/api/disconnect", nil)
 	w := httptest.NewRecorder()
@@ -383,7 +383,7 @@ func TestDisconnect_DispatchesActionDisconnect(t *testing.T) {
 	mock := &mockIPCClient{
 		resp: ipc.Response{Status: ipc.StatusDisconnected},
 	}
-	srv := NewHTTPServer(NewSafeIPCClient(mock), testFS())
+	srv := NewHTTPServer(NewSafeIPCClient(mock), testFS(), "")
 
 	req := httptest.NewRequest(http.MethodPost, "/api/disconnect", nil)
 	w := httptest.NewRecorder()
@@ -396,7 +396,7 @@ func TestDisconnect_DispatchesActionDisconnect(t *testing.T) {
 
 func TestMethodNotAllowed(t *testing.T) {
 	mock := &mockIPCClient{}
-	srv := NewHTTPServer(NewSafeIPCClient(mock), testFS())
+	srv := NewHTTPServer(NewSafeIPCClient(mock), testFS(), "")
 
 	tests := []struct {
 		method, path string
@@ -426,7 +426,7 @@ func TestQuitEndpointRemoved(t *testing.T) {
 	// registered handler — Go's ServeMux falls back to serving from the root
 	// FileServer, which returns 404 for /api/quit (no such asset).
 	mock := &mockIPCClient{}
-	srv := NewHTTPServer(NewSafeIPCClient(mock), testFS())
+	srv := NewHTTPServer(NewSafeIPCClient(mock), testFS(), "")
 
 	req := httptest.NewRequest(http.MethodPost, "/api/quit", nil)
 	w := httptest.NewRecorder()
@@ -445,7 +445,7 @@ func TestLeakStatus_OK(t *testing.T) {
 			LeakExpectedIP: "198.51.100.7",
 		},
 	}
-	srv := NewHTTPServer(NewSafeIPCClient(mock), testFS())
+	srv := NewHTTPServer(NewSafeIPCClient(mock), testFS(), "")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/leak-status", nil)
 	w := httptest.NewRecorder()
@@ -489,7 +489,7 @@ func TestLeakStatus_LeakDetected(t *testing.T) {
 			LeakReason:     "stun_ip_differs_from_relay",
 		},
 	}
-	srv := NewHTTPServer(NewSafeIPCClient(mock), testFS())
+	srv := NewHTTPServer(NewSafeIPCClient(mock), testFS(), "")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/leak-status", nil)
 	w := httptest.NewRecorder()
@@ -510,7 +510,7 @@ func TestLeakStatus_LeakDetected(t *testing.T) {
 
 func TestLeakStatus_IPCError(t *testing.T) {
 	mock := &mockIPCClient{err: fmt.Errorf("pipe broken")}
-	srv := NewHTTPServer(NewSafeIPCClient(mock), testFS())
+	srv := NewHTTPServer(NewSafeIPCClient(mock), testFS(), "")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/leak-status", nil)
 	w := httptest.NewRecorder()
@@ -530,7 +530,7 @@ func TestUpdateStatus_Ready(t *testing.T) {
 			InstalledVersion: "1.1.0",
 		},
 	}
-	srv := NewHTTPServer(NewSafeIPCClient(mock), testFS())
+	srv := NewHTTPServer(NewSafeIPCClient(mock), testFS(), "")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/update-status", nil)
 	w := httptest.NewRecorder()
@@ -558,7 +558,7 @@ func TestUpdateStatus_UpToDate(t *testing.T) {
 	mock := &mockIPCClient{
 		resp: ipc.Response{UpdateStatus: ipc.StatusUpToDate, InstalledVersion: "1.2.0"},
 	}
-	srv := NewHTTPServer(NewSafeIPCClient(mock), testFS())
+	srv := NewHTTPServer(NewSafeIPCClient(mock), testFS(), "")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/update-status", nil)
 	w := httptest.NewRecorder()
@@ -579,7 +579,7 @@ func TestUpdateStatus_Rollback(t *testing.T) {
 			RollbackReason:  "integrity check failed",
 		},
 	}
-	srv := NewHTTPServer(NewSafeIPCClient(mock), testFS())
+	srv := NewHTTPServer(NewSafeIPCClient(mock), testFS(), "")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/update-status", nil)
 	w := httptest.NewRecorder()
@@ -603,7 +603,7 @@ func TestHTTPServer_StartAndAddr(t *testing.T) {
 		resp: ipc.Response{Status: ipc.StatusDisconnected},
 	}
 	safe := NewSafeIPCClient(mock)
-	srv := NewHTTPServer(safe, testFS())
+	srv := NewHTTPServer(safe, testFS(), "")
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -649,7 +649,7 @@ func TestRegistryEndpoint(t *testing.T) {
 			},
 		},
 	}
-	srv := NewHTTPServer(NewSafeIPCClient(mock), testFS())
+	srv := NewHTTPServer(NewSafeIPCClient(mock), testFS(), "")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/registry", nil)
 	w := httptest.NewRecorder()
@@ -691,7 +691,7 @@ func TestRegistryEndpoint_JSONContract(t *testing.T) {
 			},
 		},
 	}
-	srv := NewHTTPServer(NewSafeIPCClient(mock), testFS())
+	srv := NewHTTPServer(NewSafeIPCClient(mock), testFS(), "")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/registry", nil)
 	w := httptest.NewRecorder()
@@ -742,7 +742,7 @@ func TestRegistryEndpoint_IPCError_ReturnsEmptyArray(t *testing.T) {
 	mock := &mockIPCClient{
 		err: fmt.Errorf("pipe broken"),
 	}
-	srv := NewHTTPServer(NewSafeIPCClient(mock), testFS())
+	srv := NewHTTPServer(NewSafeIPCClient(mock), testFS(), "")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/registry", nil)
 	w := httptest.NewRecorder()
@@ -763,7 +763,7 @@ func TestCountryEndpoint_ValidCode(t *testing.T) {
 	mock := &mockIPCClient{
 		resp: ipc.Response{Status: ipc.StatusOK},
 	}
-	srv := NewHTTPServer(NewSafeIPCClient(mock), testFS())
+	srv := NewHTTPServer(NewSafeIPCClient(mock), testFS(), "")
 
 	body := strings.NewReader(`{"code":"de"}`)
 	req := httptest.NewRequest(http.MethodPost, "/api/country", body)
@@ -784,7 +784,7 @@ func TestCountryEndpoint_ValidCode(t *testing.T) {
 
 func TestCountryEndpoint_InvalidMethod(t *testing.T) {
 	mock := &mockIPCClient{}
-	srv := NewHTTPServer(NewSafeIPCClient(mock), testFS())
+	srv := NewHTTPServer(NewSafeIPCClient(mock), testFS(), "")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/country", nil)
 	w := httptest.NewRecorder()
@@ -797,7 +797,7 @@ func TestCountryEndpoint_InvalidMethod(t *testing.T) {
 
 func TestCountryEndpoint_EmptyCode(t *testing.T) {
 	mock := &mockIPCClient{}
-	srv := NewHTTPServer(NewSafeIPCClient(mock), testFS())
+	srv := NewHTTPServer(NewSafeIPCClient(mock), testFS(), "")
 
 	body := strings.NewReader(`{"code":""}`)
 	req := httptest.NewRequest(http.MethodPost, "/api/country", body)
@@ -812,7 +812,7 @@ func TestCountryEndpoint_EmptyCode(t *testing.T) {
 
 func TestCountryEndpoint_InvalidJSON(t *testing.T) {
 	mock := &mockIPCClient{}
-	srv := NewHTTPServer(NewSafeIPCClient(mock), testFS())
+	srv := NewHTTPServer(NewSafeIPCClient(mock), testFS(), "")
 
 	body := strings.NewReader(`not json`)
 	req := httptest.NewRequest(http.MethodPost, "/api/country", body)
@@ -842,7 +842,7 @@ func TestStatusCountryFlagAndVisibleIP(t *testing.T) {
 			RelayLatency: "85ms",
 		},
 	}
-	srv := NewHTTPServer(NewSafeIPCClient(mock), testFS())
+	srv := NewHTTPServer(NewSafeIPCClient(mock), testFS(), "")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/status", nil)
 	w := httptest.NewRecorder()
@@ -909,7 +909,7 @@ func TestStatus_Connected_UnknownCountry(t *testing.T) {
 			RelayID:     "relay-xx-001",
 		},
 	}
-	srv := NewHTTPServer(NewSafeIPCClient(mock), testFS())
+	srv := NewHTTPServer(NewSafeIPCClient(mock), testFS(), "")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/status", nil)
 	w := httptest.NewRecorder()
@@ -949,7 +949,7 @@ func TestStatus_Connected_NoVisibleIP(t *testing.T) {
 			RelayID:     "relay-de-001",
 		},
 	}
-	srv := NewHTTPServer(NewSafeIPCClient(mock), testFS())
+	srv := NewHTTPServer(NewSafeIPCClient(mock), testFS(), "")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/status", nil)
 	w := httptest.NewRecorder()
@@ -990,7 +990,7 @@ func TestStatus_ProductionRelayShape_E2E(t *testing.T) {
 			RelayLatency: "42ms",
 		},
 	}
-	srv := NewHTTPServer(NewSafeIPCClient(mock), testFS())
+	srv := NewHTTPServer(NewSafeIPCClient(mock), testFS(), "")
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -1058,7 +1058,7 @@ func TestStatusMessage(t *testing.T) {
 // to a temp file so tests never touch the real user config dir.
 func newTestHTTPServerWithPrefs(t *testing.T) *HTTPServer {
 	t.Helper()
-	s := NewHTTPServer(NewSafeIPCClient(&mockIPCClient{}), testFS())
+	s := NewHTTPServer(NewSafeIPCClient(&mockIPCClient{}), testFS(), "")
 	s.prefs.path = t.TempDir() + "/ui-prefs.json"
 	return s
 }
@@ -1135,7 +1135,7 @@ func TestUIPrefs_MethodNotAllowed(t *testing.T) {
 // the IPC layer left it empty due to service unreachable).
 func TestGetStatus_KillSwitchMode_DefaultsToNormalWhenEmpty(t *testing.T) {
 	mock := &mockIPCClient{resp: ipc.Response{Status: ipc.StatusDisconnected}}
-	srv := NewHTTPServer(NewSafeIPCClient(mock), testFS())
+	srv := NewHTTPServer(NewSafeIPCClient(mock), testFS(), "")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/status", nil)
 	w := httptest.NewRecorder()
@@ -1155,7 +1155,7 @@ func TestGetStatus_KillSwitchMode_SurfacesDegraded(t *testing.T) {
 		Status:         ipc.StatusConnected,
 		KillSwitchMode: ipc.KillSwitchModeDegraded,
 	}}
-	srv := NewHTTPServer(NewSafeIPCClient(mock), testFS())
+	srv := NewHTTPServer(NewSafeIPCClient(mock), testFS(), "")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/status", nil)
 	w := httptest.NewRecorder()
@@ -1177,7 +1177,7 @@ func TestSetKillSwitch_PostDegraded(t *testing.T) {
 		Status:         ipc.StatusOK,
 		KillSwitchMode: ipc.KillSwitchModeDegraded,
 	}}
-	srv := NewHTTPServer(NewSafeIPCClient(mock), testFS())
+	srv := NewHTTPServer(NewSafeIPCClient(mock), testFS(), "")
 
 	body := strings.NewReader(`{"mode":"degraded"}`)
 	req := httptest.NewRequest(http.MethodPost, "/api/settings/killswitch", body)
@@ -1210,7 +1210,7 @@ func TestSetKillSwitch_PostDegraded(t *testing.T) {
 // AC2 — invalid mode value returns 400 without dispatching IPC.
 func TestSetKillSwitch_BadMode(t *testing.T) {
 	mock := &mockIPCClient{}
-	srv := NewHTTPServer(NewSafeIPCClient(mock), testFS())
+	srv := NewHTTPServer(NewSafeIPCClient(mock), testFS(), "")
 
 	req := httptest.NewRequest(http.MethodPost, "/api/settings/killswitch",
 		strings.NewReader(`{"mode":"bogus"}`))
@@ -1230,7 +1230,7 @@ func TestSetKillSwitch_BadMode(t *testing.T) {
 // returns 403 and never reaches the IPC layer.
 func TestSetKillSwitch_RejectsMissingCSRF(t *testing.T) {
 	mock := &mockIPCClient{}
-	srv := NewHTTPServer(NewSafeIPCClient(mock), testFS())
+	srv := NewHTTPServer(NewSafeIPCClient(mock), testFS(), "")
 
 	req := httptest.NewRequest(http.MethodPost, "/api/settings/killswitch",
 		strings.NewReader(`{"mode":"degraded"}`))
@@ -1248,7 +1248,7 @@ func TestSetKillSwitch_RejectsMissingCSRF(t *testing.T) {
 // Story 5.9 M2 fix — wrong CSRF token returns 403.
 func TestSetKillSwitch_RejectsWrongCSRF(t *testing.T) {
 	mock := &mockIPCClient{}
-	srv := NewHTTPServer(NewSafeIPCClient(mock), testFS())
+	srv := NewHTTPServer(NewSafeIPCClient(mock), testFS(), "")
 
 	req := httptest.NewRequest(http.MethodPost, "/api/settings/killswitch",
 		strings.NewReader(`{"mode":"degraded"}`))
@@ -1264,7 +1264,7 @@ func TestSetKillSwitch_RejectsWrongCSRF(t *testing.T) {
 // Story 5.9 M2 fix — /api/csrf-token returns the per-process token.
 func TestCSRFToken_Endpoint(t *testing.T) {
 	mock := &mockIPCClient{}
-	srv := NewHTTPServer(NewSafeIPCClient(mock), testFS())
+	srv := NewHTTPServer(NewSafeIPCClient(mock), testFS(), "")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/csrf-token", nil)
 	w := httptest.NewRecorder()
@@ -1291,7 +1291,7 @@ func TestGetSettings_IncludesKillSwitchMode(t *testing.T) {
 		Status:         ipc.StatusConnected,
 		KillSwitchMode: ipc.KillSwitchModeDegraded,
 	}}
-	srv := NewHTTPServer(NewSafeIPCClient(mock), testFS())
+	srv := NewHTTPServer(NewSafeIPCClient(mock), testFS(), "")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/settings", nil)
 	w := httptest.NewRecorder()
