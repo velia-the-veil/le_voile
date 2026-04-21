@@ -57,12 +57,19 @@ func (m *linuxRouteManager) Setup(tunName string, relayIP net.IP, origGateway ne
 	}
 
 	// 1. Route par défaut via TUN dans table 51820.
+	//
+	// Delete-before-add : `ip route add` échoue avec "File exists" si une
+	// route identique traîne encore (crash précédent sans teardown, country
+	// switch avorté à mi-chemin). Flush + add rend Setup idempotent et
+	// évite d'avorter un country switch sur un état résiduel.
+	_ = ipCmd("route", "flush", "table", routingTable)
 	if err := ipCmd("route", "add", "0.0.0.0/0", "dev", tunName, "table", routingTable); err != nil {
 		m.saved = nil
 		return fmt.Errorf("routing: add default route table %s: %w", routingTable, err)
 	}
 
 	// 2. Rule pour utiliser la table 51820.
+	_ = ipCmd("rule", "del", "priority", rulePriority)
 	if err := ipCmd("rule", "add", "from", "all", "lookup", routingTable, "priority", rulePriority); err != nil {
 		// Rollback route.
 		_ = ipCmd("route", "flush", "table", routingTable)
@@ -72,6 +79,7 @@ func (m *linuxRouteManager) Setup(tunName string, relayIP net.IP, origGateway ne
 
 	// 3. Route /32 vers relais via gateway originale (évite routing loop).
 	relayStr := relay4.String() + "/32"
+	_ = ipCmd("route", "del", relayStr)
 	if err := ipCmd("route", "add", relayStr, "via", gw4.String()); err != nil {
 		// Rollback rule + route.
 		_ = ipCmd("rule", "del", "priority", rulePriority)

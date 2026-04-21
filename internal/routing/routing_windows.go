@@ -52,6 +52,13 @@ func (m *windowsRouteManager) Setup(tunName string, relayIP net.IP, origGateway 
 
 	// 1. Route par défaut (0.0.0.0/0) via TUN avec metric basse (5).
 	// netsh interface ipv4 add route 0.0.0.0/0 "levoile0" 0.0.0.0 metric=5
+	//
+	// Delete-before-add : netsh "add route" échoue avec "L'objet existe déjà"
+	// si une route identique traîne encore (crash précédent sans teardown,
+	// country switch avorté à mi-chemin, ou manipulation manuelle). Un
+	// delete best-effort avant le add rend Setup idempotent et évite
+	// d'avorter un country switch sur un état résiduel.
+	_ = netshRoute("delete", "0.0.0.0/0", tunName, "0.0.0.0", "")
 	if err := netshRoute("add", "0.0.0.0/0", tunName, "0.0.0.0", "5"); err != nil {
 		m.saved = nil
 		return fmt.Errorf("routing: add default route via TUN: %w", err)
@@ -60,6 +67,7 @@ func (m *windowsRouteManager) Setup(tunName string, relayIP net.IP, origGateway 
 	// 2. Route /32 vers relais via gateway originale avec metric haute (1)
 	// sur l'interface originale — longest-prefix match garantit que /32 > /0.
 	relayStr := relay4.String() + "/32"
+	_ = netshRoute("delete", relayStr, origIface, gw4.String(), "")
 	if err := netshRoute("add", relayStr, origIface, gw4.String(), "1"); err != nil {
 		// Rollback route par défaut.
 		_ = netshRoute("delete", "0.0.0.0/0", tunName, "0.0.0.0", "")
