@@ -110,23 +110,44 @@ Section "Install"
   StrCmp $0 "0" +2
     MessageBox MB_OK|MB_ICONEXCLAMATION "Service start failed (exit code: $0)."
 
-  ; UI auto-start at login (user context, HKCU not HKLM)
-  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Run" \
-    "${APP_KEY}" '"$INSTDIR\${UI_EXE}"'
+  ; Scheduled Task — runs levoile-ui.exe with HIGHEST privileges.
+  ;
+  ; Windows Task Scheduler is the canonical way to grant a user-launched app
+  ; admin rights WITHOUT a UAC prompt at every launch. The task is created
+  ; from the elevated installer context, registered with /RL HIGHEST, and
+  ; subsequent /Run invocations from a non-elevated session elevate silently.
+  ;
+  ; Flags:
+  ;   /F  overwrite on reinstall
+  ;   /TN task name (quoted because of the space)
+  ;   /TR the executable — path itself quoted with \" so paths with spaces
+  ;       (Program Files) are parsed as a single token by schtasks.
+  ;   /SC ONLOGON autostart at user logon (replaces the HKCU Run reg key
+  ;               used previously; guaranteed elevated, no UAC on boot)
+  ;   /RL HIGHEST elevate to admin when the invoking user is in the
+  ;               Administrators group. Non-admin users still get the
+  ;               UAC prompt via the fallback in cmd/ui/service_windows.go.
+  ;   /IT interactive — runs in the logged-on user's session so the
+  ;       webview and tray icon render correctly.
+  nsExec::Exec 'schtasks /Create /F /TN "${APP_NAME} UI" /TR "\"$INSTDIR\${UI_EXE}\"" /SC ONLOGON /RL HIGHEST /IT'
 
-  ; Post-install launch is now driven by MUI_FINISHPAGE_RUN (see MUI Settings).
+  ; Silent launcher VBScript — wscript runs with no console window, so the
+  ; schtasks /Run invocation never flashes a cmd prompt on screen when the
+  ; user double-clicks the desktop shortcut.
+  FileOpen $0 "$INSTDIR\launch-ui.vbs" w
+  FileWrite $0 'CreateObject("WScript.Shell").Run "schtasks /Run /TN ""${APP_NAME} UI""", 0, False$\r$\n'
+  FileClose $0
 
-  ; Desktop shortcut — starts the UI (run as admin)
-  CreateShortCut "$DESKTOP\${APP_NAME}.lnk" "$INSTDIR\${UI_EXE}" "" \
-    "$INSTDIR\levoile.ico" 0
-  ; Mark shortcut as "Run as administrator" (set byte 0x15 bit 0x20)
-  nsExec::Exec 'powershell -NoProfile -Command "$$b=[IO.File]::ReadAllBytes(\"$DESKTOP\${APP_NAME}.lnk\"); $$b[0x15]=$$b[0x15] -bor 0x20; [IO.File]::WriteAllBytes(\"$DESKTOP\${APP_NAME}.lnk\",$$b)"'
+  ; Desktop shortcut — invokes the silent launcher which triggers the
+  ; scheduled task. Elevation is silent because the task was registered
+  ; by an admin with RL HIGHEST at install time.
+  CreateShortCut "$DESKTOP\${APP_NAME}.lnk" "$SYSDIR\wscript.exe" \
+    '"$INSTDIR\launch-ui.vbs"' "$INSTDIR\levoile.ico" 0
 
-  ; Start menu shortcut (run as admin)
+  ; Start menu shortcuts (app + uninstaller)
   CreateDirectory "$SMPROGRAMS\${APP_NAME}"
-  CreateShortCut "$SMPROGRAMS\${APP_NAME}\${APP_NAME}.lnk" "$INSTDIR\${UI_EXE}" "" \
-    "$INSTDIR\levoile.ico" 0
-  nsExec::Exec 'powershell -NoProfile -Command "$$b=[IO.File]::ReadAllBytes(\"$SMPROGRAMS\${APP_NAME}\${APP_NAME}.lnk\"); $$b[0x15]=$$b[0x15] -bor 0x20; [IO.File]::WriteAllBytes(\"$SMPROGRAMS\${APP_NAME}\${APP_NAME}.lnk\",$$b)"'
+  CreateShortCut "$SMPROGRAMS\${APP_NAME}\${APP_NAME}.lnk" "$SYSDIR\wscript.exe" \
+    '"$INSTDIR\launch-ui.vbs"' "$INSTDIR\levoile.ico" 0
   CreateShortCut "$SMPROGRAMS\${APP_NAME}\D$\'esinstaller.lnk" "$INSTDIR\uninstall.exe" "" \
     "$INSTDIR\uninstall.exe" 0
 
@@ -158,6 +179,10 @@ SectionEnd
 Section "Uninstall"
   ; Close UI if running (ignore error if not running)
   nsExec::Exec 'taskkill /F /IM ${UI_EXE}'
+
+  ; Remove the scheduled task that launches the UI elevated. Best-effort:
+  ; /F swallows any "task not found" on a partial-install state.
+  nsExec::Exec 'schtasks /Delete /F /TN "${APP_NAME} UI"'
 
   ; Stop the service (shutdown() restores DNS automatically)
   ExecWait '"$INSTDIR\${SERVICE_EXE}" stop'
@@ -211,6 +236,7 @@ Section "Uninstall"
   Delete "$INSTDIR\${UI_EXE}"
   Delete "$INSTDIR\${CTL_EXE}"
   Delete "$INSTDIR\${WINTUN_DLL}"
+  Delete "$INSTDIR\launch-ui.vbs"
   Delete "$INSTDIR\icons\*.ico"
   Delete "$INSTDIR\uninstall.exe"
   RMDir "$INSTDIR\icons"
