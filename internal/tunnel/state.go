@@ -22,6 +22,7 @@ type StateManager struct {
 	mu      sync.RWMutex
 	current ConnState
 	updates chan ConnState
+	closed  bool // true after Close(); Set becomes a no-op on the channel.
 }
 
 // NewStateManager creates a StateManager with initial state disconnected.
@@ -37,10 +38,19 @@ func NewStateManager() *StateManager {
 // Set updates the current state and sends a non-blocking notification on the updates channel.
 // The send is done under the lock to prevent concurrent Set calls from racing on the
 // drain-and-retry, which could drop critical transitions like StateDisconnected.
+//
+// After Close(), Set still updates sm.current (callers like Disconnect still need
+// Get() to observe the final state) but skips the channel send to avoid panicking
+// with "send on closed channel" — that race is real during shutdown, where the
+// tunnel client Disconnect path calls Set(StateDisconnected) while the service
+// shutdown sequence has already closed the updates channel.
 func (sm *StateManager) Set(state ConnState) {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 	sm.current = state
+	if sm.closed {
+		return
+	}
 
 	select {
 	case sm.updates <- state:
@@ -67,6 +77,13 @@ func (sm *StateManager) Updates() <-chan ConnState {
 }
 
 // Close closes the updates channel so that range loops over Updates() terminate.
+// Idempotent: repeated calls are no-ops so shutdown paths can be defensive.
 func (sm *StateManager) Close() {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	if sm.closed {
+		return
+	}
+	sm.closed = true
 	close(sm.updates)
 }

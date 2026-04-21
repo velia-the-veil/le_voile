@@ -176,7 +176,8 @@ type Program struct {
 	// bgWG tracks long-running background goroutines whose lifetime is tied
 	// to p.ctx but that do not expose a blocking Stop() (e.g. the updater
 	// loop, or the launcher wrapper goroutines). shutdown() waits on it
-	// with a timeout so we know everything is unwound before os.Exit(0).
+	// with a timeout so we know everything is unwound before run() returns
+	// and close(p.done) fires.
 	bgWG sync.WaitGroup
 
 	// updateMu protects update-related state accessed by IPC handlers.
@@ -707,12 +708,38 @@ func (p *Program) Cancel() {
 	})
 }
 
-// RequestStop triggers a graceful service shutdown by cancelling the
-// lifecycle context. OnFailure is disabled AFTER shutdown() completes
-// (in run()), just before os.Exit(0), so SCM doesn't respawn the process.
-// Idempotent via sync.Once (AC6).
+// RequestStop asks the OS service manager to stop this service, routing the
+// shutdown through the proper SCM / systemd handshake so kardianos's Execute
+// loop can do StopPending → Program.Stop → SERVICE_STOPPED cleanly.
+//
+// Why not just cancel the ctx internally? kardianos's Windows Execute loop
+// blocks on the SCM control channel and never observes an internal cancel,
+// so a bare Cancel() + os.Exit(0) made SCM classify the exit as "unexpected
+// termination" — which with OnFailure=restart (see newServiceConfig in
+// cmd/client) caused SCM to relaunch the service ~5 s later, re-arming WFP
+// while the UI was gone. Going through svc.Stop avoids that: SCM sees a
+// user-initiated stop, delivers svc.Stop to Execute, run() drains via
+// <-ctx.Done, and SERVICE_STOPPED is reported before the process exits.
+//
+// Fallback to Cancel() covers portable mode, tests, and environments where
+// svc.Stop itself errors (e.g. the service is not installed so there's no
+// SCM entry to stop) — the ctx still gets cancelled so run() can unwind.
+// Idempotent via sync.Once on the Cancel side (AC6); repeated svc.Stop
+// calls are harmless (SCM returns "service not running" which we swallow).
 func (p *Program) RequestStop() {
-	p.Cancel()
+	p.mu.Lock()
+	s := p.svc
+	p.mu.Unlock()
+	if s == nil {
+		p.Cancel()
+		return
+	}
+	go func() {
+		if err := s.Stop(); err != nil {
+			fmt.Fprintf(serviceStderr, "service: SCM stop failed, falling back to internal cancel: %v\n", err)
+			p.Cancel()
+		}
+	}()
 }
 
 // Updater returns the auto-updater (used by IPC handler). May be nil if updates are disabled.
@@ -1678,9 +1705,13 @@ func (p *Program) run() {
 	p.shutdown()
 	dnsRestored = true
 
-	// Force process exit. kardianos Execute hangs when shutdown is triggered
-	// via context cancel (IPC quit) rather than SCM stop signal.
-	os.Exit(0)
+	// Return (do NOT os.Exit). The deferred close(p.done) fires, which is
+	// what Program.Stop is blocked on; letting it return lets kardianos's
+	// Execute loop report SERVICE_STOPPED to SCM. The previous os.Exit(0)
+	// skipped the defer, SCM never saw a proper stop status, and with
+	// OnFailure=restart the service was relaunched ~5 s later — re-arming
+	// WFP behind a vanished UI. RequestStop now funnels IPC quits through
+	// svc.Stop so this path is always driven by an SCM-initiated stop.
 }
 
 // shutdown performs the reverse-order cleanup.
@@ -1793,12 +1824,19 @@ func (p *Program) shutdown() {
 		p.tunWatchdog = nil
 	}
 
-	// 8. Close state channel and disconnect tunnel
+	// 8. Disconnect tunnel, THEN close the state channel. Order matters:
+	// Disconnect internally calls state.Set(StateDisconnected) which sends
+	// on the updates channel. Closing the channel first would panic with
+	// "send on closed channel" the moment Disconnect fired, aborting the
+	// rest of shutdown() and leaving WFP/routing/TUN in place. StateManager
+	// is also defensive (Set is a no-op after Close) but the explicit
+	// order keeps intent obvious and leaves the final StateDisconnected
+	// observable by any consumer still ranging over Updates().
 	if p.tunnelClient != nil {
-		p.tunnelClient.State().Close()
 		if err := p.tunnelClient.Disconnect(); err != nil {
 			fmt.Fprintf(serviceStderr, "service: disconnect: %v\n", err)
 		}
+		p.tunnelClient.State().Close()
 	}
 
 	// 8a. Deactivate firewall kill switch (après tunnel disconnect, avant routing teardown).
@@ -1850,8 +1888,9 @@ func (p *Program) shutdown() {
 	// 10. Wait for launcher goroutines (updater loop, watchdog launcher
 	// wrappers, ipcStart wrapper) to exit. Their ctx has already been
 	// cancelled via p.cancel() in Stop(); this is just a best-effort
-	// join so os.Exit(0) does not race them mid-log. Bounded so a truly
-	// wedged goroutine cannot hold the SCM shutdown hostage.
+	// join so run()'s return (and the process exit that follows) does
+	// not race them mid-log. Bounded so a truly wedged goroutine cannot
+	// hold the SCM shutdown hostage.
 	bgDone := make(chan struct{})
 	go func() {
 		p.bgWG.Wait()

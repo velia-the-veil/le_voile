@@ -109,3 +109,31 @@ func TestStateManager_Concurrent(t *testing.T) {
 		t.Errorf("final state = %q, not a valid ConnState", got)
 	}
 }
+
+// TestStateManager_SetAfterClose locks in the 2026-04-21 fix: Set must not
+// panic with "send on closed channel" when called after Close(). The real
+// observation came from service shutdown — step 8 first called State().Close()
+// and then Client.Disconnect() which internally Set(StateDisconnected),
+// aborting the rest of shutdown() (including the WFP deactivate at step 8a)
+// and leaving the host with no Internet. The internal current-state update
+// MUST still happen so any Get() that follows sees the final state.
+func TestStateManager_SetAfterClose(t *testing.T) {
+	sm := NewStateManager()
+	sm.Close()
+
+	// Must not panic. Previously this was "panic: send on closed channel".
+	sm.Set(StateDisconnected)
+
+	if got := sm.Get(); got != StateDisconnected {
+		t.Errorf("Get after Close+Set = %q, want %q", got, StateDisconnected)
+	}
+}
+
+// TestStateManager_CloseIdempotent guards the second defensive change from
+// the same 2026-04-21 pass: callers may double-Close in shutdown retry paths,
+// and the second call must not re-close the already-closed channel (panic).
+func TestStateManager_CloseIdempotent(t *testing.T) {
+	sm := NewStateManager()
+	sm.Close()
+	sm.Close() // must not panic
+}

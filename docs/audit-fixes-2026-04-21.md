@@ -196,6 +196,60 @@ comme avant.
 
 ---
 
+## Fix #5 — UI quit (✕ / tray Quitter) relançait le service via SCM OnFailure
+
+**Problème constaté**
+
+Au quit UI, le service faisait `os.Exit(0)` en bout de `run()`
+(`internal/service/service.go`) après que `shutdown()` avait restauré
+WFP / DNS / routing / TUN. Problème : le `os.Exit(0)` sautait le
+`defer close(p.done)`, et comme `RequestStop` annulait juste le `ctx`
+en interne au lieu de passer par SCM, kardianos ne délivrait jamais
+`SERVICE_STOPPED` au gestionnaire de service. Combiné au `OnFailure:
+"restart"` posé à l'install (`cmd/client/main.go newServiceConfig`),
+SCM classait la sortie comme crash et **redémarrait le service
+~5 secondes plus tard** — ré-arme WFP derrière une UI disparue, donc
+l'utilisateur perdait Internet sans comprendre pourquoi.
+
+Le commentaire sur `RequestStop` (« OnFailure is disabled AFTER
+shutdown() ») et celui sur `handleQuit` (« p.svc.Stop() sends
+SERVICE_CONTROL_STOP via SCM ») documentaient l'intention correcte ;
+l'implémentation n'y correspondait pas.
+
+**Solution**
+
+- `RequestStop` (`internal/service/service.go`) lance une goroutine qui
+  appelle `p.svc.Stop()`. Sur Windows, kardianos traduit ça en
+  `ControlService(SERVICE_CONTROL_STOP)` : SCM livre ensuite `svc.Stop`
+  à la boucle Execute, qui appelle `Program.Stop` → cancel → `run()`
+  déroule `shutdown()` puis **retourne** proprement. `defer
+  close(p.done)` fait sortir `Program.Stop`, Execute sort avec
+  `(false, 0)`, et kardianos remonte `SERVICE_STOPPED` à SCM.
+- `os.Exit(0)` retiré de `run()` — la sortie se fait par le retour
+  normal, qui est maintenant compatible avec la boucle Execute grâce
+  au stop SCM-piloté ci-dessus.
+- Fallback : si `p.svc` est nil (mode portable, tests) ou si
+  `svc.Stop()` échoue, on retombe sur `p.Cancel()` — le `ctx` est tout
+  de même annulé, `run()` déroule sa séquence, et le process sort via
+  le retour de `s.Run()` dans `cmd/client/main.go`.
+
+**Fichiers touchés**
+
+- [internal/service/service.go](../internal/service/service.go) —
+  `RequestStop` et fin de `run()`.
+
+**Compatibilité**
+
+- Chemin SCM-initié (`sc stop LeVoile`, services.msc) : déjà clean
+  auparavant et reste clean — maintenant aussi sans `os.Exit`.
+- Chemin IPC-quit (UI ✕ / tray Quitter) : plus de restart SCM de 5 s,
+  restauration tient.
+- Chemin test / portable (`p.svc == nil`) : fallback `Cancel()`
+  préservé ; `TestHandle_UIDisconnect_DoesNotStopService` et
+  `TestProgram_Cancel_NilSafe` passent sans modification.
+
+---
+
 ## Faux positifs de l'audit initial (écartés après vérification)
 
 Documentés ici pour ne pas ré-analyser ces points à la prochaine passe :
