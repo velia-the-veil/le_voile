@@ -6,6 +6,18 @@ PartOf=graphical-session.target
 
 [Service]
 Type=simple
+# WebKit2GTK 4.1 (>= 2.41) utilise DMA-BUF + DRI3 par défaut pour partager
+# les buffers GPU entre process. Sur les configs où DRI3 n'est pas exposé
+# (drivers anciens, certaines VMs, X server sans extension DRI3), le
+# WebKitWebProcess crash en init avec un abort dans WTF::Thread::create —
+# fenêtre vide côté utilisateur. Les deux env vars suivantes basculent
+# WebKit sur un pipeline de rendu logiciel compatible.
+#
+# Coût : pas d'accélération GPU pour le rendu HTML/CSS de l'UI. Dans notre
+# cas (UI minimale tray + page de status), c'est invisible. Refs :
+# webkitgtk bugzilla 271600, gtk-rs/relm4 issues sur Ubuntu 24.04.
+Environment=WEBKIT_DISABLE_DMABUF_RENDERER=1
+Environment=WEBKIT_DISABLE_COMPOSITING_MODE=1
 ExecStart=/usr/bin/levoile-ui
 # Restart on crash, segfault, OOM kill, or any non-zero exit. Clean exit
 # (code 0, set when the user picks "Quitter" in the tray menu) does NOT

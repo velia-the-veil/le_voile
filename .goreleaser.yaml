@@ -197,6 +197,13 @@ nfpms:
         type: config|noreplace
         file_info:
           mode: 0644
+      # Règle polkit : le user système `levoile` doit pouvoir piloter
+      # systemd-resolved (resolvectl dns ...) sans auth interactive. Sans ça,
+      # le service crash au premier `dns set resolver` avec EACCES via D-Bus.
+      - src: packaging/polkit/49-levoile-resolved.rules
+        dst: /etc/polkit-1/rules.d/49-levoile-resolved.rules
+        file_info:
+          mode: 0644
       # Icônes XDG hicolor multi-tailles
       - src: packaging/icons/hicolor/16x16/apps/levoile.png
         dst: /usr/share/icons/hicolor/16x16/apps/levoile.png

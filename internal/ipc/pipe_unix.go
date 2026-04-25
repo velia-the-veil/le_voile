@@ -30,12 +30,24 @@ func NewPlatformListener() Listener {
 }
 
 // Listen starts listening on the unix socket. Removes stale socket first.
-// The socket directory is created with 0o700 permissions owned by root,
-// preventing TOCTOU attacks that were possible with /tmp.
+//
+// Permissions model :
+//   - dir   /run/levoile/         0750  levoile:levoile  (créé par systemd
+//     RuntimeDirectory=levoile, repris ici en MkdirAll défensif si le
+//     service est lancé hors systemd).
+//   - socket /run/levoile/levoile.sock  0660  levoile:levoile.
+//
+// Le mode 0660 (group rw) est requis parce que sur Linux le service tourne
+// en User=levoile et l'UI tourne en utilisateur de bureau — deux UIDs
+// différents qui partagent le groupe levoile. Avec 0700, l'UI ne peut pas
+// se connecter au socket. La protection contre les attaques TOCTOU venait
+// de /tmp ; ici le socket est dans /run qui n'est pas world-writable, donc
+// élargir au groupe levoile (membre = utilisateur autorisé) ne réintroduit
+// pas la classe d'attaque.
 func (pl *platformListener) Listen() (net.Listener, error) {
 	// Create the socket directory with restricted permissions.
 	socketDir := filepath.Dir(SocketPath)
-	if err := os.MkdirAll(socketDir, 0o700); err != nil {
+	if err := os.MkdirAll(socketDir, 0o750); err != nil {
 		return nil, fmt.Errorf("ipc: create socket dir: %w", err)
 	}
 
@@ -50,8 +62,10 @@ func (pl *platformListener) Listen() (net.Listener, error) {
 		}
 	}
 
-	// Set umask to restrict socket permissions at creation time.
-	oldUmask := syscall.Umask(0o077)
+	// Umask 0o007 → bind() crée le socket en 0o660 (rw owner+group, rien
+	// pour other). Combiné au Chmod défensif ci-dessous au cas où un umask
+	// custom plus restrictif serait actif côté process.
+	oldUmask := syscall.Umask(0o007)
 	l, err := net.Listen("unix", SocketPath)
 	syscall.Umask(oldUmask)
 	if err != nil {
@@ -59,7 +73,7 @@ func (pl *platformListener) Listen() (net.Listener, error) {
 	}
 
 	// Verify socket permissions after creation.
-	if err := os.Chmod(SocketPath, 0o700); err != nil {
+	if err := os.Chmod(SocketPath, 0o660); err != nil {
 		l.Close()
 		os.Remove(SocketPath)
 		return nil, fmt.Errorf("ipc: chmod socket: %w", err)
