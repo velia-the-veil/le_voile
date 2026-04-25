@@ -137,8 +137,21 @@ func NewClient(relayDomain string, relayPubKeyBase64 string, opts ...ClientOptio
 	// Resolve relay IP at startup, BEFORE system DNS is redirected to the local
 	// proxy. This prevents a deadlock where the tunnel needs DNS to connect, but
 	// DNS is routed through the tunnel that isn't connected yet.
+	//
+	// On the Linux orchestration path (service.go) the relay IP has ALREADY been
+	// resolved at §0g (line ~1219) BEFORE the kill-switch is armed at §0h. The
+	// caller passes that IP via WithResolvedIP so we short-circuit the lookup —
+	// re-querying systemd-resolved here would hang because its upstream forward
+	// (enp*:53) is dropped by the now-active firewall. See WithResolvedIP doc.
 	relayIP := relayDomain
-	if ip := net.ParseIP(relayDomain); ip == nil {
+	if o.resolvedIPHint != "" {
+		// Caller already resolved the relay (typically before firewall.Activate).
+		// Trust the hint — it must be a parseable IP.
+		if ip := net.ParseIP(o.resolvedIPHint); ip == nil {
+			return nil, fmt.Errorf("tunnel: WithResolvedIP: %q is not a valid IP", o.resolvedIPHint)
+		}
+		relayIP = o.resolvedIPHint
+	} else if ip := net.ParseIP(relayDomain); ip == nil {
 		// Not a bare IP — check for host:port (e.g., "127.0.0.1:8443" in tests).
 		if host, _, splitErr := net.SplitHostPort(relayDomain); splitErr == nil && net.ParseIP(host) != nil {
 			relayIP = relayDomain // IP:port — use as-is
@@ -242,8 +255,9 @@ func (c *Client) buildTransport() *http3.Transport {
 
 // clientOptions holds optional client configuration.
 type clientOptions struct {
-	insecure   bool
-	skipCAOnly bool // skip CA verification only; pinning still enforced. For tests with self-signed certs.
+	insecure       bool
+	skipCAOnly     bool   // skip CA verification only; pinning still enforced. For tests with self-signed certs.
+	resolvedIPHint string // pre-resolved IPv4/IPv6 of the relay; bypasses internal net.LookupIP
 }
 
 // ClientOption configures optional client behavior.
@@ -258,6 +272,20 @@ func WithInsecure(insecure bool) ClientOption {
 // Use in tests that need self-signed certificates while validating the pinning code path.
 func WithInsecureSkipCAOnly() ClientOption {
 	return func(o *clientOptions) { o.skipCAOnly = true }
+}
+
+// WithResolvedIP injects a pre-resolved IP for the relay so NewClient skips its
+// internal net.LookupIP. Required on the Linux orchestration path because the
+// kill-switch is armed BEFORE NewClient runs (service.go: routing.Setup →
+// firewall.Activate → tunnel.NewClient). A second DNS lookup at that point
+// would hit systemd-resolved on 127.0.0.53/lo (allowed) but its upstream
+// forward over enp* (192.168.1.1:53) is denied by the output `policy drop` —
+// `net.LookupIP` then hangs through Go's default 5s timeout, which the
+// connectTimeout-bounded Connect surfaces as ErrConnectionTimeout while no
+// QUIC packet was ever sent. Pass the IP captured from the pre-firewall
+// resolution at service.go:0g to short-circuit this race.
+func WithResolvedIP(ip string) ClientOption {
+	return func(o *clientOptions) { o.resolvedIPHint = ip }
 }
 
 // relayURL builds a URL using the resolved IP to avoid DNS lookups.

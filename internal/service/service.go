@@ -1215,10 +1215,29 @@ func (p *Program) run() {
 				fmt.Fprintf(serviceStderr, "service: routing cleanup: %v\n", err)
 			}
 
-			// Résoudre l'IP du relais pour la route /32 anti-loop.
-			relayIPs, err := net.LookupIP(relayDomain)
+			// Résoudre l'IP du relais pour la route /32 anti-loop. Retry
+			// avec backoff exponentiel — au boot après `systemctl restart`
+			// le DNS système peut ne pas encore être ré-appliqué par NM
+			// (RestoreResolver du précédent shutdown a fait `resolvectl
+			// revert` + `nmcli device reapply`, NM finit l'application
+			// quelques 100 ms après le start du nouveau service). Sans
+			// retry, la première lookup fail, resolvedRelayIP reste nil,
+			// le L3 gate trip et le service rate sa première fenêtre de
+			// connexion. 5 essais sur ~6 s couvre le pire cas observé.
+			var relayIPs []net.IP
+			var err error
+			for attempt := 0; attempt < 5; attempt++ {
+				relayIPs, err = net.LookupIP(relayDomain)
+				if err == nil && len(relayIPs) > 0 {
+					break
+				}
+				if attempt == 0 {
+					fmt.Fprintf(serviceStderr, "service: routing: relay %s lookup transient failure (DNS warming up?), retrying...\n", relayDomain)
+				}
+				time.Sleep(time.Duration(1<<attempt) * 200 * time.Millisecond) // 200ms, 400, 800, 1.6s, 3.2s
+			}
 			if err != nil || len(relayIPs) == 0 {
-				fmt.Fprintf(serviceStderr, "service: routing: cannot resolve relay %s: %v\n", relayDomain, err)
+				fmt.Fprintf(serviceStderr, "service: routing: cannot resolve relay %s after retries: %v\n", relayDomain, err)
 			} else {
 				// Prendre la première IPv4.
 				for _, ip := range relayIPs {
@@ -1274,8 +1293,52 @@ func (p *Program) run() {
 		}
 	}
 
+	// --- 0i. L3 stack honesty gate (Linux leak fix 2026-04-25) ---
+	// Quand TUNEnabled=true, refuser tunnel.Connect tant que la pile L3
+	// (TUN + routing + firewall si activé) n'est pas pleinement opérationnelle.
+	// Sans ce garde-fou, tunnel.Connect() ne fait que la vérif Ed25519 du
+	// relais (client.go:279) puis state.Set(StateConnected) — l'IPC répond
+	// "connected" alors que kernel/nft sont muets, l'IP ISP est toujours
+	// routée par enp* et IPv6/WebRTC fuient. Préfère "non connecté" à un
+	// faux positif. tunCleanup() rétablit l'état réseau direct (firewall →
+	// routing → TUN, ordre strict) et le service exit run() proprement →
+	// pas de boucle systemd, l'utilisateur voit "disconnected" et peut
+	// diagnostiquer. Si TUNEnabled=false (test/CI/container), le gate est
+	// inerte par design.
+	if p.config.TUNEnabled {
+		var missing []string
+		if p.tunDev == nil {
+			missing = append(missing, "tun_device")
+		}
+		if p.routeMgr == nil {
+			missing = append(missing, "routing")
+		}
+		if p.config.FirewallEnabled && p.firewallMgr == nil {
+			missing = append(missing, "firewall")
+		}
+		if len(missing) > 0 {
+			fmt.Fprintf(serviceStderr, "service: L3 stack incomplete (%s) — refusing tunnel.Connect to avoid silent leaks; internet stays direct\n", strings.Join(missing, ", "))
+			tunCleanup()
+			return
+		}
+	}
+
 	// --- 1. Tunnel connect ---
-	client, err := tunnel.NewClient(relayDomain, relayPubKey, tunnel.WithInsecure(p.config.Insecure))
+	// Inject the relay IP resolved at §0g (BEFORE firewall.Activate) so that
+	// tunnel.NewClient does NOT re-query DNS now that the kill-switch is up.
+	// systemd-resolved is reachable on lo (allowed) but its upstream forward
+	// over enp* is blocked by `policy drop` → re-resolution would hang for
+	// Go's default DNS timeout, eating the entire connectTimeout budget and
+	// surfacing as ErrConnectionTimeout while no QUIC packet was ever sent.
+	// resolvedRelayIP may be nil if §0g failed (no IPv4 for relayDomain or
+	// CaptureOriginalRoute failed) — in that case skip the hint and let
+	// NewClient do its own lookup; the L3 honesty gate has already aborted
+	// most failure modes that would lead here.
+	tunnelOpts := []tunnel.ClientOption{tunnel.WithInsecure(p.config.Insecure)}
+	if resolvedRelayIP != nil {
+		tunnelOpts = append(tunnelOpts, tunnel.WithResolvedIP(resolvedRelayIP.String()))
+	}
+	client, err := tunnel.NewClient(relayDomain, relayPubKey, tunnelOpts...)
 	if err != nil {
 		fmt.Fprintf(serviceStderr, "service: %v\n", err)
 		tunCleanup()
@@ -1416,6 +1479,21 @@ func (p *Program) run() {
 		if bpErr != nil {
 			fmt.Fprintf(serviceStderr, "service: browser policies apply: %v\n", bpErr)
 			// Non-fatal: continue without browser policies.
+		}
+		// Surface per-browser failures explicitly. ApplyPolicies returns
+		// nil bpErr when ANY browser succeeds, masking individual failures
+		// in result.Failed (typically EACCES on /usr/lib/firefox/distribution
+		// when service runs as User=levoile and the package's postinstall
+		// hasn't created /etc/firefox/policies). Without this log the
+		// WebRTC leak persists silently — the user sees "tunnel: connected"
+		// while their browser still leaks the LAN IP via STUN/ICE.
+		if result != nil {
+			for _, name := range result.Applied {
+				fmt.Fprintf(serviceStderr, "service: browser policies applied: %s\n", name)
+			}
+			for _, f := range result.Failed {
+				fmt.Fprintf(serviceStderr, "service: browser policies FAILED for %s: %s — WebRTC leak active on this browser\n", f.Name, f.Reason)
+			}
 		}
 		p.browserPolicyMu.Lock()
 		p.browserPolicyMgr = bpMgr

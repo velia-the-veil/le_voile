@@ -115,6 +115,23 @@ func (m *linuxManager) restoreResolvectl(ctx context.Context) error {
 		}
 	}
 
+	// `resolvectl revert` vide les scopes DNS de l'interface sans notifier
+	// NetworkManager. Sur les distros desktop (Mint/Ubuntu/Fedora), NM gère
+	// le DHCP et c'est lui qui doit ré-appliquer les serveurs DNS originaux.
+	// Sans ce nudge, l'interface reste en "Current Scopes: none" → tout
+	// futur lookup retourne SERVFAIL, internet est cassé après chaque
+	// shutdown du service. `nmcli device reapply <iface>` force NM à
+	// ré-appliquer la config (DHCP DNS inclus). Best-effort : si nmcli est
+	// absent (systemd-networkd pur, ou container), on skip silencieusement
+	// — l'utilisateur peut toujours `systemctl restart NetworkManager` ou
+	// rebooter pour récupérer le DNS.
+	for _, iface := range interfaces {
+		// Erreur ignorée par design : nmcli peut être absent (pas un échec
+		// du restore stricto sensu), ou l'iface peut ne pas être managed
+		// par NM (e.g. levoile0 elle-même n'a pas de connexion NM).
+		_, _ = m.run(ctx, "nmcli", "device", "reapply", iface)
+	}
+
 	m.originalDNS = ""
 	return lastErr
 }

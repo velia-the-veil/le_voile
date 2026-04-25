@@ -1,0 +1,21 @@
+// Le Voile VPN — autorise le user système `levoile` à reconfigurer
+// systemd-resolved (org.freedesktop.resolve1.*).
+//
+// Le service tourne en User=levoile (cf. /usr/lib/systemd/system/levoile.service)
+// et shell out vers `resolvectl dns <iface> <addr>` pour pointer le DNS
+// système vers le proxy local. resolvectl passe par D-Bus → polkit, et
+// l'autorisation par défaut requiert un admin authentifié interactivement.
+// Pour un service système non-interactif, ça échoue sans cette règle.
+//
+// Scope strict : uniquement les actions org.freedesktop.resolve1.* (configurer
+// DNS, domaines, route par défaut, mDNS, LLMNR, DNSSEC, revert). N'élargit pas
+// le périmètre du user `levoile` au-delà de ce que CAP_NET_ADMIN permet déjà.
+//
+// Polkit relit ce fichier via inotify dès qu'il apparaît dans
+// /etc/polkit-1/rules.d/ → pas de reload requis après installation.
+polkit.addRule(function(action, subject) {
+    if (action.id.indexOf("org.freedesktop.resolve1.") === 0 &&
+        subject.user === "levoile") {
+        return polkit.Result.YES;
+    }
+});

@@ -54,7 +54,49 @@ else
 fi
 
 # ------------------------------------------------------------------------
-# 2. Recharger systemd. Sur fresh install → enable + start. Sur upgrade :
+# 2. Permissions /etc/levoile/. Le service tourne en `User=levoile` et écrit
+# trois sidecars dans ce répertoire :
+#   - config.integrity.key (LoadOrCreateKey, premier démarrage)
+#   - config.toml.hmac     (Sign / SaveAndSign, à chaque mutation)
+#   - config.toml          (SaveAndSign via IPC handler — écriture atomique
+#                            par rename, donc dépend du mode du *dossier*)
+# Le paquet pose le dossier en root:root 0755 → impossible pour `levoile`
+# d'y créer/renommer. On chgrp + chmod 2770 (setgid) pour que :
+#   - le user `levoile` puisse créer/renommer dedans (group write)
+#   - les nouveaux fichiers héritent du groupe `levoile` (setgid bit)
+#   - la racine reste protégée des autres users (no world perms)
+# Idempotent → safe sur upgrade comme sur fresh install.
+# Fait AVANT le start systemd : sinon le service crash en boucle au premier
+# enable --now et `systemctl start` retourne en erreur.
+# ------------------------------------------------------------------------
+if [ -d /etc/levoile ]; then
+    chgrp levoile /etc/levoile 2>/dev/null \
+        && chmod 2770 /etc/levoile 2>/dev/null \
+        && log "permissions /etc/levoile/ ajustées (root:levoile 2770)." \
+        || log "WARN : chgrp/chmod /etc/levoile/ a échoué — le service ne pourra pas écrire ses sidecars (config.integrity.key, *.hmac)."
+fi
+
+# ------------------------------------------------------------------------
+# 2-bis. Préparer /etc/firefox/policies/ pour les browser policies WebRTC.
+# Mozilla supporte deux paths sur Linux pour policies.json :
+#   - /usr/lib/firefox/distribution/policies.json (root-owned 755 par défaut)
+#   - /etc/firefox/policies/policies.json         (path standard sysadmin)
+# Le service tourne en User=levoile et ne peut pas écrire dans /usr/lib (root).
+# On crée /etc/firefox/policies/ en root:levoile mode 2770 (même schéma que
+# /etc/levoile/) pour que ApplyPolicies puisse y déposer le fichier sans
+# privilege escalation. Sans ça, le code retombait sur /usr/lib/firefox/
+# distribution/, le write échouait silencieusement (EACCES non surfacé) et
+# la fuite WebRTC restait active malgré BrowserPoliciesEnabled=true.
+# Idempotent → safe sur upgrade.
+# ------------------------------------------------------------------------
+mkdir -p /etc/firefox/policies 2>/dev/null \
+    && chgrp levoile /etc/firefox/policies 2>/dev/null \
+    && chmod 2770 /etc/firefox/policies 2>/dev/null \
+    && log "/etc/firefox/policies/ créé (root:levoile 2770) pour Firefox WebRTC policies." \
+    || log "WARN : impossible de préparer /etc/firefox/policies/ — la fuite WebRTC restera active sur Firefox."
+
+# ------------------------------------------------------------------------
+# 3. Recharger systemd. Sur fresh install → enable + start. Sur upgrade :
 # - si le user avait `systemctl disable`, on respecte (pas de ré-enable)
 # - si le service tournait, on le restart pour prendre le nouveau binaire
 # ------------------------------------------------------------------------
@@ -87,7 +129,43 @@ else
 fi
 
 # ------------------------------------------------------------------------
-# 3. Rafraîchir les caches XDG (menus + icônes). Best-effort.
+# 4. Ajouter le user qui invoque sudo au groupe `levoile`.
+# L'UI tourne en tant qu'utilisateur de bureau (User=akerimus) et doit pouvoir :
+#   - lire le socket IPC dans /run/levoile/ (mode 0750 levoile:levoile)
+#   - lire ctl.token dans /etc/levoile/ (mode 2770 root:levoile via étape 2)
+#   - lire le state dans /var/lib/levoile/ (mode 0750 levoile:levoile)
+# Le seul moyen propre = membership du groupe `levoile`. Pattern standard
+# (cf. groupes `docker`, `libvirt`, `wireshark`).
+#
+# Note : la nouvelle membership n'est active qu'après logout/login (la session
+# de bureau capture les groupes au PAM-login). On le signale à la fin.
+# ------------------------------------------------------------------------
+TARGET_USER="${SUDO_USER:-}"
+if [ -n "$TARGET_USER" ] && [ "$TARGET_USER" != "root" ]; then
+    if id -nG "$TARGET_USER" 2>/dev/null | tr ' ' '\n' | grep -qx levoile; then
+        log "user '$TARGET_USER' déjà membre du groupe levoile."
+    else
+        if command -v usermod >/dev/null 2>&1; then
+            if usermod -aG levoile "$TARGET_USER" 2>/dev/null; then
+                log "user '$TARGET_USER' ajouté au groupe levoile (effet à la prochaine session de bureau)."
+            else
+                log "WARN : usermod -aG levoile '$TARGET_USER' a échoué — ajouter manuellement."
+            fi
+        elif command -v adduser >/dev/null 2>&1; then
+            # busybox/Alpine : adduser <user> <group>
+            adduser "$TARGET_USER" levoile 2>/dev/null \
+                && log "user '$TARGET_USER' ajouté au groupe levoile (effet à la prochaine session de bureau)." \
+                || log "WARN : adduser '$TARGET_USER' levoile a échoué — ajouter manuellement."
+        else
+            log "WARN : ni usermod ni adduser trouvé — ajouter '$TARGET_USER' au groupe levoile manuellement."
+        fi
+    fi
+else
+    log "INFO : SUDO_USER vide (install par root direct) — ajouter manuellement les utilisateurs de bureau au groupe levoile : 'sudo usermod -aG levoile <user>'"
+fi
+
+# ------------------------------------------------------------------------
+# 5. Rafraîchir les caches XDG (menus + icônes). Best-effort.
 # ------------------------------------------------------------------------
 if command -v update-desktop-database >/dev/null 2>&1; then
     update-desktop-database -q /usr/share/applications 2>/dev/null || true
@@ -99,7 +177,11 @@ fi
 if [ "$IS_UPGRADE" -eq 1 ]; then
     log "upgrade terminé."
 else
-    log "installation terminée — UI disponible à la prochaine session de bureau."
+    log "installation terminée."
+    log ""
+    log "⚠ DÉCONNEXION/RECONNEXION REQUISE pour que l'UI accède au service :"
+    log "   l'utilisateur de bureau doit avoir activé son appartenance au"
+    log "   groupe 'levoile', ce qui ne se fait qu'au PAM-login."
 fi
 
 exit 0

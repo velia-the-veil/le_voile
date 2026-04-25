@@ -28,3 +28,28 @@ bootstrap_doh_enabled = true
 # Note : section [http_proxy] obsolète sur Linux — la capture est L3 (TUN) via
 # levoile0, pas via proxy HTTP. Elle reste dans la version Windows legacy.
 # Cf. Epic 2 (story 2.1) pour la capture TUN, NFR9i pour DoH bootstrap.
+
+# Capture L3 machine-wide via interface virtuelle TUN (levoile0). Doit être true
+# en prod, sinon le service tombe en mode dégradé : aucun routage L3, aucun
+# kill-switch nftables, et tunnel.Connect ne valide que l'identité Ed25519 du
+# relais sans capturer le trafic. Symptômes : IP réelle visible, IPv6 leak,
+# WebRTC leak. Ne pas désactiver sauf en environnement de test ou container
+# sans /dev/net/tun.
+[tun]
+enabled = true
+name = "levoile0"
+mtu = 1420
+
+# Kill-switch firewall nftables. Active à Connect() pour bloquer tout le trafic
+# sortant sauf TUN + IP relais sur :443. Doit être true en prod pour tenir les
+# garanties NFR9b (zéro fuite). allow_ipv6_leak = false bloque l'IPv6 native via
+# `policy drop` (fuite par défaut sinon, l'IPv6 n'est pas routée par TUN).
+[firewall]
+enable_killswitch = true
+allow_ipv6_leak = false
+
+# Détection portail captif Wi-Fi avant tunnel.Connect. Active le firewall en
+# mode "captive" (gateway-only) pendant l'authentification puis bascule en mode
+# full après clear. Cf. Story 2.8.
+[captive]
+enabled = true

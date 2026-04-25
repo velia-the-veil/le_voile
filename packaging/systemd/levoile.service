@@ -27,8 +27,13 @@ StartLimitIntervalSec=60s
 # upgrade). User=levoile est créé par le preinstall du paquet.
 User=levoile
 Group=levoile
-AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW
-CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW
+# CAP_NET_ADMIN          : interface TUN, nftables, routes
+# CAP_NET_RAW            : sockets raw (sondes réseau, captive portal probe)
+# CAP_NET_BIND_SERVICE   : bind du proxy DNS sur 127.0.0.1:53 (port < 1024).
+#                          Nécessaire dès que le service tourne en non-root :
+#                          sans ça, le DNS proxy crash avec EACCES au listen.
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW CAP_NET_BIND_SERVICE
 
 # Hardening — compromis entre sécurité et besoins runtime. NET_ADMIN sur le
 # namespace principal est requis pour créer l'interface TUN et manipuler nftables,
@@ -38,7 +43,20 @@ CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
+# ReadWritePaths : ProtectSystem=strict rend /etc/, /usr/, /boot read-only
+# pour le service. On rouvre uniquement les paths où on a besoin d'écrire :
+#   - /etc/levoile           : config + sidecars (HMAC, integrity key)
+#   - /run/levoile           : socket IPC
+#   - /var/log/levoile       : LogsDirectory
+#   - /etc/firefox/policies  : Firefox WebRTC policies (+ /etc/chromium etc
+#     pour les browsers Chromium-based si présents — ApplyPolicies skip
+#     silencieusement les browsers non installés). MissingOK=true (préfixe -)
+#     évite une erreur d'unit si un path n'existe pas sur ce système.
 ReadWritePaths=/etc/levoile /run/levoile /var/log/levoile
+ReadWritePaths=-/etc/firefox/policies -/usr/lib/firefox/distribution
+ReadWritePaths=-/etc/chromium/policies/managed -/etc/opt/chrome/policies/managed
+ReadWritePaths=-/etc/brave/policies/managed -/etc/vivaldi/policies/managed
+ReadWritePaths=-/etc/opera/policies/managed -/etc/opt/edge/policies/managed
 ProtectKernelTunables=false
 ProtectKernelModules=false
 ProtectControlGroups=true
@@ -52,10 +70,11 @@ RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK AF_PACKET
 # Répertoire d'état privé — systemd crée /run/levoile avec le bon owner
 # (user=levoile) sans que preinstall.sh ait à le faire. Persiste pendant la vie
 # du service, nettoyé automatiquement au stop.
-# NB : /etc/levoile/ est créé et possédé par le paquet (root:root) — on ne
-# déclare PAS ConfigurationDirectory=levoile pour éviter le conflit d'ownership
-# (dir root:root avec fichiers root:root vs systemd qui chown en levoile:levoile
-# au premier start, comportement non-déterministe selon version systemd).
+# NB : /etc/levoile/ est créé par le paquet puis chgrp en root:levoile 2770
+# par postinstall.sh (étape 2). On ne déclare PAS ConfigurationDirectory=levoile
+# pour éviter que systemd chown récursivement le contenu (config.toml resterait
+# root:root par design — seuls les sidecars writes/runtime héritent du groupe
+# levoile via le setgid 2770).
 RuntimeDirectory=levoile
 RuntimeDirectoryMode=0750
 StateDirectory=levoile

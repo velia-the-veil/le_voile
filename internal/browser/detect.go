@@ -67,10 +67,19 @@ var chromiumVendorLinux = map[string]string{
 // chromiumPolicyFileName is the policy file placed in Chromium managed dirs (Linux).
 const chromiumPolicyFileName = "levoile-webrtc.json"
 
-// firefoxPolicyPathsLinux are possible locations for Firefox distribution policies.
+// firefoxPolicyPathsLinux are possible locations for Firefox distribution
+// policies. Ordre IMPORTANT — premier path écrivable l'emporte (cf.
+// browserInfoForLinux). /etc/firefox/policies est le chemin standard Mozilla
+// pour les policies système (https://mozilla.github.io/policy-templates/) ET
+// le seul que le user `levoile` peut écrire — le postinstall.sh du paquet
+// crée ce dossier avec mode 2770 root:levoile. /usr/lib/firefox/distribution
+// est un fallback (root-owned 755) qui ne marchera qu'en root standalone ;
+// avec le service systemd User=levoile le write y échoue avec EACCES sans
+// que le bug ne soit surfacé (apply silencieux), d'où la fuite WebRTC quand
+// /etc/firefox/policies n'existe pas et que le code retombait dessus.
 var firefoxPolicyPathsLinux = []string{
-	"/usr/lib/firefox/distribution/policies.json",
 	"/etc/firefox/policies/policies.json",
+	"/usr/lib/firefox/distribution/policies.json",
 }
 
 // windowsAppPathExes maps executable names to browser names for Windows detection.

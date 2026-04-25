@@ -159,6 +159,44 @@ func TestClient_NewClient_InvalidKey(t *testing.T) {
 	}
 }
 
+func TestClient_NewClient_WithResolvedIP_BypassesLookup(t *testing.T) {
+	// Garantit que NewClient n'appelle PAS net.LookupIP quand le hint est
+	// fourni. Sans ce bypass, la séquence Linux (firewall.Activate avant
+	// tunnel.NewClient) faisait hang la résolution systemd-resolved et
+	// surfacait comme ErrConnectionTimeout sans qu'aucun paquet QUIC ne
+	// soit émis. Le domaine ".invalid" est garanti non-résolvable (RFC 6761)
+	// donc si NewClient ignore le hint et tape DNS, le test échoue.
+	pub, _, err := lecrypto.GenerateKeyPair()
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	pubB64 := lecrypto.ExportPublicKeyBase64(pub)
+
+	client, err := NewClient("relay.invalid", pubB64, WithResolvedIP("203.0.113.42"))
+	if err != nil {
+		t.Fatalf("NewClient with resolved hint: %v", err)
+	}
+	if client.relayDomain != "relay.invalid" {
+		t.Errorf("relayDomain = %q, want preserved %q", client.relayDomain, "relay.invalid")
+	}
+	if client.relayIP != "203.0.113.42" {
+		t.Errorf("relayIP = %q, want hint %q", client.relayIP, "203.0.113.42")
+	}
+}
+
+func TestClient_NewClient_WithResolvedIP_RejectsBadHint(t *testing.T) {
+	pub, _, err := lecrypto.GenerateKeyPair()
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	pubB64 := lecrypto.ExportPublicKeyBase64(pub)
+
+	_, err = NewClient("relay.example.com", pubB64, WithResolvedIP("not-an-ip"))
+	if err == nil {
+		t.Fatal("expected error for malformed resolved IP hint, got nil")
+	}
+}
+
 func TestClient_Connect_VerificationSuccess(t *testing.T) {
 	pub, priv, err := lecrypto.GenerateKeyPair()
 	if err != nil {

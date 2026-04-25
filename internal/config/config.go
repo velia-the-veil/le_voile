@@ -63,9 +63,11 @@ type CaptiveConfig struct {
 // TUNConfig holds TUN/Wintun interface settings (Epic 2 — capture L3).
 type TUNConfig struct {
 	// Enabled active la création de l'interface TUN/Wintun au démarrage.
-	// Défaut false tant que les stories routing (2.4), firewall (2.6/2.7) et
-	// pump tunnel (1.1 étendue) ne sont pas livrées. Quand enabled=true sans
-	// ces dépendances, l'interface est créée mais inutile.
+	// Défaut true : sans cette interface aucun trafic n'est capturé en L3, le
+	// kill-switch nftables ne s'arme pas (gated sur tunDev != nil) et le
+	// service ment ("connected" alors que l'IP réelle, l'IPv6 native et
+	// WebRTC fuient). Désactiver uniquement pour test/CI ou container sans
+	// /dev/net/tun.
 	Enabled bool   `toml:"enabled"`
 	Name    string `toml:"name"` // ex: "levoile0" — regex ^[a-z][a-z0-9]{0,14}$
 	MTU     int    `toml:"mtu"`  // bornes [576, 9000], défaut 1420
@@ -229,8 +231,9 @@ func Load(path string) (*Config, error) {
 			Enabled: true,
 		},
 		TUN: TUNConfig{
-			Name: "levoile0",
-			MTU:  1420,
+			Enabled: true,
+			Name:    "levoile0",
+			MTU:     1420,
 		},
 		Firewall: FirewallConfig{
 			EnableKillSwitch: true,

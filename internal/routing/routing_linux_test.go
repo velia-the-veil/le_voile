@@ -6,6 +6,8 @@ import (
 	"errors"
 	"net"
 	"os"
+	"os/exec"
+	"strings"
 	"testing"
 )
 
@@ -87,6 +89,33 @@ func TestLinuxSetupTeardown_Real(t *testing.T) {
 	// Double Setup should return ErrAlreadyActive.
 	if err := rm.Setup("levoile0", relay, gw, iface); !errors.Is(err, ErrAlreadyActive) {
 		t.Errorf("double Setup = %v, want ErrAlreadyActive", err)
+	}
+
+	// Régression: la route /32 anti-loop doit être dans table 51820 (pas main),
+	// sinon la rule priority 100 (lookup 51820, contient 0.0.0.0/0 dev tun)
+	// précède main et capture les paquets relais → routing loop → tunnel
+	// timeout. Vérifie via `ip route get` que la résolution effective du
+	// relais passe par la gateway physique, pas par la TUN.
+	out, err := exec.Command("ip", "route", "get", relay.String()).CombinedOutput()
+	if err != nil {
+		t.Fatalf("ip route get %s: %v: %s", relay, err, out)
+	}
+	got := string(out)
+	if !strings.Contains(got, "via "+gw.String()) {
+		t.Errorf("relay route should resolve via %s (orig gateway), got: %s", gw, got)
+	}
+	if strings.Contains(got, "dev levoile0") {
+		t.Errorf("relay route MUST NOT go via TUN (routing loop), got: %s", got)
+	}
+
+	// Vérifier explicitement la présence du /32 dans table 51820.
+	out, err = exec.Command("ip", "route", "show", "table", routingTable).CombinedOutput()
+	if err != nil {
+		t.Fatalf("ip route show table %s: %v: %s", routingTable, err, out)
+	}
+	tableContent := string(out)
+	if !strings.Contains(tableContent, relay.String()+" via "+gw.String()) {
+		t.Errorf("table %s should contain %s via %s, got:\n%s", routingTable, relay, gw, tableContent)
 	}
 
 	if err := rm.Teardown(); err != nil {

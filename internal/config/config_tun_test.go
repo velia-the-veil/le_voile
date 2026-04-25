@@ -19,8 +19,8 @@ func TestConfig_TUNDefaults(t *testing.T) {
 	if cfg.TUN.MTU != 1420 {
 		t.Errorf("TUN.MTU = %d, want 1420", cfg.TUN.MTU)
 	}
-	if cfg.TUN.Enabled {
-		t.Error("TUN.Enabled doit être false par défaut")
+	if !cfg.TUN.Enabled {
+		t.Error("TUN.Enabled doit être true par défaut (capture L3 obligatoire en prod)")
 	}
 }
 

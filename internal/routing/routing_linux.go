@@ -77,10 +77,18 @@ func (m *linuxRouteManager) Setup(tunName string, relayIP net.IP, origGateway ne
 		return fmt.Errorf("routing: add rule priority %s: %w", rulePriority, err)
 	}
 
-	// 3. Route /32 vers relais via gateway originale (évite routing loop).
+	// 3. Route /32 vers relais via gateway originale dans la MÊME table 51820
+	// que le 0.0.0.0/0. Sinon : la rule priority 100 (lookup 51820) précède la
+	// table main (priority 32766), donc un /32 placé dans main ne serait jamais
+	// consulté pour les paquets vers le relais — la lookup 51820 retournerait
+	// directement le 0.0.0.0/0 dev levoile0 et créerait un routing loop
+	// (paquets QUIC vers le relais entrent dans la TUN au lieu d'aller via la
+	// gateway physique → tunnel.Connect timeout sans handshake jamais émis).
+	// `dev <iface>` est explicite pour ne pas dépendre de la résolution
+	// implicite du gateway.
 	relayStr := relay4.String() + "/32"
-	_ = ipCmd("route", "del", relayStr)
-	if err := ipCmd("route", "add", relayStr, "via", gw4.String()); err != nil {
+	_ = ipCmd("route", "del", relayStr, "table", routingTable)
+	if err := ipCmd("route", "add", relayStr, "via", gw4.String(), "dev", origIface, "table", routingTable); err != nil {
 		// Rollback rule + route.
 		_ = ipCmd("rule", "del", "priority", rulePriority)
 		_ = ipCmd("route", "flush", "table", routingTable)
@@ -114,7 +122,11 @@ func (m *linuxRouteManager) Teardown() error {
 		errs = append(errs, fmt.Sprintf("route flush table %s: %v", routingTable, err))
 	}
 
-	// Supprimer route /32 relais.
+	// Supprimer route /32 relais résiduelle dans main (compat pré-fix routing-
+	// loop : avant, le /32 était posé dans main et non dans 51820 ; un crash
+	// d'une vieille version peut avoir laissé une orpheline dans main que la
+	// flush table 51820 ci-dessus ne touche pas). Erreur "No such route"
+	// ignorée — c'est le cas attendu pour toute install récente.
 	if m.saved != nil && m.saved.RelayIP != nil {
 		relayStr := m.saved.RelayIP.String() + "/32"
 		if err := ipCmd("route", "del", relayStr); err != nil {
