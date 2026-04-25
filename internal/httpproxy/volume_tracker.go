@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"net"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -21,6 +22,60 @@ const (
 	CleanupInterval    time.Duration = 60 * time.Second
 	CleanupTTL         time.Duration = 24 * time.Hour
 )
+
+// alwaysBypassSuffixes lists hostname suffixes that always bypass the relay,
+// even before any volume threshold is reached. Intended for game-launcher
+// CDNs whose payloads are huge and would otherwise burn the relay quota
+// before the volume tracker reacts. Suffix match: a host h is bypassed
+// iff h == s or h ends with "." + s for some s in this list.
+//
+// Trade-off: the user's real IP is exposed to these CDNs from the first
+// byte. Same compromise as the volume-triggered bypass — accepted for
+// download-heavy traffic.
+var alwaysBypassSuffixes = []string{
+	// Ubisoft Connect
+	"cdn.ubi.com",
+	"static3.cdn.ubi.com",
+	"dl.ubi.com",
+	"ubistatic-a.akamaihd.net",
+	"ubistatic-3.cdn.ubi.com",
+	// Epic Games
+	"download.epicgames.com",
+	"download2.epicgames.com",
+	"epicgames-download1.akamaized.net",
+	// GOG Galaxy
+	"cdn.gog.com",
+	"cdn-hw.gog.com",
+	"gog-cdn-fastly.gog.com",
+	// Origin / EA App
+	"origin-a.akamaihd.net",
+	"eaassets-a.akamaihd.net",
+	"download.dm.origin.com",
+	"lvlt.dm.origin.com",
+	// Battle.net (Blizzard)
+	"level3.blizzard.com",
+	"blzddist1-a.akamaihd.net",
+	"blzddist2-a.akamaihd.net",
+	"blzddist3-a.akamaihd.net",
+	"nydus.battle.net",
+}
+
+// IsAlwaysBypassed reports whether target's hostname matches one of the
+// alwaysBypassSuffixes entries (exact match or "*.suffix" subdomain match).
+// The port portion of host:port is stripped before matching.
+func IsAlwaysBypassed(target string) bool {
+	hostname, _, err := net.SplitHostPort(target)
+	if err != nil {
+		hostname = target
+	}
+	hostname = strings.ToLower(hostname)
+	for _, suffix := range alwaysBypassSuffixes {
+		if hostname == suffix || strings.HasSuffix(hostname, "."+suffix) {
+			return true
+		}
+	}
+	return false
+}
 
 // sharedCDNs lists CDN domains where the full FQDN is used as key
 // instead of the registrable domain, to avoid bypassing all sites

@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -84,6 +85,11 @@ type Config struct {
 	UpdateMaxInstallRetries int
 	BlocklistEnabled  bool
 	BlocklistInterval time.Duration
+	// BlocklistCachePath is the on-disk location where the Manager persists
+	// the last successful StevenBlack/hosts payload. Empty disables caching
+	// (the Manager then always downloads on Start, taking 5–30 s over the
+	// tunnel). Wired from cmd/client/main.go to sit next to config.toml.
+	BlocklistCachePath string
 
 	RegistryEnabled         bool
 	RegistryURL             string
@@ -895,6 +901,30 @@ func (p *Program) SetRealIP(ip string) {
 	p.realIP.Store(ip)
 }
 
+// blocklistHTTPClient returns an http.Client that sends the StevenBlack GET
+// through the local HTTP CONNECT proxy (which forwards via the relay /connect
+// endpoint — the same path browsers use). Without this, the default transport
+// routes through levoile0 + runTUNPump + relay /tunnel + NAT, turning an
+// ~800 KB download into a 30 s stall on cold-start. Returns nil when the
+// local proxy isn't running (VPN disconnected / feature off), letting the
+// Manager fall back to its default direct client.
+func (p *Program) blocklistHTTPClient() *http.Client {
+	if !p.httpProxyActive.Load() {
+		return nil
+	}
+	addr, _ := p.httpProxyAddr.Load().(string)
+	if addr == "" {
+		return nil
+	}
+	proxyURL := &url.URL{Scheme: "http", Host: addr}
+	return &http.Client{
+		Timeout: 30 * time.Second,
+		Transport: &http.Transport{
+			Proxy: http.ProxyURL(proxyURL),
+		},
+	}
+}
+
 // EnableBlocklist activates DNS blocklist filtering at runtime.
 // Creates and starts the Manager if it was never started, then injects it into
 // both proxies. Safe to call while the service is running.
@@ -910,7 +940,7 @@ func (p *Program) EnableBlocklist() {
 		if interval == 0 {
 			interval = 24 * time.Hour
 		}
-		blMgr := blocklist.NewManager(interval)
+		blMgr := blocklist.NewManagerWithCacheAndClient(interval, p.config.BlocklistCachePath, p.blocklistHTTPClient())
 		p.blocklistManager = blMgr
 		go blMgr.Start(p.ctx)
 	}
@@ -1263,6 +1293,17 @@ func (p *Program) run() {
 		connectCtx, connectCancel = context.WithTimeout(ctx, rollbackTimeout)
 	}
 
+	// Known gap (review finding F1): this Connect runs unconditionally —
+	// cfg.Client.AutoStart only gates the OS-level auto-start surfaces
+	// (SCM startup type + ONLOGON scheduled task). Once the service has
+	// been started by any path (boot, manual sc start, ensureService from
+	// a user-launched UI), it will auto-connect the tunnel. Fixing this
+	// cleanly requires extracting the post-Connect setup (TUN watchdog,
+	// pump, discoverer, reconnector, leak scheduler, blocklist) into a
+	// function invocable from handleConnect on first use. Deferred:
+	// architectural and outside the scope of the original user report
+	// "VPN started automatically at next boot" which is addressed by the
+	// OS-level gate.
 	if err := client.Connect(connectCtx); err != nil {
 		if connectCancel != nil {
 			connectCancel()
@@ -1594,7 +1635,7 @@ func (p *Program) run() {
 		if interval == 0 {
 			interval = 24 * time.Hour
 		}
-		blMgr := blocklist.NewManager(interval)
+		blMgr := blocklist.NewManagerWithCacheAndClient(interval, p.config.BlocklistCachePath, p.blocklistHTTPClient())
 		p.blocklistManager = blMgr
 		p.blocklistActive.Store(true)
 		p.bgWG.Add(1)

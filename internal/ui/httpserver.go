@@ -558,9 +558,18 @@ func (s *HTTPServer) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	resp := s.sendIPC(r.Context(), ipc.ActionGetStatus, "")
 
-	// Read auto_start from config file (not in IPC status).
+	// Read auto_start from the same config file the service writes via
+	// handleSetAutoStart. Use DiscoverPath (which checks $INSTDIR first)
+	// rather than DefaultPath (%APPDATA% of the current user) — the
+	// installed layout keeps config.toml next to the exe, and the service
+	// runs as LocalSystem so its %APPDATA% differs from the interactive
+	// user's. Mixing the two makes toggle writes vanish from the GET's
+	// point of view: user unchecks, service writes $INSTDIR\config.toml,
+	// UI reads %APPDATA%\...\config.toml (missing or stale) → toggle
+	// appears re-checked on every tab revisit.
 	autoStart := true // default
-	if cfgPath, err := config.DefaultPath(); err == nil {
+	cfgPath := config.DiscoverPath("")
+	if cfgPath != "" {
 		if cfg, err := config.Load(cfgPath); err == nil {
 			autoStart = cfg.Client.AutoStart
 		}

@@ -628,6 +628,12 @@ async function loadSettings() {
         setToggle('toggle-blocklist', s.blocklist);
         setToggle('toggle-httpproxy', s.http_proxy);
         setToggle('toggle-ipv6leak', s.allow_ipv6_leak);
+        // Authoritative refresh — drop any stale toggle error surfaced by
+        // a previous failed POST so the banner doesn't linger after the
+        // state resyncs. Skip when a POST is in flight: clearing then
+        // would dismiss a banner that might still correctly describe a
+        // failure that hasn't landed yet (review finding F11).
+        if (!hasSettingInflight()) clearSettingError();
     } catch (e) {}
 }
 
@@ -637,19 +643,85 @@ function setToggle(id, on) {
     if (on) { el.classList.add('on'); } else { el.classList.remove('on'); }
 }
 
+// settingInflight holds the names of toggles whose POST is currently in
+// flight. A second click on the same toggle is ignored until the first
+// resolves. Without this guard, rapid clicks capture a stale "prev" state
+// and the revert-on-error path can leave the UI out of sync with the
+// backend (review finding F6).
+var settingInflight = Object.create(null);
+
 async function toggleSetting(name) {
     var map = { autostart: 'toggle-autostart', blocklist: 'toggle-blocklist', httpproxy: 'toggle-httpproxy' };
-    var el = document.getElementById(map[name]);
+    var id = map[name];
+    var el = document.getElementById(id);
     if (!el) return;
-    var nowOn = !el.classList.contains('on');
-    setToggle(map[name], nowOn);
+    if (settingInflight[name]) return;
+    settingInflight[name] = true;
+    var prevOn = el.classList.contains('on');
+    var nowOn = !prevOn;
+    // Optimistic flip so the toggle feels responsive. On error we revert
+    // below — previously the failure was swallowed silently, which let the
+    // user believe autostart was disabled while config.toml and sc config
+    // still said auto (bug: checkbox "se recochait toute seule" at next
+    // settings view).
+    setToggle(id, nowOn);
+    clearSettingError();
     try {
-        await fetch('/api/settings/' + name, {
+        var resp = await fetch('/api/settings/' + name, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ enabled: nowOn })
         });
-    } catch (e) {}
+        var data = {};
+        try { data = await resp.json(); } catch (_) {}
+        // Note: handleBoolSetting currently writes HTTP 200 even on error —
+        // data.error is the authoritative failure signal. !resp.ok is kept
+        // as defense-in-depth for future handlers that do set 4xx/5xx.
+        if (!resp.ok || (data && data.error)) {
+            setToggle(id, prevOn);
+            showSettingError(data && data.error ? data.error : ('HTTP ' + resp.status));
+        }
+    } catch (e) {
+        setToggle(id, prevOn);
+        showSettingError('service_unreachable');
+    } finally {
+        delete settingInflight[name];
+    }
+}
+
+function hasSettingInflight() {
+    for (var k in settingInflight) {
+        if (settingInflight[k]) return true;
+    }
+    return false;
+}
+
+function showSettingError(reason) {
+    var box = document.getElementById('setting-error');
+    if (!box) return;
+    box.textContent = '⚠ Changement non enregistré — ' + humanizeSettingError(reason);
+    box.style.display = '';
+}
+
+function clearSettingError() {
+    var box = document.getElementById('setting-error');
+    if (!box) return;
+    box.style.display = 'none';
+    box.textContent = '';
+}
+
+function humanizeSettingError(code) {
+    switch (code) {
+        case 'service_unreachable': return 'service injoignable';
+        case 'auth_required':       return 'authentification requise (redémarrez Le Voile)';
+        case 'no_config_file':      return 'fichier de configuration introuvable';
+        case 'integrity_failed':    return 'intégrité du fichier de configuration compromise';
+    }
+    // Unknown codes are typically raw Go err.Error() strings forwarded by
+    // the IPC handler (e.g. localized schtasks / sc.exe stderr). Showing
+    // them verbatim leaks path fragments and confuses users who can't act
+    // on them. Fall back to a generic phrase (review finding F9).
+    return 'erreur interne';
 }
 
 // === IPv6 Leak Toggle ===

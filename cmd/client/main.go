@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"time"
 
@@ -279,6 +280,19 @@ func handleServiceCommand(cmd string) {
 			fmt.Fprintf(os.Stderr, "client: install: %v\n", err)
 			os.Exit(1)
 		}
+		// kardianos/service registers SCM with SERVICE_AUTO_START by
+		// default. When a reinstall preserves a config.toml that had
+		// auto_start=false, leaving the default means SCM would start the
+		// service at next boot regardless of the user's preference.
+		// Immediately re-apply the TOML value to close that window.
+		// Fresh installs (auto_start=true) are idempotent no-ops.
+		if cfgPath := config.DiscoverPath(""); cfgPath != "" {
+			if cfg, err := config.Load(cfgPath); err == nil {
+				if err := setServiceStartupType(cfg.Client.AutoStart); err != nil {
+					fmt.Fprintf(os.Stderr, "client: install: apply startup type: %v\n", err)
+				}
+			}
+		}
 		fmt.Println("Service installed.")
 	case "uninstall":
 		if err := s.Uninstall(); err != nil {
@@ -400,6 +414,7 @@ func main() {
 		UpdateMaxInstallRetries: rc.updateMaxInstallRetries,
 		BlocklistEnabled:        rc.blocklistEnabled,
 		BlocklistInterval:       rc.blocklistInterval,
+		BlocklistCachePath:      filepath.Join(filepath.Dir(cfgPath), "blocklist-cache.txt"),
 		RegistryEnabled:             rc.registryEnabled,
 		RegistryURL:                 rc.registryURL,
 		RegistryMasterPubKey:        rc.registryMasterPubKey,
@@ -466,6 +481,18 @@ func main() {
 		os.Exit(1)
 	}
 
+	// NOTE: a "reconcile SCM startup type from config.toml on every service
+	// start" pass lived here briefly. It called sc.exe config LeVoile
+	// before s.Run() — i.e. while SCM was still waiting for the process
+	// to call StartServiceCtrlDispatcher. Under load, that nested SCM
+	// round-trip deadlocked or dragged out long enough to blow the UI's
+	// webviewServiceReadyTimeout, surfacing as blank/hung "Ne répond pas"
+	// WebView2 windows. We now rely on the two places that actually
+	// mutate the SCM state: the install sub-command (post-s.Install) and
+	// handleSetAutoStart (IPC from UI toggle). Drift from an out-of-band
+	// `sc config` is no longer self-healed at startup; the user has to
+	// re-toggle the setting in Paramètres to re-apply it.
+
 	// Default: run the service (interactive or service manager context).
 	if err := s.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "client: %v\n", err)
@@ -512,6 +539,14 @@ func setServiceStartupTypeOS(autoStart bool) error {
 		if out, err := cmd.CombinedOutput(); err != nil {
 			return fmt.Errorf("config: sc config: %s: %w", string(out), err)
 		}
+		// We used to also /Change /DISABLE the ONLOGON scheduled task here,
+		// but that broke `schtasks /Run` (the path taken by the desktop
+		// shortcut via launch-ui.vbs) on stock Windows — disabled tasks
+		// cannot be explicitly run. The gate against auto-launch at logon
+		// now lives in cmd/ui: the UI exits early when cfg.Client.AutoStart
+		// is false and no recent user-launch flag was written by the VBS
+		// launcher. Keeps the task enabled (silent elevation via /Run keeps
+		// working) while preserving the no-VPN-at-boot promise.
 	case "linux":
 		action := "enable"
 		if !autoStart {

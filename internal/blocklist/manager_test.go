@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -226,6 +227,76 @@ func TestManager_IsReady_FalseBeforeDownload(t *testing.T) {
 	m := newManagerWithURL(time.Hour, srv.URL)
 	if m.IsReady() {
 		t.Error("IsReady() should be false before any download")
+	}
+}
+
+// TestManager_CacheHydratesBeforeNetwork verifies that a Manager given a
+// cache path containing a recent StevenBlack-formatted file populates its
+// in-memory map from disk before the first HTTP fetch completes. This is
+// the core guarantee that eliminates the 5–30 s first-toggle delay.
+func TestManager_CacheHydratesBeforeNetwork(t *testing.T) {
+	cachePath := t.TempDir() + "/cache.txt"
+	if err := os.WriteFile(cachePath, []byte("0.0.0.0 cached.example\n"), 0o644); err != nil {
+		t.Fatalf("seed cache: %v", err)
+	}
+
+	// Server that blocks until either the test signals via `block` or the
+	// per-request ctx is cancelled (so srv.Close can tear down cleanly).
+	// The cache-hydration path is the ONLY way IsBlocked can report true
+	// within the test window; if we ever observe domains on the wire, the
+	// hydration regressed.
+	block := make(chan struct{})
+	srv := newTestServerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-block:
+		case <-r.Context().Done():
+		}
+	})
+	// LIFO defer order: close(block) runs FIRST, unblocking the handler,
+	// then srv.Close() can drain in-flight connections without hanging.
+	defer srv.Close()
+	defer close(block)
+
+	m := NewManagerWithCache(time.Hour, cachePath)
+	m.url = srv.URL
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := m.Start(ctx); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	defer m.Stop()
+
+	waitBlocked(t, m, "cached.example", 2*time.Second)
+}
+
+// TestManager_RefreshWritesCache verifies that a successful network
+// refresh persists the raw payload to disk so the next Start can hydrate
+// instantly without re-downloading.
+func TestManager_RefreshWritesCache(t *testing.T) {
+	cachePath := t.TempDir() + "/cache.txt"
+	payload := "0.0.0.0 fresh.example\n"
+	srv := newTestServer(payload)
+	defer srv.Close()
+
+	m := NewManagerWithCache(time.Hour, cachePath)
+	m.url = srv.URL
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := m.Start(ctx); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	defer m.Stop()
+
+	waitBlocked(t, m, "fresh.example", 2*time.Second)
+
+	data, err := os.ReadFile(cachePath)
+	if err != nil {
+		t.Fatalf("cache not written: %v", err)
+	}
+	if string(data) != payload {
+		t.Errorf("cache contents = %q, want %q", string(data), payload)
 	}
 }
 

@@ -28,9 +28,13 @@ if (-not (Test-Path $WintunSrc)) {
 }
 
 # Step 1: Build binaries with GoReleaser
+# --single-target restricts to the host OS/arch so a Windows developer box
+# doesn't try to cross-compile the Linux ui/service targets (CGO webview)
+# without a Linux toolchain. This installer only needs the Windows binaries
+# anyway (service + ui + ctl-windows + verify-windows).
 Write-Host "--- Building binaries with GoReleaser ---"
 Push-Location $ProjectRoot
-goreleaser build --snapshot --clean
+goreleaser build --snapshot --clean --single-target
 Pop-Location
 
 # Step 2: Prepare build directory

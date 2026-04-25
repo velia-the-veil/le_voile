@@ -51,7 +51,15 @@ $PROGRAMFILES64\${APP_KEY}"
 ; webview came up blank (native titlebar visible, body empty) on the very first
 ; post-install launch. Second launches via the shortcut worked fine because
 ; ShellExecute wasn't going through the Exec inheritance path.
-!define MUI_FINISHPAGE_RUN "$INSTDIR\${UI_EXE}"
+;
+; Route through a custom function invoking wscript + launch-ui.vbs rather
+; than levoile-ui.exe directly, so the VBS writes the user-launch flag
+; before invoking the scheduled task. Without the flag, a reinstall that
+; preserves auto_start=false would see the "Lancer maintenant" check,
+; launch levoile-ui.exe, and have its auto-launch suppression logic exit
+; immediately — confusing the user.
+!define MUI_FINISHPAGE_RUN
+!define MUI_FINISHPAGE_RUN_FUNCTION "LaunchUIViaVBS"
 !define MUI_FINISHPAGE_RUN_TEXT "Lancer Le Voile maintenant"
 
 !insertmacro MUI_PAGE_WELCOME
@@ -102,13 +110,19 @@ Section "Install"
     Delete "$INSTDIR\config.toml.hmac"
   skip_config:
 
-  ; Register and start the service
+  ; Register the service. We deliberately do NOT call `levoile-service
+  ; start` here: the service's run() loop auto-connects the tunnel on
+  ; every start, and launching it during the Install section means the
+  ; VPN is already up before the user even sees the Finish page (and
+  ; their "Lancer Le Voile maintenant" choice becomes moot). The first
+  ; service start now happens when the user confirms on FinishPage →
+  ; wscript launch-ui.vbs → schtasks /Run → UI → ensureService →
+  ; `sc start LeVoile`. The `install` sub-command itself applies the SCM
+  ; start type from config.toml so a reinstall preserving auto_start=false
+  ; is respected at the very next boot.
   ExecWait '"$INSTDIR\${SERVICE_EXE}" install' $0
   StrCmp $0 "0" +2
     MessageBox MB_OK|MB_ICONEXCLAMATION "Service registration failed (exit code: $0)."
-  ExecWait '"$INSTDIR\${SERVICE_EXE}" start' $0
-  StrCmp $0 "0" +2
-    MessageBox MB_OK|MB_ICONEXCLAMATION "Service start failed (exit code: $0)."
 
   ; Scheduled Task — runs levoile-ui.exe with HIGHEST privileges.
   ;
@@ -134,8 +148,20 @@ Section "Install"
   ; Silent launcher VBScript — wscript runs with no console window, so the
   ; schtasks /Run invocation never flashes a cmd prompt on screen when the
   ; user double-clicks the desktop shortcut.
+  ;
+  ; The script also writes %TEMP%\levoile-user-launch.flag before invoking
+  ; schtasks so levoile-ui.exe can distinguish a user-initiated launch
+  ; (shortcut click) from an automatic ONLOGON launch. When auto-start is
+  ; disabled in settings, the UI exits silently on auto-launches but
+  ; proceeds normally when the flag is present.
   FileOpen $0 "$INSTDIR\launch-ui.vbs" w
-  FileWrite $0 'CreateObject("WScript.Shell").Run "schtasks /Run /TN ""${APP_NAME} UI""", 0, False$\r$\n'
+  FileWrite $0 'Set fso = CreateObject("Scripting.FileSystemObject")$\r$\n'
+  FileWrite $0 'Set shell = CreateObject("WScript.Shell")$\r$\n'
+  FileWrite $0 'flagPath = shell.ExpandEnvironmentStrings("%TEMP%") & "\levoile-user-launch.flag"$\r$\n'
+  FileWrite $0 'On Error Resume Next$\r$\n'
+  FileWrite $0 'fso.CreateTextFile(flagPath, True).Close$\r$\n'
+  FileWrite $0 'On Error Goto 0$\r$\n'
+  FileWrite $0 'shell.Run "schtasks /Run /TN ""${APP_NAME} UI""", 0, False$\r$\n'
   FileClose $0
 
   ; Desktop shortcut — invokes the silent launcher which triggers the
@@ -242,3 +268,32 @@ Section "Uninstall"
   RMDir "$INSTDIR\icons"
   RMDir "$INSTDIR"
 SectionEnd
+
+; MUI_FINISHPAGE_RUN target (see MUI_FINISHPAGE_RUN_FUNCTION define above).
+;
+; The desktop shortcut's VBS launcher writes %TEMP%\levoile-user-launch.flag
+; before /Run-ing the scheduled task — that flag tells levoile-ui.exe a
+; user initiated the launch, so its auto-suppression logic doesn't exit
+; when auto_start=false (reinstall case). We reproduce that here without
+; going through wscript → VBS → schtasks → Task Scheduler, which adds
+; latency + handle inheritance quirks that surface as blank/hung
+; WebView2 windows on first post-install launch.
+;
+; Instead: write the flag directly from NSIS and invoke levoile-ui.exe
+; via ShellExecute (same shell context the installed shortcut uses on a
+; warm session). ExecShell breaks handle inheritance from the elevated
+; installer process — documented earlier near MUI_FINISHPAGE_RUN.
+Function LaunchUIViaVBS
+  ; Write the user-launch sentinel so the UI treats this as a user click,
+  ; not an ONLOGON auto-launch. %TEMP% of the installer == %TEMP% of the
+  ; logged-on user because MUI runs in their shell context.
+  Push $0
+  Push $1
+  ReadEnvStr $0 "TEMP"
+  FileOpen $1 "$0\levoile-user-launch.flag" w
+  FileWrite $1 "1"
+  FileClose $1
+  Pop $1
+  Pop $0
+  ExecShell "" "$INSTDIR\${UI_EXE}"
+FunctionEnd

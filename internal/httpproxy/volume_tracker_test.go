@@ -40,6 +40,41 @@ func TestDomainKey_PSLError(t *testing.T) {
 	}
 }
 
+func TestIsAlwaysBypassed(t *testing.T) {
+	cases := []struct {
+		target string
+		want   bool
+	}{
+		// Exact match
+		{"cdn.ubi.com:443", true},
+		{"download.epicgames.com:443", true},
+		{"level3.blizzard.com:80", true},
+		{"nydus.battle.net:443", true},
+		// Subdomain match (suffix)
+		{"foo.cdn.ubi.com:443", true},
+		{"a.b.cdn.gog.com:443", true},
+		{"chunk7.blzddist1-a.akamaihd.net:443", true},
+		// Case-insensitive
+		{"CDN.UBI.COM:443", true},
+		// No port
+		{"download.epicgames.com", true},
+		// Non-bypass hosts (must NOT match)
+		{"ubi.com:443", false},                    // parent domain alone is not in the list
+		{"cdn.ubi.com.evil.com:443", false},       // suffix-substring trick
+		{"epicgames.com:443", false},              // root not listed
+		{"akamaihd.net:443", false},               // bare CDN not in list
+		{"cdninstagram.com:443", false},
+		{"example.com:443", false},
+		{"battle.net:443", false}, // root not listed; only nydus.battle.net
+	}
+	for _, c := range cases {
+		got := IsAlwaysBypassed(c.target)
+		if got != c.want {
+			t.Errorf("IsAlwaysBypassed(%q) = %v, want %v", c.target, got, c.want)
+		}
+	}
+}
+
 func TestAddBytes_UnderThreshold(t *testing.T) {
 	vt := NewVolumeTracker(1000)
 	if vt.AddBytes("example.com:443", 500) {

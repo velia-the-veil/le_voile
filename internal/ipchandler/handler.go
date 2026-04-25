@@ -480,6 +480,13 @@ func handleDisconnect(prg *svc.Program) ipc.Response {
 	return ipc.Response{Status: ipc.StatusDisconnected}
 }
 
+// handleSetAutoStart persists cfg.Client.AutoStart and applies the OS-level
+// auto-start policy (SCM startup type + scheduled task on Windows). Not
+// atomic across the three pieces of state (review finding F3): if the TOML
+// save succeeds but SetStartupTypeFn fails, config.toml claims one value
+// while SCM/task still reflect the previous one. The inconsistency is
+// self-healed on the next service start by reconcileAutoStartOS in
+// cmd/client/main.go, which re-applies the TOML value to the OS surfaces.
 func handleSetAutoStart(prg *svc.Program, req ipc.Request, opts Options) ipc.Response {
 	if req.Value != "true" && req.Value != "false" {
 		return ipc.Response{Status: ipc.StatusError, Error: "invalid_value: must be \"true\" or \"false\""}

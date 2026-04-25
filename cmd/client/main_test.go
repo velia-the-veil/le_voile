@@ -169,3 +169,4 @@ func TestNewServiceConfig(t *testing.T) {
 		t.Error("expected non-empty description")
 	}
 }
+

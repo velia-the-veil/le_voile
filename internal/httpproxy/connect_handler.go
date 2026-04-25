@@ -51,6 +51,15 @@ func (h *connectHandler) handleConnect(w http.ResponseWriter, r *http.Request) {
 		target = target + ":443"
 	}
 
+	// Always-bypass list (game-launcher CDNs): try direct from the first
+	// byte. If the direct dial fails, fall through to the relay path —
+	// the always-bypass list is a hint, not a hard requirement.
+	if IsAlwaysBypassed(target) {
+		if h.tryDirectBypass(w, r, target) {
+			return
+		}
+	}
+
 	// Volume bypass: if the domain is flagged, try a direct connection.
 	if h.volumeTracker != nil && h.volumeTracker.IsBypassed(target) {
 		if h.tryDirectBypass(w, r, target) {
@@ -200,7 +209,9 @@ func (h *connectHandler) handleConnect(w http.ResponseWriter, r *http.Request) {
 func (h *connectHandler) tryDirectBypass(w http.ResponseWriter, r *http.Request, target string) bool {
 	destConn, err := net.DialTimeout("tcp", target, BypassDialTimeout)
 	if err != nil {
-		h.volumeTracker.RecordDirectFailure(target)
+		if h.volumeTracker != nil {
+			h.volumeTracker.RecordDirectFailure(target)
+		}
 		return false
 	}
 
