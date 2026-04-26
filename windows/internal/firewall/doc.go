@@ -1,3 +1,5 @@
+//go:build windows
+
 // Package firewall provides an OS-level kill-switch that blocks all outgoing
 // traffic except through the TUN interface and the relay IP on port 443/UDP.
 //

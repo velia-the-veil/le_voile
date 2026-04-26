@@ -1,3 +1,5 @@
+//go:build windows
+
 // Package blocklist provides download, parsing, and in-memory management
 // of a DNS blocklist in the StevenBlack/hosts format.
 package blocklist
