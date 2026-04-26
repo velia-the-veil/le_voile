@@ -97,10 +97,11 @@ if [[ $RUN_VERIFY -eq 1 ]]; then
         echo "skip verify: no successful fetch"
     else
         SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-        REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+        # SCRIPT_DIR is relay/deploy/ ; REPO_ROOT is two levels up (relay/.. = repo root).
+        REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
         echo
         echo "Parse+VerifyAll (master key $MASTER_PUB_KEY):"
-        (cd "$REPO_ROOT" && go run ./cmd/verify-registry \
+        (cd "$REPO_ROOT" && go run ./relay/cmd/verify-registry \
             "$OUT_DIR/$REF_DOMAIN.json" "$MASTER_PUB_KEY")
     fi
 fi

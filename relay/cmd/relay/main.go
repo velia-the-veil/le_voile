@@ -14,7 +14,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/velia-the-veil/le_voile/internal/relay"
+	"github.com/velia-the-veil/le_voile/relay/relay"
 )
 
 const buildTag = "2026-03-19-v3-bandwidth-limiter"

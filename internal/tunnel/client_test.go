@@ -15,7 +15,7 @@ import (
 	"time"
 
 	lecrypto "github.com/velia-the-veil/le_voile/internal/crypto"
-	"github.com/velia-the-veil/le_voile/internal/relay"
+	"github.com/velia-the-veil/le_voile/relay/relay"
 
 	"github.com/quic-go/quic-go/http3"
 )

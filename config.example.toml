@@ -34,7 +34,7 @@ public_key_ed25519 = ""
 # insecure = true  # Uncomment for development only — NEVER in production
 
 # DNS resolver côté relais (story 3.5) — résolution interne avec blocklist.
-# Ces paramètres ne sont utilisés que par cmd/relay, pas par le client.
+# Ces paramètres ne sont utilisés que par relay/cmd/relay, pas par le client.
 [relay.dns]
 upstreams = ["https://1.1.1.1/dns-query", "https://9.9.9.9/dns-query"]
 blocklist_url = "https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts"

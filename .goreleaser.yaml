@@ -4,7 +4,7 @@ version: 2
 # les artefacts produits par goreleaser (archives, binaires, packages,
 # checksums). Les `extra_files` sont uploadés tels quels, sans .sig. Pour
 # que install.sh arrive avec sa signature détachée dans la release, on
-# appelle signpkg ici en amont ; le fichier résultant deploy/install.sh.sig
+# appelle signpkg ici en amont ; le fichier résultant relay/deploy/install.sh.sig
 # est ensuite référencé par extra_files.
 #
 # `signpkg` doit être dans $PATH — release-sign.sh le construit avant
@@ -13,7 +13,7 @@ version: 2
 # LEVOILE_SIGNING_KEY_PATH pour que cette étape réussisse.
 before:
   hooks:
-    - bash -c 'signpkg -signing-key="${LEVOILE_SIGNING_KEY_PATH}" deploy/install.sh'
+    - bash -c 'signpkg -signing-key="${LEVOILE_SIGNING_KEY_PATH}" relay/deploy/install.sh'
 
 builds:
   - id: service
@@ -58,7 +58,7 @@ builds:
       - -s -w -X main.version={{.Version}}
 
   - id: relay
-    main: ./cmd/relay
+    main: ./relay/cmd/relay
     binary: levoile-relay
     goos: [linux]
     goarch: [amd64]
@@ -123,7 +123,7 @@ archives:
     formats: [tar.gz]
     files:
       - LICENSE
-      - deploy/*
+      - relay/deploy/*
 
   # Story 7.2 — archive tar.gz Linux : inclut aussi le service (sinon l'archive
   # tar.gz seule ne permet pas une install manuelle sans passer par les paquets).
@@ -283,5 +283,5 @@ release:
   extra_files:
     - glob: docs/keys/levoile-release.pub
     - glob: docs/keys/levoile-release.pub.pem
-    - glob: deploy/install.sh
-    - glob: deploy/install.sh.sig
+    - glob: relay/deploy/install.sh
+    - glob: relay/deploy/install.sh.sig

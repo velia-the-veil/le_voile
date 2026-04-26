@@ -10,7 +10,7 @@
 // Exit 1: parse error, master key invalid, or no relays verified.
 // Exit 2: bad invocation.
 //
-// Intended for operator smoke tests (deploy/smoke_registry.sh --verify), not
+// Intended for operator smoke tests (relay/deploy/smoke_registry.sh --verify), not
 // for the running client which uses internal/registry.Client directly.
 package main
 

@@ -30,7 +30,7 @@ finaux (eux lisent la section correspondante du README).
 La clé Ed25519 master est générée une seule fois par période de rotation
 (24 mois, voir §5). Deux chemins équivalents :
 
-### Via `tools/genkey` (recommandé — cohérent avec cmd/genregistry)
+### Via `tools/genkey` (recommandé — cohérent avec relay/cmd/genregistry)
 
 ```bash
 go run ./tools/genkey -out "$HOME/.levoile/signing" -pem

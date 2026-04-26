@@ -22,7 +22,7 @@
 /portable
 /ui
 /levoile-*
-deploy/relay
+relay/deploy/relay
 
 # Refacto cross-platform : autoriser les répertoires racine (windows/, linux/, relay/, android/)
 # malgré les patterns binaires ci-dessus.
@@ -72,7 +72,7 @@ signing.key.*
 # Signature détachée générée au release time par le before.hook goreleaser
 # pour install.sh (fix C7 audit). Jamais commitée — re-créée à chaque release
 # avec la clé master active.
-deploy/install.sh.sig
+relay/deploy/install.sh.sig
 
 # Runtime config (may contain credentials)
 config.toml
