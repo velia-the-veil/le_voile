@@ -1,0 +1,459 @@
+/* Design tokens */
+:root {
+    --bg-primary: #0b1526;
+    --bg-secondary: #0e1e38;
+    --bg-tertiary: #162a4a;
+    --accent-blue: #1a6fc4;
+    --accent-glow: #2a8dff;
+    --accent-red: #d42b2b;
+    --status-secure: #4ade80;
+    --status-warning: #fb923c;
+    --status-risk: #ff3c3c;
+    --text-primary: #f0f4ff;
+    --text-secondary: #8a9bb8;
+}
+
+@font-face { font-family: 'Bebas Neue'; src: url('../assets/fonts/BebasNeue-Regular.woff2') format('woff2'); font-weight: 400; font-display: swap; }
+@font-face { font-family: 'Rajdhani'; src: url('../assets/fonts/Rajdhani-Regular.woff2') format('woff2'); font-weight: 400; font-display: swap; }
+@font-face { font-family: 'Rajdhani'; src: url('../assets/fonts/rajdhani-semibold.woff2') format('woff2'); font-weight: 600; font-display: swap; }
+@font-face { font-family: 'Inter'; src: url('../assets/fonts/Inter-Regular.woff2') format('woff2'); font-weight: 400; font-display: swap; }
+@font-face { font-family: 'Inter'; src: url('../assets/fonts/Inter-Medium.woff2') format('woff2'); font-weight: 500; font-display: swap; }
+
+*, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+html, body {
+    width: 100%; height: 100%; overflow: hidden;
+    background: var(--bg-primary); color: var(--text-primary);
+    font-family: 'Inter', 'Segoe UI', sans-serif;
+    user-select: none; -webkit-user-select: none;
+}
+
+/* Titlebar */
+.titlebar {
+    height: 36px; background: var(--bg-secondary);
+    display: flex; align-items: center; padding: 0 12px;
+    border-bottom: 1px solid rgba(42, 141, 255, 0.08);
+    flex-shrink: 0;
+}
+.titlebar-left { display: flex; align-items: center; gap: 8px; flex: 1; }
+.titlebar-v {
+    font-family: 'Bebas Neue', sans-serif; font-size: 18px;
+    transition: all 300ms ease;
+}
+.titlebar-v.connected { color: var(--status-secure); text-shadow: 0 0 8px rgba(74, 222, 128, 0.4); }
+.titlebar-v.connecting { color: var(--status-warning); text-shadow: 0 0 8px rgba(251, 146, 60, 0.4); animation: pulse-text 1.5s infinite; }
+.titlebar-v.disconnected { color: var(--status-risk); text-shadow: 0 0 8px rgba(255, 60, 60, 0.4); }
+.titlebar-v.captive { color: #f59e0b; text-shadow: 0 0 8px rgba(245, 158, 11, 0.4); animation: pulse-text 2s infinite; }
+@keyframes pulse-text { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+.titlebar-name { font-family: 'Rajdhani', sans-serif; font-size: 13px; color: var(--text-secondary); }
+.titlebar-controls { display: flex; align-items: center; gap: 2px; }
+.titlebar-btn {
+    width: 32px; height: 28px; display: flex; align-items: center; justify-content: center;
+    border-radius: 4px; cursor: pointer; font-size: 14px; font-weight: 700;
+    color: var(--text-secondary); border: none; background: none;
+    transition: background 150ms;
+}
+.titlebar-btn:hover { background: var(--bg-tertiary); }
+.close-btn:hover { background: var(--accent-red) !important; color: var(--text-primary) !important; }
+.bell-btn { position: relative; font-size: 13px; }
+.bell-badge {
+    position: absolute; top: 2px; right: 2px;
+    width: 14px; height: 14px; background: var(--status-warning);
+    border-radius: 50%; font-family: 'Inter', sans-serif; font-size: 9px; font-weight: 700;
+    color: var(--bg-primary); display: none; align-items: center; justify-content: center;
+}
+.bell-badge.visible { display: flex; }
+
+/* Body layout */
+.window-body { display: flex; height: calc(100% - 36px); }
+
+/* Sidebar */
+.sidebar {
+    width: 150px; background: var(--bg-secondary);
+    border-right: 1px solid rgba(42, 141, 255, 0.1);
+    padding: 8px 4px; display: flex; flex-direction: column; gap: 2px;
+    overflow-y: auto; flex-shrink: 0;
+}
+.sidebar-tab {
+    display: flex; align-items: center; gap: 8px;
+    padding: 10px; border-radius: 6px; cursor: pointer;
+    font-family: 'Rajdhani', sans-serif; font-size: 13px; font-weight: 600;
+    color: var(--text-secondary); border: none; background: none; width: 100%; text-align: left;
+    transition: background 150ms;
+}
+.sidebar-tab:hover { background: var(--bg-tertiary); }
+.sidebar-tab.active { background: var(--bg-tertiary); color: var(--text-primary); }
+.sidebar-tab .tab-icon { font-size: 16px; width: 20px; text-align: center; flex-shrink: 0; }
+
+.sidebar-divider { height: 1px; background: rgba(42, 141, 255, 0.1); margin: 4px 8px; }
+
+/* Country items in sidebar */
+.sidebar-country {
+    display: flex; align-items: center; gap: 8px;
+    padding: 9px 10px; border-radius: 6px; cursor: pointer;
+    font-family: 'Rajdhani', sans-serif; font-size: 13px; font-weight: 600;
+    color: var(--text-primary); border: none; background: none; width: 100%; text-align: left;
+    border-left: 2px solid transparent; transition: background 150ms;
+}
+.sidebar-country:hover { background: var(--bg-tertiary); }
+.sidebar-country.active { background: var(--bg-tertiary); border-left-color: var(--accent-glow); padding-left: 8px; }
+.sidebar-country .flag {
+    font-family: 'Segoe UI Emoji', 'Noto Color Emoji', 'Apple Color Emoji', sans-serif;
+    font-size: 16px; line-height: 1; flex-shrink: 0;
+}
+.sidebar-country .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sidebar-country .count { font-size: 11px; color: var(--text-secondary); flex-shrink: 0; }
+
+/* Panel area */
+.panel-area { flex: 1; overflow-y: auto; }
+.panel { display: none; flex-direction: column; align-items: center; padding: 24px 20px; gap: 16px; }
+.panel.visible { display: flex; }
+#panel-status { justify-content: center; height: 100%; }
+
+/* Status panel */
+.status-group { display: flex; align-items: center; gap: 8px; }
+.status-dot {
+    width: 12px; height: 12px; border-radius: 50%;
+    transition: all 300ms ease;
+}
+.status-dot.connected { background: var(--status-secure); box-shadow: 0 0 8px var(--status-secure); }
+.status-dot.connecting { background: var(--status-warning); box-shadow: 0 0 8px var(--status-warning); animation: pulse-dot 1.5s infinite; }
+.status-dot.disconnected { background: var(--status-risk); box-shadow: 0 0 8px var(--status-risk); }
+.status-dot.captive { background: #f59e0b; box-shadow: 0 0 8px #f59e0b; animation: pulse-dot-captive 2s infinite; }
+@keyframes pulse-dot-captive {
+    0%, 100% { opacity: 1; box-shadow: 0 0 8px #f59e0b; }
+    50% { opacity: 0.5; box-shadow: 0 0 16px #f59e0b; }
+}
+@keyframes pulse-dot {
+    0%, 100% { opacity: 1; box-shadow: 0 0 8px var(--status-warning); }
+    50% { opacity: 0.4; box-shadow: 0 0 20px var(--status-warning); }
+}
+
+.status-text {
+    font-family: 'Rajdhani', sans-serif; font-weight: 700; font-size: 18px;
+    transition: color 300ms;
+}
+.status-text.connected { color: var(--status-secure); }
+.status-text.connecting { color: var(--status-warning); }
+.status-text.disconnected { color: var(--status-risk); }
+
+.country-name-display {
+    font-family: 'Bebas Neue', 'Segoe UI Emoji', 'Noto Color Emoji', 'Apple Color Emoji', sans-serif;
+    font-size: 28px;
+    letter-spacing: 2px; transition: opacity 300ms;
+}
+
+.info-group { display: flex; flex-direction: column; gap: 4px; text-align: center; }
+.ip-row { font-family: 'Inter', monospace; font-size: 13px; color: var(--text-secondary); }
+.ip-row .label { opacity: 0.7; }
+.ip-row .value { color: var(--text-primary); font-weight: 500; }
+.relay-info { font-size: 13px; color: var(--text-secondary); }
+
+.actions-group { display: flex; flex-direction: column; gap: 8px; align-items: center; width: 100%; margin-top: 8px; }
+
+/* Buttons */
+.btn {
+    font-family: 'Rajdhani', sans-serif; font-weight: 600; font-size: 14px;
+    border: none; border-radius: 6px; padding: 10px 24px;
+    cursor: pointer; transition: all 200ms; width: 80%;
+    min-height: 44px;
+}
+.btn-connect { background: var(--status-secure); color: var(--bg-primary); }
+.btn-connect:hover { box-shadow: 0 0 16px rgba(74, 222, 128, 0.3); filter: brightness(1.1); }
+.btn-disconnect {
+    background: transparent;
+    color: #d42b2b;
+    border: 1px solid rgba(212, 43, 43, 0.3);
+}
+.btn-disconnect:hover {
+    background: rgba(212, 43, 43, 0.1);
+    border-color: rgba(212, 43, 43, 1);
+}
+.btn-captive-retry { background: #f59e0b; color: var(--bg-primary); margin-top: 6px; width: auto; padding: 6px 16px; font-size: 12px; min-height: auto; }
+.btn-captive-retry:hover { box-shadow: 0 0 12px rgba(245, 158, 11, 0.3); filter: brightness(1.1); }
+.btn:disabled { opacity: 0.5; cursor: not-allowed; pointer-events: none; }
+.btn.hidden { display: none; }
+
+/* Captive portal banner */
+.captive-banner {
+    background: rgba(245, 158, 11, 0.12);
+    border: 1px solid rgba(245, 158, 11, 0.3);
+    border-radius: 6px;
+    padding: 10px 12px;
+    margin: 0 0 8px 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    font-family: 'Rajdhani', sans-serif;
+    font-size: 12px;
+    color: #f59e0b;
+    text-align: center;
+}
+.captive-icon { font-size: 18px; }
+
+/* Failover alert banner (Story 4.4) — deep orange, carries NFR19 urgency
+   without duplicating the captive portal's muted amber. */
+.failover-banner {
+    background: rgba(255, 140, 0, 0.15);
+    border: 1px solid rgba(255, 140, 0, 0.55);
+    border-radius: 6px;
+    padding: 10px 12px;
+    margin: 0 0 8px 0;
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
+    font-family: 'Rajdhani', sans-serif;
+    font-size: 12px;
+    color: #f4f7fb;
+    text-align: left;
+}
+
+/* Anomaly recovery banner (Story 6.3) — solid orange + white text so the
+   user immediately distinguishes an auto-recovery in progress from the
+   amber failover notice. Reuses the failover structural rules for size
+   and spacing. */
+.anomaly-banner {
+    background: #ff8c00;
+    border: 1px solid #c96a00;
+    border-radius: 6px;
+    padding: 10px 12px;
+    margin: 0 0 8px 0;
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
+    font-family: 'Rajdhani', sans-serif;
+    font-size: 12px;
+    color: #ffffff;
+    text-align: left;
+    transition: background 200ms ease-out;
+}
+
+/* The success flash is a one-off state applied via JS setTimeout after a
+   true → false transition: stays for 3 seconds on green before the JS
+   hides the banner entirely. */
+.anomaly-banner.anomaly-success {
+    background: #28a745;
+    border-color: #1f7a34;
+}
+
+.link {
+    font-family: 'Rajdhani', sans-serif; font-weight: 600; font-size: 14px;
+    color: var(--accent-glow); text-decoration: none; cursor: pointer;
+}
+.link:hover { text-decoration: underline; }
+
+/* Settings panel */
+#panel-settings { align-items: stretch; padding: 24px; gap: 20px; }
+#panel-settings h3 {
+    font-family: 'Bebas Neue', sans-serif; font-size: 24px;
+    letter-spacing: 1px; margin-bottom: 4px;
+}
+.setting-group { display: flex; flex-direction: column; gap: 6px; }
+.setting-label { font-family: 'Rajdhani', sans-serif; font-weight: 700; font-size: 14px; }
+.setting-desc { font-size: 12px; color: var(--text-secondary); line-height: 1.5; }
+
+.toggle-row { display: flex; align-items: center; justify-content: space-between; }
+.toggle {
+    width: 40px; height: 22px; background: var(--bg-tertiary);
+    border-radius: 11px; position: relative; cursor: pointer;
+    transition: background 200ms; border: 1px solid rgba(42, 141, 255, 0.15);
+    flex-shrink: 0;
+}
+.toggle.on { background: rgba(74, 222, 128, 0.3); border-color: var(--status-secure); }
+.toggle-knob {
+    width: 16px; height: 16px; background: var(--text-secondary);
+    border-radius: 50%; position: absolute; top: 2px; left: 2px;
+    transition: all 200ms;
+}
+.toggle.on .toggle-knob { left: 20px; background: var(--status-secure); }
+
+
+/* Settings section divider + title */
+.setting-divider { height: 1px; background: rgba(42, 141, 255, 0.12); margin: 4px 0; }
+.setting-section-title {
+    font-family: 'Bebas Neue', sans-serif; font-size: 16px;
+    letter-spacing: 1px; color: var(--text-secondary); margin-bottom: -4px;
+}
+.setting-warn {
+    font-family: 'Rajdhani', sans-serif; font-size: 12px; font-weight: 600;
+    color: #e89332; padding: 4px 0;
+}
+
+/* IPv6 badge in titlebar */
+.ipv6-badge {
+    font-family: 'Rajdhani', sans-serif; font-weight: 700; font-size: 10px;
+    background: #e89332; color: var(--bg-primary); padding: 1px 5px;
+    border-radius: 3px; margin-left: 6px; vertical-align: middle;
+}
+
+/* Warning modal overlay */
+.modal-overlay {
+    position: fixed; inset: 0;
+    background: rgba(0, 0, 0, 0.65);
+    display: flex; align-items: center; justify-content: center;
+    z-index: 100;
+}
+.modal {
+    background: var(--bg-secondary); border: 1px solid rgba(42, 141, 255, 0.15);
+    border-radius: 10px; padding: 24px; max-width: 320px; width: 90%;
+    display: flex; flex-direction: column; gap: 14px; align-items: center;
+    text-align: center;
+}
+.modal-icon { font-size: 32px; color: #e89332; }
+.modal-text {
+    font-family: 'Inter', sans-serif; font-size: 13px; line-height: 1.6;
+    color: var(--text-primary);
+}
+.modal-actions { display: flex; gap: 12px; width: 100%; }
+.btn-modal-cancel {
+    flex: 1; background: var(--bg-tertiary); color: var(--text-primary);
+    font-family: 'Rajdhani', sans-serif; font-weight: 600; font-size: 14px;
+    border: 1px solid rgba(42, 141, 255, 0.15); border-radius: 6px;
+    padding: 8px; cursor: pointer; transition: background 150ms;
+}
+.btn-modal-cancel:hover { background: rgba(42, 141, 255, 0.1); }
+.btn-modal-danger {
+    flex: 1; background: #d42b2b; color: var(--text-primary);
+    font-family: 'Rajdhani', sans-serif; font-weight: 600; font-size: 14px;
+    border: none; border-radius: 6px; padding: 8px; cursor: pointer;
+    transition: background 150ms;
+}
+.btn-modal-danger:hover { background: #b91c1c; }
+/* Story 5.9 — destructive error line shown inside any .modal container when
+   the IPC call returned an error (e.g. captive_portal_active). Stays visible
+   until the user clicks Annuler or retries. */
+.modal-error {
+    font-family: 'Inter', sans-serif; font-size: 12px; color: #d42b2b;
+    background: rgba(212, 43, 43, 0.10); border: 1px solid rgba(212, 43, 43, 0.35);
+    border-radius: 4px; padding: 6px 10px; width: 100%;
+    text-align: center; box-sizing: border-box;
+}
+
+/* Story 5.9 — permanent kill-switch degraded banner.
+   Sticky-top, full-width, red — kept on screen across panel changes so the
+   user cannot forget the protection is currently OFF. No close button by
+   design (the only way to dismiss it is to restore the kill switch). */
+.killswitch-degraded-banner {
+    position: sticky; top: 0; z-index: 200;
+    background: #d42b2b; color: #fff;
+    font-family: 'Rajdhani', sans-serif; font-weight: 700; font-size: 13px;
+    letter-spacing: 0.4px;
+    padding: 8px 16px; text-align: center;
+    border-bottom: 1px solid rgba(0, 0, 0, 0.25);
+}
+
+/* Story 7.5 / NFR9j — sticky banner for detected config tampering. Higher
+   z-index than the kill-switch banner so it stacks on top when both fire.
+   Two-line layout: headline + smaller recovery hint with the OS-specific
+   paths rendered by app.js on startup. */
+.integrity-failed-banner {
+    position: sticky; top: 0; z-index: 250;
+    background: #7a1c1c; color: #fff;
+    font-family: 'Rajdhani', sans-serif; font-weight: 700; font-size: 13px;
+    letter-spacing: 0.4px;
+    padding: 10px 16px; text-align: center;
+    border-bottom: 1px solid rgba(0, 0, 0, 0.45);
+    line-height: 1.4;
+}
+.integrity-recovery-hint {
+    display: block; margin-top: 4px;
+    font-family: 'Inter', sans-serif; font-weight: 400; font-size: 11px;
+    letter-spacing: 0.2px; color: rgba(255, 255, 255, 0.88);
+}
+
+/* Story 8.1 AC9 — non-blocking auto-update banner. Code review H1 fix:
+   originally placed `position: fixed; bottom: 0`, which overlaid the bottom
+   32 px of the panel area and obscured #btn-connect. Switched to sticky-top
+   (matching .killswitch-degraded-banner / .integrity-failed-banner) so the
+   banner pushes content down instead of covering it. Lower z-index than the
+   destructive banners so it never stacks on top of a kill-switch warning. */
+.update-ready-banner {
+    position: sticky; top: 0; z-index: 180;
+    display: flex; align-items: center; justify-content: space-between;
+    background: #cfe3ff; color: #0a3a7a;
+    font-family: 'Inter', sans-serif; font-weight: 500; font-size: 13px;
+    padding: 6px 16px; max-height: 32px;
+    border-bottom: 1px solid rgba(10, 58, 122, 0.18);
+}
+.update-ready-banner.rollback {
+    background: #ffe0c0; color: #6a3a00;
+    border-bottom-color: rgba(106, 58, 0, 0.18);
+}
+.update-ready-banner a#update-dismiss {
+    color: inherit; text-decoration: underline;
+    font-weight: 600; cursor: pointer; margin-left: 12px;
+}
+
+/* Reusable modal extras — add .modal-hint for a secondary line under the main
+   .modal-text, and .modal-checkbox for a left-aligned "don't ask again"-style
+   opt-out inside any .modal container. Used by the quit-confirm modal. */
+.modal-hint {
+    display: block; margin-top: 6px;
+    font-size: 11px; color: var(--text-secondary);
+    font-weight: 400;
+}
+.modal-checkbox {
+    display: flex; align-items: center; gap: 8px;
+    font-family: 'Inter', sans-serif; font-size: 12px;
+    color: var(--text-secondary); cursor: pointer;
+    user-select: none; align-self: flex-start;
+}
+.modal-checkbox input[type="checkbox"] {
+    width: 14px; height: 14px; accent-color: #2a8dff;
+    cursor: pointer; margin: 0;
+}
+
+/* Notifications panel */
+#panel-notifications { align-items: stretch; padding: 24px; gap: 16px; }
+#panel-notifications h3 { font-family: 'Bebas Neue', sans-serif; font-size: 24px; letter-spacing: 1px; }
+.notif-empty { font-size: 14px; color: var(--text-secondary); text-align: center; margin-top: 32px; }
+
+/* Story 5.6 — Service down fallback screen.
+   Uses #panel-service-down (specificity 1,0,0) to beat any .panel rule
+   regardless of declaration order — guards against a future refactor that
+   reshuffles class-based rules (review finding L2). */
+#panel-service-down {
+    display: flex; flex-direction: column; align-items: stretch;
+    padding: 24px; gap: 14px;
+    background: var(--bg-primary);
+}
+.service-down-title {
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: 22px; letter-spacing: 1px;
+    color: var(--accent-red); text-align: center;
+    margin-bottom: 4px;
+}
+.service-down-msg {
+    font-family: 'Inter', sans-serif; font-size: 13px;
+    line-height: 1.5; color: var(--text-primary);
+}
+.service-down-cmd {
+    background: var(--bg-tertiary);
+    border: 1px solid rgba(42, 141, 255, 0.15);
+    border-radius: 8px; padding: 12px 14px;
+    font-family: 'Consolas', 'SF Mono', 'Menlo', 'Courier New', monospace;
+    font-size: 12px; color: var(--text-primary);
+    user-select: text; -webkit-user-select: text;
+    white-space: pre-wrap; word-break: break-all;
+    margin: 4px 0 8px 0;
+}
+.service-down-cmd:focus { outline: 1px solid var(--accent-glow); }
+.service-down-retry {
+    display: flex; align-items: center; gap: 8px;
+    font-family: 'Inter', sans-serif; font-size: 11px;
+    color: var(--text-secondary); justify-content: center;
+    margin-top: auto;
+}
+.service-down-spinner {
+    width: 10px; height: 10px; border-radius: 50%;
+    border: 2px solid rgba(42, 141, 255, 0.2);
+    border-top-color: var(--accent-glow);
+    animation: service-down-spin 1s linear infinite;
+}
+@keyframes service-down-spin { to { transform: rotate(360deg); } }
+/* Sidebar tabs muted while the fallback screen is shown. */
+.sidebar-tab.disabled { opacity: 0.4; pointer-events: none; }
+

@@ -11,7 +11,7 @@ import (
 	"runtime"
 	"time"
 
-	"github.com/velia-the-veil/le_voile/frontend"
+	"github.com/velia-the-veil/le_voile/windows/frontend"
 	"github.com/velia-the-veil/le_voile/windows/internal/config"
 	"github.com/velia-the-veil/le_voile/windows/internal/ctlauth"
 	"github.com/velia-the-veil/le_voile/windows/internal/ipc"
