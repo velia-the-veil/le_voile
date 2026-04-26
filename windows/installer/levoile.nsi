@@ -1,5 +1,5 @@
 ﻿; Le Voile - NSIS Installer Script
-; Compile with: makensis /DAPP_VERSION=x.y.z installer/levoile.nsi
+; Compile with: makensis /DAPP_VERSION=x.y.z windows/installer/levoile.nsi
 
 !define APP_NAME "Le Voile"
 !define APP_KEY "LeVoile"
@@ -140,7 +140,7 @@ Section "Install"
   ;               used previously; guaranteed elevated, no UAC on boot)
   ;   /RL HIGHEST elevate to admin when the invoking user is in the
   ;               Administrators group. Non-admin users still get the
-  ;               UAC prompt via the fallback in cmd/ui/service_windows.go.
+  ;               UAC prompt via the fallback in windows/cmd/ui/service_windows.go.
   ;   /IT interactive — runs in the logged-on user's session so the
   ;       webview and tray icon render correctly.
   nsExec::Exec 'schtasks /Create /F /TN "${APP_NAME} UI" /TR "\"$INSTDIR\${UI_EXE}\"" /SC ONLOGON /RL HIGHEST /IT'

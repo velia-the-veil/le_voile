@@ -1,5 +1,6 @@
 # Build Le Voile Windows installer.
-# Prerequisites: goreleaser, makensis, internal\tun\wintun\wintun.dll (run `make wintun` if missing).
+# Prerequisites: goreleaser, makensis, windows\internal\tun\wintun\wintun.dll
+# (run `bash windows/scripts/fetch-wintun.sh` if missing).
 # IMPORTANT: Inject the relay Ed25519 public key in config-default.toml before distribution builds.
 param(
     [string]$Version = "0.0.0-dev"
@@ -7,9 +8,11 @@ param(
 
 $ErrorActionPreference = "Stop"
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-$ProjectRoot = Split-Path -Parent $ScriptDir
+# ScriptDir is windows\installer\ ; WindowsRoot is one level up ; ProjectRoot is two levels up.
+$WindowsRoot = Split-Path -Parent $ScriptDir
+$ProjectRoot = Split-Path -Parent $WindowsRoot
 $BuildDir = Join-Path $ScriptDir "build"
-$WintunSrc = Join-Path $ProjectRoot "internal\tun\wintun\wintun.dll"
+$WintunSrc = Join-Path $WindowsRoot "internal\tun\wintun\wintun.dll"
 
 Write-Host "=== Le Voile Installer Build (v$Version) ==="
 
@@ -23,7 +26,7 @@ foreach ($cmd in @("goreleaser", "makensis")) {
 
 # Story 7.1 — wintun.dll must be present for NSIS to bundle it into Program Files.
 if (-not (Test-Path $WintunSrc)) {
-    Write-Error "ERROR: $WintunSrc missing. Run 'make wintun' (or bash scripts/fetch-wintun.sh) first."
+    Write-Error "ERROR: $WintunSrc missing. Run 'bash windows/scripts/fetch-wintun.sh' first."
     exit 1
 }
 
@@ -33,8 +36,8 @@ if (-not (Test-Path $WintunSrc)) {
 # without a Linux toolchain. This installer only needs the Windows binaries
 # anyway (service + ui + ctl-windows + verify-windows).
 Write-Host "--- Building binaries with GoReleaser ---"
-Push-Location $ProjectRoot
-goreleaser build --snapshot --clean --single-target
+Push-Location $WindowsRoot
+goreleaser build --snapshot --clean --single-target --config .goreleaser.yaml
 Pop-Location
 
 # Step 2: Prepare build directory
@@ -44,17 +47,17 @@ New-Item -ItemType Directory -Path $BuildDir -Force | Out-Null
 New-Item -ItemType Directory -Path (Join-Path $BuildDir "icons") -Force | Out-Null
 
 # Copy binaries from GoReleaser output (Story 7.1 — preserve canonical names).
-Copy-Item (Join-Path $ProjectRoot "dist\service_windows_amd64_v1\levoile-service.exe") $BuildDir
-Copy-Item (Join-Path $ProjectRoot "dist\ui_windows_amd64_v1\levoile-ui.exe") $BuildDir
-Copy-Item (Join-Path $ProjectRoot "dist\ctl-windows_windows_amd64_v1\levoile-ctl.exe") $BuildDir
+Copy-Item (Join-Path $WindowsRoot "dist\service_windows_amd64_v1\levoile-service.exe") $BuildDir
+Copy-Item (Join-Path $WindowsRoot "dist\ui_windows_amd64_v1\levoile-ui.exe") $BuildDir
+Copy-Item (Join-Path $WindowsRoot "dist\ctl-windows_windows_amd64_v1\levoile-ctl.exe") $BuildDir
 
 # Copy Wintun DLL (Story 7.1 — bundled into Program Files for auditability).
 Copy-Item $WintunSrc (Join-Path $BuildDir "wintun.dll")
 
 # Copy status icons (Story 5.x — UI tray icons live next to the UI source).
-Copy-Item (Join-Path $ProjectRoot "internal\ui\icons\connected.ico") (Join-Path $BuildDir "icons\")
-Copy-Item (Join-Path $ProjectRoot "internal\ui\icons\connecting.ico") (Join-Path $BuildDir "icons\")
-Copy-Item (Join-Path $ProjectRoot "internal\ui\icons\disconnected.ico") (Join-Path $BuildDir "icons\")
+Copy-Item (Join-Path $WindowsRoot "internal\ui\icons\connected.ico") (Join-Path $BuildDir "icons\")
+Copy-Item (Join-Path $WindowsRoot "internal\ui\icons\connecting.ico") (Join-Path $BuildDir "icons\")
+Copy-Item (Join-Path $WindowsRoot "internal\ui\icons\disconnected.ico") (Join-Path $BuildDir "icons\")
 Copy-Item (Join-Path $ScriptDir "config-default.toml") $BuildDir
 
 # Step 3: Compile NSIS installer
