@@ -10,7 +10,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/velia-the-veil/le_voile/internal/ipc"
+	"github.com/velia-the-veil/le_voile/windows/internal/ipc"
 )
 
 // Story 6.3 — Task 4. TestAPIStatus_AnomalyPassThrough verifies the

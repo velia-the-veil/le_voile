@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"fyne.io/systray"
-	"github.com/velia-the-veil/le_voile/internal/ipc"
+	"github.com/velia-the-veil/le_voile/windows/internal/ipc"
 )
 
 const (

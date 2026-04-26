@@ -6,7 +6,7 @@ import (
 	"bytes"
 	"testing"
 
-	"github.com/velia-the-veil/le_voile/internal/ipc"
+	"github.com/velia-the-veil/le_voile/windows/internal/ipc"
 )
 
 // Story 6.3 — Task 5 AC4. The anomaly branch must win over every other

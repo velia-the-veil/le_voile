@@ -9,7 +9,7 @@ import (
 	"testing"
 
 	"fyne.io/systray"
-	"github.com/velia-the-veil/le_voile/internal/ipc"
+	"github.com/velia-the-veil/le_voile/windows/internal/ipc"
 )
 
 // trackingIPCClient counts SendContext calls and records actions.

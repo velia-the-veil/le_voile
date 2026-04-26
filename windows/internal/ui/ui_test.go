@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/velia-the-veil/le_voile/internal/ipc"
+	"github.com/velia-the-veil/le_voile/windows/internal/ipc"
 )
 
 // mockSystrayAPI records systray calls for testing.

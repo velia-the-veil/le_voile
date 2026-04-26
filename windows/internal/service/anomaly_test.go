@@ -13,10 +13,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/velia-the-veil/le_voile/internal/anomaly"
-	"github.com/velia-the-veil/le_voile/internal/firewall"
-	"github.com/velia-the-veil/le_voile/internal/routing"
-	"github.com/velia-the-veil/le_voile/internal/tun"
+	"github.com/velia-the-veil/le_voile/windows/internal/anomaly"
+	"github.com/velia-the-veil/le_voile/windows/internal/firewall"
+	"github.com/velia-the-veil/le_voile/windows/internal/routing"
+	"github.com/velia-the-veil/le_voile/windows/internal/tun"
 )
 
 // captureLogger records every Started/Succeeded/Failed event so tests

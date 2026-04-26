@@ -6,7 +6,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/velia-the-veil/le_voile/internal/preflight"
+	"github.com/velia-the-veil/le_voile/windows/internal/preflight"
 )
 
 // fakeDetector permet d'injecter un verdict preflight sans toucher au réseau.

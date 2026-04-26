@@ -18,7 +18,7 @@ import (
 
 	"github.com/kardianos/service"
 
-	"github.com/velia-the-veil/le_voile/internal/browser"
+	"github.com/velia-the-veil/le_voile/windows/internal/browser"
 	"github.com/velia-the-veil/le_voile/internal/tunnel"
 	"github.com/velia-the-veil/le_voile/internal/updater"
 )

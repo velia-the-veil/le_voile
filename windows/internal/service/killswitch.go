@@ -10,7 +10,7 @@ import (
 	"net"
 	"time"
 
-	"github.com/velia-the-veil/le_voile/internal/firewall"
+	"github.com/velia-the-veil/le_voile/windows/internal/firewall"
 )
 
 // Kill-switch mode constants exposed via IPC.

@@ -10,7 +10,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/velia-the-veil/le_voile/internal/firewall"
+	"github.com/velia-the-veil/le_voile/windows/internal/firewall"
 )
 
 // killSwitchHarness wires a Program with stub firewall + persister and lets

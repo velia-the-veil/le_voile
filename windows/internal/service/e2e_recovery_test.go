@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/velia-the-veil/le_voile/internal/browser"
-	"github.com/velia-the-veil/le_voile/internal/dns"
+	"github.com/velia-the-veil/le_voile/windows/internal/browser"
+	"github.com/velia-the-veil/le_voile/windows/internal/dns"
 	"golang.org/x/sys/windows/registry"
 )
 

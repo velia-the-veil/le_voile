@@ -8,9 +8,9 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/velia-the-veil/le_voile/internal/firewall"
-	"github.com/velia-the-veil/le_voile/internal/routing"
-	"github.com/velia-the-veil/le_voile/internal/tun"
+	"github.com/velia-the-veil/le_voile/windows/internal/firewall"
+	"github.com/velia-the-veil/le_voile/windows/internal/routing"
+	"github.com/velia-the-veil/le_voile/windows/internal/tun"
 )
 
 // callRecord enregistre l'ordre d'exécution des mocks pour valider la séquence

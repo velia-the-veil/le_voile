@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/velia-the-veil/le_voile/internal/anomaly"
+	"github.com/velia-the-veil/le_voile/windows/internal/anomaly"
 )
 
 // anomalyNewLoggerFactory is var-injectable for tests. The H2 regression

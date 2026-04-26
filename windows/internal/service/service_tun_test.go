@@ -6,7 +6,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/velia-the-veil/le_voile/internal/tun"
+	"github.com/velia-the-veil/le_voile/windows/internal/tun"
 )
 
 // mockTUN implémente tun.Device pour valider l'intégration service sans

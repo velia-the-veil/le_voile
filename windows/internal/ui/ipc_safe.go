@@ -6,7 +6,7 @@ import (
 	"context"
 	"sync"
 
-	"github.com/velia-the-veil/le_voile/internal/ipc"
+	"github.com/velia-the-veil/le_voile/windows/internal/ipc"
 )
 
 // SafeIPCClient wraps an IPCClient with a mutex to make it safe for concurrent use.

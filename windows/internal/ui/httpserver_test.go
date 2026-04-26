@@ -14,7 +14,7 @@ import (
 	"testing"
 	"testing/fstest"
 
-	"github.com/velia-the-veil/le_voile/internal/ipc"
+	"github.com/velia-the-veil/le_voile/windows/internal/ipc"
 )
 
 // mockIPCClient implements IPCClient for testing. It records the last Request

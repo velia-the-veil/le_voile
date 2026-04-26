@@ -17,8 +17,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/velia-the-veil/le_voile/internal/config"
-	"github.com/velia-the-veil/le_voile/internal/ipc"
+	"github.com/velia-the-veil/le_voile/windows/internal/config"
+	"github.com/velia-the-veil/le_voile/windows/internal/ipc"
 )
 
 // APIStatusResponse is the JSON response for GET /api/status.
