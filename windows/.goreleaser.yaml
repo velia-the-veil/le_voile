@@ -1,0 +1,89 @@
+version: 2
+
+# Autonomous goreleaser config for the Windows tier.
+#
+# Usage (from this directory):
+#   cd windows
+#   goreleaser release --snapshot --clean --config .goreleaser.yaml --skip=publish
+#
+# Or for a real release (requires LEVOILE_SIGNING_KEY_PATH + git tag like
+# windows-vX.Y.Z):
+#   cd windows && bash scripts/release-sign.sh
+#
+# All paths in this file are relative to windows/ (where goreleaser is invoked).
+# `signpkg` must be in $PATH — windows/scripts/release-sign.sh builds it from
+# tools/signpkg before invoking goreleaser.
+
+builds:
+  - id: service
+    main: ./cmd/client
+    binary: levoile-service
+    goos: [windows]
+    goarch: [amd64]
+    ldflags:
+      - -s -w -X main.version={{.Version}}
+
+  - id: ui
+    main: ./cmd/ui
+    binary: levoile-ui
+    goos: [windows]
+    goarch: [amd64]
+    env:
+      - CGO_ENABLED=1
+    ldflags:
+      - -s -w -X main.version={{.Version}} -H windowsgui
+
+  # Privileged operator CLI (story 5.9) — pure Go, bundled in archive.
+  - id: ctl
+    main: ./cmd/ctl
+    binary: levoile-ctl
+    goos: [windows]
+    goarch: [amd64]
+    ldflags:
+      - -s -w -X main.version={{.Version}}
+
+  # User-facing signature verification tool (story 7.4). Source lives at
+  # repo root (../tools/verifypkg) — shared with linux/ and relay/ tiers.
+  - id: verify
+    dir: ..
+    main: ./tools/verifypkg
+    binary: levoile-verify
+    goos: [windows]
+    goarch: [amd64]
+    ldflags:
+      - -s -w -X main.version={{.Version}}
+
+archives:
+  - id: windows
+    ids: [service, ui, ctl, verify]
+    name_template: "LeVoile_{{.Version}}_windows_amd64"
+    formats: [zip]
+    files:
+      - ../LICENSE
+      - installer/config-default.toml
+      - src: ../docs/keys/levoile-release.pub
+        dst: keys/levoile-release.pub
+      - src: ../docs/keys/levoile-release.pub.pem
+        dst: keys/levoile-release.pub.pem
+
+checksum:
+  name_template: "checksums.txt"
+
+# Story 7.4 — signature Ed25519 détachée de tous les artefacts Windows.
+# Le hook invoque tools/signpkg (en PATH via windows/scripts/release-sign.sh)
+# qui écrit <artifact>.sig (64 octets bruts).
+signs:
+  - id: ed25519-master
+    cmd: signpkg
+    args:
+      - "-signing-key={{ .Env.LEVOILE_SIGNING_KEY_PATH }}"
+      - "${artifact}"
+    signature: "${artifact}.sig"
+    artifacts: all
+
+# Story 7.4 — clé publique release + PEM uploadées en assets de la
+# GitHub Release Windows.
+release:
+  extra_files:
+    - glob: ../docs/keys/levoile-release.pub
+    - glob: ../docs/keys/levoile-release.pub.pem
