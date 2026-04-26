@@ -29,8 +29,8 @@ func testVerifier(t *testing.T) (*Verifier, func(data []byte) string) {
 		if err != nil {
 			t.Fatalf("sign: %v", err)
 		}
-		// Raw bytes, matching the on-wire format produced by cmd/signpkg and
-		// accepted by cmd/verifypkg. VerifySignature reads the .sig sidecar
+		// Raw bytes, matching the on-wire format produced by tools/signpkg and
+		// accepted by tools/verifypkg. VerifySignature reads the .sig sidecar
 		// as raw 64 bytes (no base64).
 		return string(sig)
 	}

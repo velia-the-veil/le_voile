@@ -1,6 +1,6 @@
 // Command verifypkg verifies a detached Ed25519 signature of a Le Voile
 // distribution artifact (story 7.4). It is the user-facing counterpart of
-// cmd/signpkg and is bundled into every release archive as levoile-verify.
+// tools/signpkg and is bundled into every release archive as levoile-verify.
 //
 // Usage:
 //

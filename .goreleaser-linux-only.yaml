@@ -40,7 +40,7 @@ builds:
       - -s -w -X main.version={{.Version}}
 
   - id: verify-linux
-    main: ./cmd/verifypkg
+    main: ./tools/verifypkg
     binary: levoile-verify
     goos: [linux]
     goarch: [amd64]

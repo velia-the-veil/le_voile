@@ -30,10 +30,10 @@ finaux (eux lisent la section correspondante du README).
 La clé Ed25519 master est générée une seule fois par période de rotation
 (24 mois, voir §5). Deux chemins équivalents :
 
-### Via `cmd/genkey` (recommandé — cohérent avec cmd/genregistry)
+### Via `tools/genkey` (recommandé — cohérent avec cmd/genregistry)
 
 ```bash
-go run ./cmd/genkey -out "$HOME/.levoile/signing" -pem
+go run ./tools/genkey -out "$HOME/.levoile/signing" -pem
 # Produit :
 #   $HOME/.levoile/signing.key     (base64 priv, mode 0600)
 #   $HOME/.levoile/signing.pub     (base64 pub)
@@ -45,7 +45,7 @@ go run ./cmd/genkey -out "$HOME/.levoile/signing" -pem
 ```bash
 openssl genpkey -algorithm Ed25519 -out signing.pem
 openssl pkey -in signing.pem -pubout -out signing.pub.pem
-# Export en base64 brut pour cmd/signpkg :
+# Export en base64 brut pour tools/signpkg :
 openssl pkey -in signing.pem -text -noout | grep -A3 priv: | tail -3 \
     | tr -d ': \n' | xxd -r -p | base64 > signing.key
 chmod 0600 signing.key signing.pem
@@ -199,7 +199,7 @@ T=0           T=23.5m       T=24m                        T=29.5m         T=30m
 
 **Mois T=23.5 — préparer**
 
-1. Générer la clé N+1 : `go run ./cmd/genkey -out "$HOME/.levoile/signing-N+1" -pem -force`
+1. Générer la clé N+1 : `go run ./tools/genkey -out "$HOME/.levoile/signing-N+1" -pem -force`
 2. Bumper `ReleasePublicKeyNextBase64` dans `internal/crypto/release_keys.go` avec
    la clé publique N+1
 3. Publier `docs/keys/levoile-release-next.pub{,.pem}`

@@ -14,7 +14,7 @@
 //
 // The signing key file must contain a base64 standard Ed25519 private key
 // (64 bytes after decode) on a single line, matching the format produced
-// by cmd/genkey and cmd/genregistry.
+// by tools/genkey and cmd/genregistry.
 //
 // Exit codes: 0 success, 1 I/O or crypto error, 2 bad invocation.
 package main

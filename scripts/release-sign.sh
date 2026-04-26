@@ -39,7 +39,7 @@ log "releasing tag: ${TAG}"
 # 3. Signing key present + mode 0600 (Unix) / note-only (Windows).
 if [[ ! -f "${LEVOILE_SIGNING_KEY_PATH}" ]]; then
   fail "signing key not found: ${LEVOILE_SIGNING_KEY_PATH}
-         generate one with: go run ./cmd/genkey -out \"\$HOME/.levoile/signing\" -pem"
+         generate one with: go run ./tools/genkey -out \"\$HOME/.levoile/signing\" -pem"
 fi
 # On MSYS/MINGW/Cygwin (git bash on Windows), stat reports POSIX perms
 # synthesized from NTFS ACLs and does not honour chmod — the ACL is what
@@ -95,7 +95,7 @@ fi
 log "installing signpkg to local PATH"
 TMP_BIN="$(mktemp -d)"
 trap 'rm -rf "${TMP_BIN}"' EXIT
-go build -o "${TMP_BIN}/signpkg" ./cmd/signpkg
+go build -o "${TMP_BIN}/signpkg" ./tools/signpkg
 export PATH="${TMP_BIN}:${PATH}"
 
 log "reminder: if this machine is online, consider disconnecting network before release"

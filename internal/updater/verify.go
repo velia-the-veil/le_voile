@@ -62,7 +62,7 @@ func (v *Verifier) VerifyChecksum(binaryPath, checksumPath string) error {
 // VerifySignature verifies that checksums.txt is signed with the relay's Ed25519 key.
 //
 // The signature file contains the RAW 64-byte Ed25519 signature, matching
-// the format produced by cmd/signpkg and accepted by cmd/verifypkg (the
+// the format produced by tools/signpkg and accepted by tools/verifypkg (the
 // user-facing verification tool). A historical version of this function
 // decoded base64 from the sidecar which diverged from the signpkg output
 // and silently broke auto-update until the next release was cut — fixed.

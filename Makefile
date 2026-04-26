@@ -44,7 +44,7 @@ clean:
 check-signing-key:
 	@test -f "$(LEVOILE_SIGNING_KEY_PATH)" || { \
 		echo "error: signing key not found: $(LEVOILE_SIGNING_KEY_PATH)"; \
-		echo "generate one with: go run ./cmd/genkey -out \"$$HOME/.levoile/signing\" -pem"; \
+		echo "generate one with: go run ./tools/genkey -out \"$$HOME/.levoile/signing\" -pem"; \
 		exit 1; }
 	@perm=$$(stat -c %a "$(LEVOILE_SIGNING_KEY_PATH)" 2>/dev/null || stat -f %Lp "$(LEVOILE_SIGNING_KEY_PATH)" 2>/dev/null || echo "unknown"); \
 		case "$$perm" in \

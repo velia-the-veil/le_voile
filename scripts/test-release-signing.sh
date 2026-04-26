@@ -40,7 +40,7 @@ trap 'rm -rf "${WORK}"' EXIT
 
 KEY_BASE="${WORK}/smoke"
 log "generating ephemeral signing key: ${KEY_BASE}.{key,pub,pub.pem}"
-go run ./cmd/genkey -out "${KEY_BASE}" -pem -force >/dev/null
+go run ./tools/genkey -out "${KEY_BASE}" -pem -force >/dev/null
 PUB_B64="$(tr -d '\n\r' < "${KEY_BASE}.pub")"
 log "ephemeral public key: ${PUB_B64}"
 
@@ -48,8 +48,8 @@ log "ephemeral public key: ${PUB_B64}"
 BIN_DIR="${WORK}/bin"
 mkdir -p "${BIN_DIR}"
 log "pre-building signpkg + verifypkg -> ${BIN_DIR}/"
-go build -o "${BIN_DIR}/signpkg" ./cmd/signpkg
-go build -o "${BIN_DIR}/verifypkg" ./cmd/verifypkg
+go build -o "${BIN_DIR}/signpkg" ./tools/signpkg
+go build -o "${BIN_DIR}/verifypkg" ./tools/verifypkg
 export PATH="${BIN_DIR}:${PATH}"
 export LEVOILE_SIGNING_KEY_PATH="${KEY_BASE}.key"
 

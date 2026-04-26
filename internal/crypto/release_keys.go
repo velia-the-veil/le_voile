@@ -13,7 +13,7 @@ import (
 // machine (per NFR22g). Rotated every 24 months per NFR22h via the dual-key
 // chain below.
 //
-// Regenerated 2026-04-19 via `go run ./cmd/genkey -out "$HOME/.levoile/signing" -pem -force`.
+// Regenerated 2026-04-19 via `go run ./tools/genkey -out "$HOME/.levoile/signing" -pem -force`.
 // The previous key (h94H7SXEBMr0/OTqxLmepAxax60vhgbbezU0Jt+hbQM=, generated
 // 2026-04-18) was destroyed before any release was ever signed with it —
 // the private key was overwritten by an ephemeral key during a local build
@@ -80,7 +80,7 @@ func ReleasePublicKeyNext() (ed25519.PublicKey, bool, error) {
 // public key, then falls back to the rotation key if one is configured. This
 // is the canonical verification path for auto-update bundles (Epic 8 story
 // 8.2). It always tries Next on Current failure — different from the
-// user-facing cmd/verifypkg which defaults to Current only (opt-in -try-next
+// user-facing tools/verifypkg which defaults to Current only (opt-in -try-next
 // for extra safety, since an interactive user can re-run with the flag).
 // Auto-update has no user to ask, so it always tries both trust anchors
 // during the dual-signature window (NFR22h).

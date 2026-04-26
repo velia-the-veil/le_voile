@@ -41,8 +41,8 @@ func ImportPublicKeyBase64(encoded string) (ed25519.PublicKey, error) {
 }
 
 // ExportPrivateKeyBase64 encodes an Ed25519 private key (64 bytes) to a
-// base64 standard string. Used by cmd/genkey to persist the release master
-// key (story 7.4) and by cmd/signpkg/cmd/genregistry to load it back.
+// base64 standard string. Used by tools/genkey to persist the release master
+// key (story 7.4) and by tools/signpkg/cmd/genregistry to load it back.
 func ExportPrivateKeyBase64(priv ed25519.PrivateKey) string {
 	return base64.StdEncoding.EncodeToString(priv)
 }
