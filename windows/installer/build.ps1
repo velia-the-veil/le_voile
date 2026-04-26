@@ -34,7 +34,7 @@ if (-not (Test-Path $WintunSrc)) {
 # --single-target restricts to the host OS/arch so a Windows developer box
 # doesn't try to cross-compile the Linux ui/service targets (CGO webview)
 # without a Linux toolchain. This installer only needs the Windows binaries
-# anyway (service + ui + ctl-windows + verify-windows).
+# anyway (service + ui + ctl + verify).
 Write-Host "--- Building binaries with GoReleaser ---"
 Push-Location $WindowsRoot
 goreleaser build --snapshot --clean --single-target --config .goreleaser.yaml
@@ -49,7 +49,7 @@ New-Item -ItemType Directory -Path (Join-Path $BuildDir "icons") -Force | Out-Nu
 # Copy binaries from GoReleaser output (Story 7.1 — preserve canonical names).
 Copy-Item (Join-Path $WindowsRoot "dist\service_windows_amd64_v1\levoile-service.exe") $BuildDir
 Copy-Item (Join-Path $WindowsRoot "dist\ui_windows_amd64_v1\levoile-ui.exe") $BuildDir
-Copy-Item (Join-Path $WindowsRoot "dist\ctl-windows_windows_amd64_v1\levoile-ctl.exe") $BuildDir
+Copy-Item (Join-Path $WindowsRoot "dist\ctl_windows_amd64_v1\levoile-ctl.exe") $BuildDir
 
 # Copy Wintun DLL (Story 7.1 — bundled into Program Files for auditability).
 Copy-Item $WintunSrc (Join-Path $BuildDir "wintun.dll")
