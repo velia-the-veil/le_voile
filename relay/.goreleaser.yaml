@@ -1,0 +1,65 @@
+version: 2
+
+# Autonomous goreleaser config for the relay binary.
+#
+# Usage (from this directory):
+#   cd relay
+#   goreleaser release --snapshot --clean --config .goreleaser.yaml
+#
+# Or for a real release (requires LEVOILE_SIGNING_KEY_PATH + git tag):
+#   cd relay && bash scripts/release-sign.sh
+#
+# All paths in this file are relative to relay/ (where goreleaser is invoked).
+# `signpkg` must be in $PATH — relay/scripts/release-sign.sh builds it from
+# tools/signpkg before invoking goreleaser.
+
+# Story 7.4 (relay-side) : sign deploy/install.sh before goreleaser bundles it
+# into the release archive. Without this hook the install.sh would ship
+# unsigned, defeating C7 (operator MITM-resistance).
+before:
+  hooks:
+    - bash -c 'signpkg -signing-key="${LEVOILE_SIGNING_KEY_PATH}" deploy/install.sh'
+
+builds:
+  - id: relay
+    main: ./cmd/relay
+    binary: levoile-relay
+    goos: [linux]
+    goarch: [amd64]
+    ldflags:
+      - -s -w -X main.version={{.Version}}
+
+archives:
+  - id: relay
+    ids: [relay]
+    name_template: "LeVoile-Relay_{{.Version}}_linux_amd64"
+    formats: [tar.gz]
+    files:
+      - ../LICENSE
+      - deploy/*
+
+checksum:
+  name_template: "checksums.txt"
+
+# Story 7.4 — signature Ed25519 détachée de tous les artefacts du relais.
+# Le hook invoque tools/signpkg (en PATH via release-sign.sh) qui écrit
+# <artifact>.sig (64 octets bruts). Les .sig sont uploadés avec les
+# artefacts via release.extra_files.
+signs:
+  - id: ed25519-master
+    cmd: signpkg
+    args:
+      - "-signing-key={{ .Env.LEVOILE_SIGNING_KEY_PATH }}"
+      - "${artifact}"
+    signature: "${artifact}.sig"
+    artifacts: all
+
+# Story 7.4 — clé publique release + PEM uploadées comme assets de la
+# GitHub Release. install.sh + .sig co-uploadés (fix C7) pour que les
+# opérateurs vérifient la signature avant exécution.
+release:
+  extra_files:
+    - glob: ../docs/keys/levoile-release.pub
+    - glob: ../docs/keys/levoile-release.pub.pem
+    - glob: deploy/install.sh
+    - glob: deploy/install.sh.sig

@@ -1,20 +1,5 @@
 version: 2
 
-# Fix C7 (audit sécurité) : `signs: artifacts: all` plus bas ne couvre que
-# les artefacts produits par goreleaser (archives, binaires, packages,
-# checksums). Les `extra_files` sont uploadés tels quels, sans .sig. Pour
-# que install.sh arrive avec sa signature détachée dans la release, on
-# appelle signpkg ici en amont ; le fichier résultant relay/deploy/install.sh.sig
-# est ensuite référencé par extra_files.
-#
-# `signpkg` doit être dans $PATH — release-sign.sh le construit avant
-# d'invoquer goreleaser. En snapshot/CI smoke test (test-release-signing.sh),
-# la clé éphémère est écrite à l'emplacement pointé par
-# LEVOILE_SIGNING_KEY_PATH pour que cette étape réussisse.
-before:
-  hooks:
-    - bash -c 'signpkg -signing-key="${LEVOILE_SIGNING_KEY_PATH}" relay/deploy/install.sh'
-
 builds:
   - id: service
     main: ./cmd/client
@@ -54,14 +39,6 @@ builds:
     goarch: [amd64, arm64]
     env:
       - CGO_ENABLED=1
-    ldflags:
-      - -s -w -X main.version={{.Version}}
-
-  - id: relay
-    main: ./relay/cmd/relay
-    binary: levoile-relay
-    goos: [linux]
-    goarch: [amd64]
     ldflags:
       - -s -w -X main.version={{.Version}}
 
@@ -116,14 +93,6 @@ archives:
         dst: keys/levoile-release.pub
       - src: docs/keys/levoile-release.pub.pem
         dst: keys/levoile-release.pub.pem
-
-  - id: relay
-    ids: [relay]
-    name_template: "LeVoile-Relay_{{.Version}}_linux_amd64"
-    formats: [tar.gz]
-    files:
-      - LICENSE
-      - relay/deploy/*
 
   # Story 7.2 — archive tar.gz Linux : inclut aussi le service (sinon l'archive
   # tar.gz seule ne permet pas une install manuelle sans passer par les paquets).
@@ -270,18 +239,13 @@ signs:
     signature: "${artifact}.sig"
     artifacts: all
 
-# Story 7.4 — clé publique release + PEM uploadés comme assets de la GitHub Release.
+# Story 7.4 — clé publique release + PEM uploadées comme assets de la GitHub Release.
 # Les utilisateurs peuvent télécharger la clé pour vérifier via openssl ou
 # levoile-verify sans dépendre du contenu du repo.
 #
-# Fix C7 (audit sécurité) : install.sh du relais VPS est aussi inclus dans
-# les release assets. Co-uploadé avec install.sh.sig (signé par le hook
-# ci-dessous via artifacts: all). L'opérateur de relais doit curl les deux,
-# vérifier la sig avec levoile-verify, puis exécuter — remplace le flow
-# précédent "scp + ssh sudo bash" vulnérable au MITM.
+# Note : install.sh du relais et sa signature sont distribués via la release
+# autonome `relay/.goreleaser.yaml` (séparation OS / tier).
 release:
   extra_files:
     - glob: docs/keys/levoile-release.pub
     - glob: docs/keys/levoile-release.pub.pem
-    - glob: relay/deploy/install.sh
-    - glob: relay/deploy/install.sh.sig
