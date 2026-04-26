@@ -15,7 +15,7 @@
 //     show an "Anomaly detected — reconnecting" banner.
 //
 // Story 6.3 (Epic 6 — Validation Anti-Fuite): the package is deliberately
-// separate from internal/firewall's eventlog shim to keep logging
+// separate from linux/internal/firewall's eventlog shim to keep logging
 // responsibilities scoped. Firewall logs its own activation/teardown
 // events; anomaly logs the recovery orchestration events.
 //
@@ -123,7 +123,7 @@ func (NopNotifier) Failed(ErrorCategory)    {}
 // CategorizeError maps a recovery error produced by service.recoverTUN
 // onto a fixed ErrorCategory for NFR22a-safe logging. Matching is done
 // on substring markers present in the error messages returned by
-// internal/service/service.go:recoverTUN. Unknown errors fall back to
+// linux/internal/service/service.go:recoverTUN. Unknown errors fall back to
 // CategoryUnknown — never to the raw error string.
 func CategorizeError(err error) ErrorCategory {
 	if err == nil {

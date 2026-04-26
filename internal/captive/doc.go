@@ -6,5 +6,5 @@
 // HTTP — most captive portals intercept HTTP but pass HTTPS through.
 //
 // This package is OS-agnostic; platform-specific firewall/routing adjustments
-// live in internal/firewall and internal/service.
+// live in {windows,linux}/internal/firewall and {windows,linux}/internal/service.
 package captive

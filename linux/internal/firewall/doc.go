@@ -29,7 +29,7 @@
 // # Orthogonality
 //
 // This package has no dependency on other internal/ packages. Orchestration
-// (the connect/disconnect lifecycle) is handled by internal/service/.
+// (the connect/disconnect lifecycle) is handled by linux/internal/service/.
 //
 // # Testing
 //

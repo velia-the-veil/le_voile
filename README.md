@@ -1,5 +1,61 @@
 # le_voile
 
+## Repository structure
+
+The repo is split into per-OS / per-tier subtrees so that a change to one
+platform never silently affects another. Each subtree is autonomous —
+its own `Makefile`, its own `.goreleaser.yaml`, its own release script.
+
+```
+/                       OS-agnostic shared infrastructure
+├── tools/{genkey,signpkg,verifypkg}/   maintainer crypto utilities
+├── internal/{captive,crypto,httpproxy,leakcheck,registry,
+│            stun,tunnel,updater,watchdog}/   shared client packages
+│
+├── relay/              server-side relay tier (linux/amd64)
+│   ├── cmd/{relay,genregistry,verify-registry}/
+│   ├── relay/          relay HTTP/3 server, blocklist, NAT, DoH, etc.
+│   ├── deploy/         install.sh, systemd units, cert hooks
+│   ├── scripts/        release-sign.sh
+│   ├── Makefile  .goreleaser.yaml
+│
+├── windows/            Windows desktop tier
+│   ├── cmd/{client,ui,ctl}/
+│   ├── internal/{anomaly,blocklist,browser,config,ctlauth,dns,
+│   │             elevation,firewall,ipc,ipchandler,preflight,
+│   │             routing,service,tun,ui,uiwatchdog}/
+│   ├── frontend/       Wails webview assets (HTML/JS/CSS)
+│   ├── installer/      NSIS installer + build scripts
+│   ├── tools/{wfp_repro,ipc_send,gen_icons.go}/   Windows diagnostics
+│   ├── scripts/        fetch-wintun.sh, diag-blank-window.ps1, release-sign.sh
+│   ├── Makefile  .goreleaser.yaml
+│
+├── linux/              Linux desktop tier
+│   ├── cmd/{client,ui,ctl}/
+│   ├── internal/       same package set as windows/internal/, Linux impls
+│   ├── frontend/       same source as windows/frontend/, evolves independently
+│   ├── packaging/      systemd units, polkit rules, hicolor icons, AUR PKGBUILD
+│   ├── scripts/        test-aur-install.sh, test-auto-update-linux.sh, release-sign.sh
+│   ├── Makefile  .goreleaser.yaml
+│
+├── android/            stub (implementation deferred — see android/README.md)
+│
+├── docs/  config.example.toml  go.mod  go.sum  LICENSE  README.md  SECURITY.md
+```
+
+Each release is cut independently with its own Git tag (`windows-vX.Y.Z`,
+`linux-vX.Y.Z`, `relay-vX.Y.Z`). To build:
+
+```bash
+cd windows && make             # Windows binaries (run on Windows)
+cd linux   && make              # Linux binaries (run on Linux)
+cd relay   && make              # Relay binary (run on Linux)
+```
+
+`internal/blocklist/` is **duplicated** between `windows/` and `linux/` by
+design (decision 2026-04-26): drift between copies is acceptable, with a
+documented quarterly diff check.
+
 ## Installation
 
 ### Windows
