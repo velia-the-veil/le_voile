@@ -115,20 +115,20 @@ jobs:
           set -euo pipefail
           # Édition depuis la racine du workspace — sed regex idempotente
           # (re-run possible sans régression).
-          sed -i -E "s|^pkgver=.*|pkgver=${PKGVER}|" packaging/arch/PKGBUILD
-          sed -i "s|REPLACE_ME_AMD64|${SHA_AMD64}|g" packaging/arch/PKGBUILD
-          sed -i "s|REPLACE_ME_ARM64|${SHA_ARM64}|g" packaging/arch/PKGBUILD
+          sed -i -E "s|^pkgver=.*|pkgver=${PKGVER}|" linux/packaging/arch/PKGBUILD
+          sed -i "s|REPLACE_ME_AMD64|${SHA_AMD64}|g" linux/packaging/arch/PKGBUILD
+          sed -i "s|REPLACE_ME_ARM64|${SHA_ARM64}|g" linux/packaging/arch/PKGBUILD
 
           # makepkg --printsrcinfo doit tourner en user non-root ET dans le
           # répertoire contenant le PKGBUILD. sudo préserve le CWD → on passe
           # par un cd explicite dans le sous-shell (pas de double cd par
           # rapport au workspace root).
-          chown -R aurbuilder: packaging/arch
-          sudo -u aurbuilder bash -c 'cd packaging/arch && makepkg --printsrcinfo > .SRCINFO'
-          chown -R root: packaging/arch
+          chown -R aurbuilder: linux/packaging/arch
+          sudo -u aurbuilder bash -c 'cd linux/packaging/arch && makepkg --printsrcinfo > .SRCINFO'
+          chown -R root: linux/packaging/arch
 
           echo "[srcinfo] premiers 30 lignes régénérées :"
-          head -30 packaging/arch/.SRCINFO >&2
+          head -30 linux/packaging/arch/.SRCINFO >&2
 
       - name: Import GPG key
         env:
@@ -232,9 +232,9 @@ jobs:
           # initial manuel — cf. docs/aur-release.md §6).
           git clone ssh://aur@aur.archlinux.org/levoile.git /tmp/aur
 
-          cp packaging/arch/PKGBUILD        /tmp/aur/PKGBUILD
-          cp packaging/arch/.SRCINFO        /tmp/aur/.SRCINFO
-          cp packaging/arch/levoile.install /tmp/aur/levoile.install
+          cp linux/packaging/arch/PKGBUILD        /tmp/aur/PKGBUILD
+          cp linux/packaging/arch/.SRCINFO        /tmp/aur/.SRCINFO
+          cp linux/packaging/arch/levoile.install /tmp/aur/levoile.install
 
           cd /tmp/aur
           git add PKGBUILD .SRCINFO levoile.install

@@ -6,7 +6,7 @@
 #   2. Injecter un PKGBUILD avec une version locale (celle du dist/ actuel) +
 #      des sha256sums calculés depuis les .deb locaux.
 #   3. `makepkg -s --noconfirm --skipinteg` (builds + installe).
-#   4. Valider les mêmes invariants que packaging/smoke/run.sh (binaires, units,
+#   4. Valider les mêmes invariants que linux/packaging/smoke/run.sh (binaires, units,
 #      user système, entrées XDG).
 #   5. `pacman -R` et vérifier un retrait propre.
 #
@@ -25,9 +25,10 @@
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-DIST="${DIST:-$REPO_ROOT/dist}"
-PKGBUILD_DIR="$REPO_ROOT/packaging/arch"
+# SCRIPT_DIR is linux/scripts/ ; REPO_ROOT is two levels up.
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+DIST="${DIST:-$REPO_ROOT/linux/dist}"
+PKGBUILD_DIR="$REPO_ROOT/linux/packaging/arch"
 
 log()  { echo "[aur-test] $*" >&2; }
 fail() { echo "[aur-test] ✗ $*" >&2; exit 1; }
@@ -144,7 +145,7 @@ ok "paquet construit : $(basename "$BUILT_PKG")"
 pacman -U --noconfirm "$BUILT_PKG" >/dev/null || fail "pacman -U a échoué"
 ok "pacman -U réussi"
 
-# 6. Assertions — mêmes invariants que packaging/smoke/run.sh
+# 6. Assertions — mêmes invariants que linux/packaging/smoke/run.sh
 for b in /usr/bin/levoile-service /usr/bin/levoile-ui /usr/bin/levoile-ctl; do
     [ -x "$b" ] && ok "binaire $b présent" || fail "binaire $b manquant"
 done

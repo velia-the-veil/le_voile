@@ -141,27 +141,27 @@ nfpms:
     bindir: /usr/bin
     contents:
       # Unit systemd system (service privilégié) — story 7.2
-      - src: packaging/systemd/levoile.service
+      - src: linux/packaging/systemd/levoile.service
         dst: /usr/lib/systemd/system/levoile.service
         file_info:
           mode: 0644
       # Unit systemd user (tray + webview) — story 5.7
-      - src: packaging/systemd/user/levoile-ui.service
+      - src: linux/packaging/systemd/user/levoile-ui.service
         dst: /usr/lib/systemd/user/levoile-ui.service
         file_info:
           mode: 0644
       # Autostart XDG → déclenche systemctl --user start levoile-ui.service — story 5.7
-      - src: packaging/desktop/levoile-autostart.desktop
+      - src: linux/packaging/desktop/levoile-autostart.desktop
         dst: /etc/xdg/autostart/levoile-autostart.desktop
         file_info:
           mode: 0644
       # Entrée menu applications — story 7.2
-      - src: packaging/desktop/levoile.desktop
+      - src: linux/packaging/desktop/levoile.desktop
         dst: /usr/share/applications/levoile.desktop
         file_info:
           mode: 0644
       # Skeleton config (type: config → géré par le package manager sur upgrade)
-      - src: packaging/etc/config.toml
+      - src: linux/packaging/etc/config.toml
         dst: /etc/levoile/config.toml
         type: config|noreplace
         file_info:
@@ -169,22 +169,22 @@ nfpms:
       # Règle polkit : le user système `levoile` doit pouvoir piloter
       # systemd-resolved (resolvectl dns ...) sans auth interactive. Sans ça,
       # le service crash au premier `dns set resolver` avec EACCES via D-Bus.
-      - src: packaging/polkit/49-levoile-resolved.rules
+      - src: linux/packaging/polkit/49-levoile-resolved.rules
         dst: /etc/polkit-1/rules.d/49-levoile-resolved.rules
         file_info:
           mode: 0644
       # Icônes XDG hicolor multi-tailles
-      - src: packaging/icons/hicolor/16x16/apps/levoile.png
+      - src: linux/packaging/icons/hicolor/16x16/apps/levoile.png
         dst: /usr/share/icons/hicolor/16x16/apps/levoile.png
-      - src: packaging/icons/hicolor/32x32/apps/levoile.png
+      - src: linux/packaging/icons/hicolor/32x32/apps/levoile.png
         dst: /usr/share/icons/hicolor/32x32/apps/levoile.png
-      - src: packaging/icons/hicolor/48x48/apps/levoile.png
+      - src: linux/packaging/icons/hicolor/48x48/apps/levoile.png
         dst: /usr/share/icons/hicolor/48x48/apps/levoile.png
-      - src: packaging/icons/hicolor/64x64/apps/levoile.png
+      - src: linux/packaging/icons/hicolor/64x64/apps/levoile.png
         dst: /usr/share/icons/hicolor/64x64/apps/levoile.png
-      - src: packaging/icons/hicolor/128x128/apps/levoile.png
+      - src: linux/packaging/icons/hicolor/128x128/apps/levoile.png
         dst: /usr/share/icons/hicolor/128x128/apps/levoile.png
-      - src: packaging/icons/hicolor/256x256/apps/levoile.png
+      - src: linux/packaging/icons/hicolor/256x256/apps/levoile.png
         dst: /usr/share/icons/hicolor/256x256/apps/levoile.png
       # Licence + README (conservés par convention Debian/FHS)
       - src: LICENSE
@@ -194,10 +194,10 @@ nfpms:
     # Scripts — les mêmes scripts sont exécutés pour les 3 formats (pattern unifié
     # via guards internes `command -v systemctl` / `|| true`).
     scripts:
-      preinstall: packaging/scripts/preinstall.sh
-      postinstall: packaging/scripts/postinstall.sh
-      preremove: packaging/scripts/preremove.sh
-      postremove: packaging/scripts/postremove.sh
+      preinstall: linux/packaging/scripts/preinstall.sh
+      postinstall: linux/packaging/scripts/postinstall.sh
+      preremove: linux/packaging/scripts/preremove.sh
+      postremove: linux/packaging/scripts/postremove.sh
     overrides:
       deb:
         dependencies:
