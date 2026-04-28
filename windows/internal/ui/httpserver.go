@@ -72,6 +72,14 @@ type HTTPServer struct {
 	ready    chan struct{}
 	prefs    *PrefsStore
 
+	// firstRequest is closed on the first incoming HTTP request. The webview
+	// watchdog uses this signal to detect a broken WebView2 cold-start (where
+	// w.Navigate is called but the runtime never actually fetches /). When
+	// the watchdog times out, it terminates the frozen webview so the caller
+	// can retry with a fresh instance.
+	firstHit     sync.Once
+	firstRequest chan struct{}
+
 	// pendingUIEvent carries a one-shot UI event triggered from outside the
 	// webview (typically the system tray menu) — for example, "killswitch_modal"
 	// to ask the frontend to display the destructive confirmation modal
@@ -105,12 +113,13 @@ type HTTPServer struct {
 // service that has not yet bootstrapped the token file).
 func NewHTTPServer(ipcClient *SafeIPCClient, frontendFS fs.FS, authToken string) *HTTPServer {
 	s := &HTTPServer{
-		mux:       http.NewServeMux(),
-		ipc:       ipcClient,
-		ready:     make(chan struct{}),
-		prefs:     NewPrefsStore(),
-		csrfToken: newCSRFToken(),
-		authToken: authToken,
+		mux:          http.NewServeMux(),
+		ipc:          ipcClient,
+		ready:        make(chan struct{}),
+		prefs:        NewPrefsStore(),
+		csrfToken:    newCSRFToken(),
+		authToken:    authToken,
+		firstRequest: make(chan struct{}),
 	}
 
 	// Serve frontend assets at root.
@@ -329,7 +338,14 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 		return fmt.Errorf("ui: httpserver: listen: %w", err)
 	}
 	s.listener = ln
-	s.server = &http.Server{Handler: originGuard(s.mux)}
+	// Wrap mux to close firstRequest on the first incoming request — the
+	// webview cold-start watchdog uses that signal to detect a frozen
+	// WebView2 that never emits GET / despite Navigate having been called.
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		s.firstHit.Do(func() { close(s.firstRequest) })
+		originGuard(s.mux).ServeHTTP(w, r)
+	})
+	s.server = &http.Server{Handler: handler}
 	close(s.ready)
 
 	go func() {
@@ -365,6 +381,13 @@ func (s *HTTPServer) Addr() string {
 // Ready returns a channel that is closed when the server is listening.
 func (s *HTTPServer) Ready() <-chan struct{} {
 	return s.ready
+}
+
+// FirstRequest returns a channel closed when the server has handled its first
+// HTTP request. The webview cold-start watchdog uses it to detect a frozen
+// WebView2 that never emits GET / despite Navigate having been called.
+func (s *HTTPServer) FirstRequest() <-chan struct{} {
+	return s.firstRequest
 }
 
 func (s *HTTPServer) handleStatus(w http.ResponseWriter, r *http.Request) {

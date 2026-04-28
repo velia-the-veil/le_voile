@@ -315,11 +315,48 @@ func (u *UI) handleKillSwitchMenu() {
 	u.handleOpenWebview()
 }
 
-// handleOpenWebview creates the webview once per app lifetime, or signals an
-// existing (possibly hidden) window to show and come to the foreground. The
+// maxColdStartRetries bounds how many times handleOpenWebview will recreate
+// a freshly-broken webview at app startup.
+const maxColdStartRetries = 3
+
+// webviewBootTimeout caps how long we wait for WebView2 to actually fetch /
+// after we've started opening the webview. Diagnostic of the blank-window
+// bug showed two failure modes:
+//
+//  1. webview_go calls between New() and Navigate() (SetTitle/Bind/Init/
+//     Dispatch) block for 6–18 s on a slow runtime — sometimes indefinitely.
+//  2. Navigate() returns but WebView2 never emits a real GET / fetch.
+//
+// Both end with no HTTP request reaching our server. So we use a single
+// catch-all signal: HTTPServer.FirstRequest(). If that channel hasn't fired
+// 5 s after we started opening the webview, we invoke webviewTerminate so
+// Run() returns and the caller can retry with a fresh webview.New(). The
+// timeout is generous because OK launches reach first_request within ~10 ms
+// after Navigate, but we still need to absorb a normal cold runtime spin-up
+// (~150 ms for New + ~500 ms for the runtime to be navigation-ready).
+const webviewBootTimeout = 5 * time.Second
+
+// terminateGraceTimeout is how long the boot watchdog waits for Run() to
+// actually return after invoking webviewTerminate. When Run() never started
+// (the freeze is in SetTitle/Bind/Init pre-Run) Terminate cannot help — the
+// message pump that would process the quit signal hasn't been launched. In
+// that case the only escape is to relaunch the whole UI process. 3 s is
+// well past the time a sane Run() takes to exit on Terminate (<100 ms in
+// observed cases).
+const terminateGraceTimeout = 3 * time.Second
+
+// handleOpenWebview creates the webview at startup, or signals an existing
+// (possibly hidden) window to show and come to the foreground. Once the very
+// first webview instance has actually rendered (HTTP first_request seen), the
 // window is NEVER recreated after destruction: closing via ✕ quits the whole
-// app (see the goroutine's post-openWebview handleQuit). This avoids a
-// WebView2 recreation bug that rendered the second window blank.
+// app. This avoids a WebView2 re-creation bug that rendered the second window
+// blank in steady-state lifecycles.
+//
+// Cold-start exception: when the very first webview instance never emits an
+// HTTP request within firstRequestWatchdogTimeout, the watchdog terminates it
+// and we recreate up to maxColdStartRetries times. This is safe because the
+// frozen instance was never displayed to the user — they don't see any
+// flicker, just a slightly delayed first paint.
 func (u *UI) handleOpenWebview() {
 	if u.httpServer == nil {
 		return
@@ -360,21 +397,70 @@ func (u *UI) handleOpenWebview() {
 			u.hideCh = nil
 			u.mu.Unlock()
 		}()
-		quit := openWebview(addr,
-			func(terminate func()) {
+		firstReqCh := u.httpServer.FirstRequest()
+		var quit, firstReqSeen bool
+		for attempt := 1; attempt <= maxColdStartRetries; attempt++ {
+			// Top-level watchdog must arm BEFORE openWebview so it can fire
+			// even when openWebview blocks between webview.New() and
+			// Navigate() (SetTitle/Bind/Init have been observed to stall
+			// 5–18 s on a slow runtime). Once New() has returned,
+			// webviewTerminate is set and we can use it to unblock a
+			// frozen message pump.
+			//
+			// After Terminate, give Run() terminateGraceTimeout to actually
+			// return. If it doesn't, the freeze was pre-Run (the message
+			// pump that would handle the quit signal never started), so
+			// recovering means relaunching the whole UI process.
+			attemptDone := make(chan struct{})
+			go func(done chan struct{}, ch <-chan struct{}) {
+				select {
+				case <-done:
+					return
+				case <-ch:
+					return
+				case <-time.After(webviewBootTimeout):
+				}
 				u.mu.Lock()
-				u.webviewTerminate = terminate
+				terminate := u.webviewTerminate
 				u.mu.Unlock()
-			},
-			func() {
-				u.mu.Lock()
-				u.webviewTerminate = nil
-				u.mu.Unlock()
-			},
-			showCh,
-			hideCh,
-			func(hidden bool) { u.webviewHidden.Store(hidden) },
-		)
+				if terminate != nil {
+					terminate()
+				}
+				select {
+				case <-done:
+					return
+				case <-time.After(terminateGraceTimeout):
+					RelaunchUI()
+				}
+			}(attemptDone, firstReqCh)
+
+			quit, firstReqSeen = openWebview(addr,
+				func(terminate func()) {
+					u.mu.Lock()
+					u.webviewTerminate = terminate
+					u.mu.Unlock()
+				},
+				func() {
+					u.mu.Lock()
+					u.webviewTerminate = nil
+					u.mu.Unlock()
+				},
+				showCh,
+				hideCh,
+				func(hidden bool) { u.webviewHidden.Store(hidden) },
+				firstReqCh,
+			)
+			close(attemptDone)
+
+			if firstReqSeen || quit {
+				break
+			}
+			// Cold-start watchdog killed a frozen webview but Run() returned;
+			// retry in-process. Brief pause gives the failed WebView2
+			// environment time to drain its async init before we spin up
+			// another instance.
+			time.Sleep(500 * time.Millisecond)
+		}
 		u.onWebviewClosed(quit)
 	}()
 }

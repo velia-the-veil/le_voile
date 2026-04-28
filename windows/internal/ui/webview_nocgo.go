@@ -10,6 +10,7 @@ func openWebview(_ string,
 	_ <-chan struct{},
 	_ <-chan struct{},
 	_ func(bool),
-) bool {
-	return false
+	_ <-chan struct{},
+) (bool, bool) {
+	return false, false
 }

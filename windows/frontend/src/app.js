@@ -1054,4 +1054,10 @@ async function applyIPv6Leak(enable) {
     } catch (e) {}
 }
 
-document.addEventListener('DOMContentLoaded', init);
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+} else {
+    // DOM already parsed by the time the script ran. Fire init synchronously
+    // so we never miss the DOMContentLoaded event we'd otherwise wait for.
+    init();
+}

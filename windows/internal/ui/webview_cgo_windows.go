@@ -109,19 +109,28 @@ func moveToBottomRight(hwnd uintptr, w, h int) {
 // persisted in localStorage). Destroying then recreating the webview in the
 // same process was attempted and produced blank windows on WebView2 — see
 // feedback memory webview_lifecycle.
+//
+// Returns:
+//   - quit:             true iff the user requested application quit via ✕ (JS __close)
+//   - firstRequestSeen: true iff the HTTP server received at least one request
+//     while this webview was alive. When false after Run() returns, the caller
+//     should treat the webview as a cold-start casualty and retry with a
+//     fresh webview.New(). firstRequestCh is the signal it polls for that.
 func openWebview(addr string,
 	setTerminate func(func()),
 	clearTerminate func(),
 	showCh <-chan struct{},
 	hideCh <-chan struct{},
 	reportHidden func(bool),
-) bool {
+	firstRequestCh <-chan struct{},
+) (quit bool, firstRequestSeen bool) {
 	w := webview.New(false)
 	if w == nil {
-		return false
+		return false, false
 	}
 	var alive atomic.Bool
 	alive.Store(true)
+	var firstReqSeen atomic.Bool
 	setTerminate(func() {
 		if alive.Load() {
 			w.Terminate()
@@ -132,6 +141,7 @@ func openWebview(addr string,
 		clearTerminate()
 		w.Destroy()
 	}()
+
 	w.SetTitle("Le Voile")
 	w.SetSize(420, 540, webview.HintFixed)
 
@@ -225,6 +235,19 @@ func openWebview(addr string,
 	}()
 
 	w.Navigate("http://" + addr + "/")
+
+	// Track first_request for the return value. The actual termination of a
+	// frozen webview happens in ui.handleOpenWebview's top-level watchdog —
+	// it must arm before openWebview to also cover freezes that happen
+	// before Run() entered (where Terminate alone cannot recover).
+	go func() {
+		select {
+		case <-done:
+		case <-firstRequestCh:
+			firstReqSeen.Store(true)
+		}
+	}()
+
 	w.Run()
-	return quitRequested.Load()
+	return quitRequested.Load(), firstReqSeen.Load()
 }
