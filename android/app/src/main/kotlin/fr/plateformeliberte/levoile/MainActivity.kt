@@ -13,8 +13,12 @@ import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.Observer
 import androidx.webkit.WebViewAssetLoader
 import fr.plateformeliberte.levoile.bridge.LeVoileBridge
+import fr.plateformeliberte.levoile.conflict.VpnConflictDetector
+import fr.plateformeliberte.levoile.kill.KillSwitchDetector
+import fr.plateformeliberte.levoile.kill.KillSwitchStatus
 import fr.plateformeliberte.levoile.vpn.LeVoileVpnService
 import fr.plateformeliberte.levoile.vpn.VpnConstants
 
@@ -63,6 +67,23 @@ class MainActivity : AppCompatActivity() {
      */
     private var pendingConnectCountry: String? = null
 
+    /**
+     * Story 10.1 — détecteur du kill switch OS-délégué (heuristique
+     * `Settings.Global.always_on_vpn_app` + `always_on_vpn_lockdown`).
+     * Ré-évalué à chaque [onResume] (Android ne broadcaste pas ces
+     * changements). L'observation côté UI / push frontend JS appartient
+     * à Story 10.2.
+     */
+    private lateinit var killSwitchDetector: KillSwitchDetector
+
+    /**
+     * Story 10.3 — détecteur de conflit VPN. Stateless, pas de LiveData :
+     * `check()` est invoqué ponctuellement par le bridge JS au tap
+     * « Connecter » (Story 11.2). Activity context (pas applicationContext)
+     * en anticipation du `startActivityForResult` Story 11.5.
+     */
+    private lateinit var vpnConflictDetector: VpnConflictDetector
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
@@ -92,14 +113,67 @@ class MainActivity : AppCompatActivity() {
 
         val webView = findViewById<WebView>(R.id.webView)
         configureWebView(webView)
+
+        // Story 10.1 — instancié AVANT addJavascriptInterface car le bridge
+        // (Story 10.2) consomme le détecteur via constructeur. Refresh
+        // effectif au premier onResume (séquencement Android : onCreate →
+        // onStart → onResume garanti). applicationContext évite de retenir
+        // l'Activity depuis le détecteur (long-vivant si jamais recyclé
+        // Story 11.x).
+        killSwitchDetector = KillSwitchDetector(applicationContext)
+
+        // Story 10.3 — Activity context (pas applicationContext) car
+        // VpnService.prepare() est généralement invoqué côté Activity et
+        // l'Intent retourné sera consommé via startActivityForResult par
+        // Story 11.5. Anticipation.
+        vpnConflictDetector = VpnConflictDetector(this)
+
         // AC #4 (Story 9.3) : addJavascriptInterface AVANT loadUrl — le bridge doit être
         // disponible dès que la page commence à exécuter du JS.
         // M-3 (code-review 9.3) : applicationContext (pas `this`) — évite la rétention de
         // l'Activity par le bridge (qui survit via le thread JS background des
         // @JavascriptInterface). Story 11.2 lira SharedPreferences / Settings.Global qui
         // acceptent applicationContext.
-        webView.addJavascriptInterface(LeVoileBridge(applicationContext), JS_BRIDGE_NAME)
+        // Story 10.2 — passage du détecteur kill switch au bridge.
+        // Story 10.3 — passage du détecteur conflit VPN au bridge pour
+        // exposer checkVpnConflict() au JS (consommé Story 11.2 au tap
+        // « Connecter »).
+        webView.addJavascriptInterface(
+            LeVoileBridge(applicationContext, killSwitchDetector, vpnConflictDetector),
+            JS_BRIDGE_NAME,
+        )
         webView.loadUrl(ASSET_INDEX_URL)
+
+        // Story 10.2 — observer LiveData : à chaque changement de statut, on
+        // pousse un signal au JS qui re-query getKillSwitchStatus() via le
+        // bridge (source de vérité unique côté Kotlin). Pas de sérialisation
+        // de payload, pas de risque d'injection. observe(this, ...) lie au
+        // lifecycle Activity — automatiquement désabonné en onDestroy.
+        // runOnUiThread défensif : LiveData.postValue rejoue déjà sur main
+        // thread, mais ceinture+bretelles si un futur appel arrive depuis
+        // Dispatchers.IO.
+        val killSwitchObserver = Observer<KillSwitchStatus> { _ ->
+            runOnUiThread {
+                webView.evaluateJavascript(
+                    "window.__LV_killSwitchChanged && window.__LV_killSwitchChanged();",
+                    null,
+                )
+            }
+        }
+        killSwitchDetector.status.observe(this, killSwitchObserver)
+    }
+
+    /**
+     * Story 10.1 — ré-évalue le kill switch au retour au premier plan
+     * (typiquement après un aller-retour Settings → VPN). Une seule source
+     * d'invocation : ni `onStart`, ni `onCreate` directs (le séquencement
+     * Android garantit que `onResume` est appelé immédiatement après
+     * `onStart` au premier launch). L'observer qui pousse l'état au
+     * frontend JS est livré Story 10.2.
+     */
+    override fun onResume() {
+        super.onResume()
+        killSwitchDetector.refresh()
     }
 
     /**

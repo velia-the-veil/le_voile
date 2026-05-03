@@ -468,6 +468,210 @@ limite à `arm64-v8a` + `armeabi-v7a` (≈99% du parc Android 2026), descendant
 l'APK à ~23 MB (sous le seuil NFR). Marché Chromebook x86 négligeable +
 émulation native ARM via Houdini/native bridge couvre les corner cases.
 
+### Détection kill switch (Story 10.1 livrée)
+
+`KillSwitchDetector` (sous `app/src/main/kotlin/fr/plateformeliberte/levoile/kill/`)
+interroge `Settings.Global.always_on_vpn_app` + `Settings.Global.always_on_vpn_lockdown`
+au `MainActivity.onResume()` et expose un `LiveData<KillSwitchStatus>`
+(`Active` / `Inactive` / `Unverifiable`).
+
+Cette heuristique est **fragile** : Android peut restreindre l'accès à ces
+settings dans une future version (cohérent ADR-10 et architecture.md l. 1078).
+Le fallback `Unverifiable` couvre ce cas — l'UI alerte alors l'utilisatrice
+via le composant C17 (Story 10.2) avec un texte « non vérifiable ».
+
+**Test manuel** :
+
+```bash
+adb shell settings put global always_on_vpn_app fr.plateformeliberte.levoile.debug
+adb shell settings put global always_on_vpn_lockdown 1
+# Fermer/rouvrir l'app — le statut bascule à Active.
+# Inverser (lockdown=0 ou app=null) pour observer Inactive.
+adb shell settings delete global always_on_vpn_app
+adb shell settings put global always_on_vpn_lockdown 0
+```
+
+L'observation du `LiveData` côté UI (bandeau C17) est livrée Story 10.2.
+La gestion onboarding « VPN permanent » (composant C15) est livrée Story 11.6.
+
+### Bandeau C17 kill switch (Story 10.2 livrée)
+
+Le bandeau rouge `#android-c17-banner` (`assets/index.html`) est affiché
+en haut de l'écran tant que `KillSwitchDetector.status` n'est pas `Active`.
+Tap → ouvre `Settings.ACTION_VPN_SETTINGS` (branche fallback EBR-02 — Story
+11.6 enrichira pour ouvrir l'onboarding C15 quand Epic 11 sera livré).
+
+L'observer `LiveData` est posé dans `MainActivity.onCreate` après l'instanciation
+du détecteur ; il pousse un signal au WebView via `evaluateJavascript`
+(`window.__LV_killSwitchChanged`) à chaque changement de statut, et le JS
+re-query `window.LeVoile.getKillSwitchStatus()` (source de vérité unique
+côté Kotlin, pas de cache JS).
+
+Annonce TalkBack via `role="alert"` + `aria-live="assertive"` (RGAA AA,
+ux-design-specification.md l. 1339).
+
+**Test manuel cycle complet** :
+
+```bash
+# 1. Activer kill switch côté OS pour Le Voile (debug)
+adb shell settings put global always_on_vpn_app fr.plateformeliberte.levoile.debug
+adb shell settings put global always_on_vpn_lockdown 1
+adb shell am start -n fr.plateformeliberte.levoile.debug/fr.plateformeliberte.levoile.MainActivity
+# → bandeau MASQUÉ
+
+# 2. Désactiver lockdown
+adb shell settings put global always_on_vpn_lockdown 0
+adb shell am start -n fr.plateformeliberte.levoile.debug/fr.plateformeliberte.levoile.MainActivity
+# → bandeau VISIBLE avec slide-down 200ms
+
+# 3. Tap simulé sur le bandeau (centre x=540, y=20 sur émulateur 1080×2400)
+adb shell input tap 540 20
+# → ouvre Settings → VPN
+
+# 4. Reset état
+adb shell settings delete global always_on_vpn_app
+adb shell settings delete global always_on_vpn_lockdown
+```
+
+Vérifier l'animation slide-down et l'annonce TalkBack via `chrome://inspect`.
+
+### Détection conflit VPN (Story 10.3 livrée)
+
+`VpnConflictDetector.check()` (sous `app/src/main/kotlin/fr/plateformeliberte/levoile/conflict/`)
+combine `VpnService.prepare(context)` + heuristique `Settings.Global.always_on_vpn_app`
+pour produire l'un des 3 verdicts :
+
+- `NoConflict` : tunnel peut démarrer immédiatement.
+- `ConsentNotGiven(prepareIntent)` : popup système consent à présenter
+  (consommation Story 11.5 via `startActivityForResult`).
+- `ForeignVpnActive(foreignAppId)` : autre app VPN détient le slot — refus + UX.
+
+Exposé côté JS via `window.LeVoile.checkVpnConflict()` (retour string JSON).
+Le bouton « Connecter » Story 11.2 consommera ce verdict au tap utilisateur.
+
+**Test manuel cycle complet** :
+
+```bash
+# 1. État premier-lancement (jamais consenti)
+adb shell pm clear fr.plateformeliberte.levoile.debug
+adb shell am start -n fr.plateformeliberte.levoile.debug/fr.plateformeliberte.levoile.MainActivity
+# Dans chrome://inspect, taper : window.LeVoile.checkVpnConflict()
+# → '{"verdict":"consent_required"}'
+
+# 2. Simuler conflit (un autre VPN doit etre installe + actif)
+adb shell settings put global always_on_vpn_app com.tailscale.ipn
+# Necessite Tailscale (ou autre VPN) installe pour que prepare() retourne non-null.
+# Alternative : installer ProtonVPN/Mullvad pour reproduire un conflit reel.
+```
+
+Vérifier le verdict via `chrome://inspect` console JS.
+
+### Audit télémétrie zéro-tracking (Story 10.4 livrée)
+
+Le pipeline CI Android (workflow GitHub Actions
+[`.github/workflows/android-audit.yml`](../.github/workflows/android-audit.yml))
+bloque toute PR ou push sur `main` qui introduirait une dépendance Gradle de
+télémétrie / analytics / crash reporter. Cohérent FR-AND-8, NFR-AND-8, ADR-15.
+
+La task Gradle `auditTelemetryDependencies` est définie en
+[`android/build.gradle.kts`](./build.gradle.kts) via un bloc `subprojects { ... }`
+— elle est appliquée à tous les modules (`:app`, `:levoile-core`) sans
+duplication. Elle est branchée sur la task `check` standard, donc
+`./gradlew check` en local lance aussi l'audit.
+
+La liste canonique (8 préfixes groupId) :
+
+- `com.google.firebase` (Firebase Analytics, Crashlytics, Performance, etc.)
+- `com.crashlytics.sdk.android` (Crashlytics héritage)
+- `io.sentry` (Sentry SDK Android)
+- `com.bugsnag` (Bugsnag SDK Android)
+- `com.mixpanel.android` (Mixpanel)
+- `com.adjust.sdk` (Adjust attribution)
+- `io.branch.sdk.android` (Branch deeplinks/attribution)
+- `com.amplitude` (Amplitude analytics)
+
+**Test local** :
+
+```bash
+cd android
+./gradlew :app:auditTelemetryDependencies :levoile-core:auditTelemetryDependencies
+# OU plus simple :
+./gradlew auditAllTelemetryDependencies
+```
+
+L'audit est récursif (détecte les transitives via
+`lenientConfiguration.allModuleDependencies`) et couvre 4 configurations
+(`release{Runtime,Compile}Classpath` + `debug{Runtime,Compile}Classpath`).
+Auditer aussi le debug est volontaire — un dev qui ajouterait Crashlytics
+« juste pour debug » verrait son commit échouer en CI.
+
+**Mise à jour de la liste** : la liste est définie dans `android/build.gradle.kts`
+et anti-regression-protégée par `app/src/test/kotlin/fr/plateformeliberte/levoile/audit/AuditCITest.kt`.
+Toute évolution doit modifier le `build.gradle.kts` ; le test échoue
+explicitement si un préfixe canonique disparaît.
+
+**Cohérence NFR22i** : si justification d'ajout d'un module précédemment
+interdit (cas hypothétique), un ADR doit être créé AVANT modification de
+ces fichiers et le commit doit être signé GPG par le mainteneur (cf.
+prd.md l. 686).
+
+### Filtrage logs zéro-data-utilisateur (Story 10.5 livrée)
+
+Cohérent NFR-AND-9 (prd.md l. 705) + NFR22a (prd.md l. 672) + ADR-15 :
+les logs Le Voile ne contiennent JAMAIS d'URL, de domaine, d'IP destination,
+de contenu utilisateur, ni d'identifiant d'app concurrente.
+
+#### Wrapper `LeVoileLog`
+
+[`LeVoileLog`](./app/src/main/kotlin/fr/plateformeliberte/levoile/log/LeVoileLog.kt)
+expose `i / w / e` et applique le filtrage par buildType :
+
+- **debug** : INFO+ visible Logcat.
+- **release** : WARN+ uniquement (INFO strippé par ProGuard via
+  [`proguard-rules.pro`](./app/proguard-rules.pro) — Story 10.5 a étendu
+  la rule Story 9.1 `Log.d`/`Log.v` à `Log.i` ET ajouté une rule dédiée
+  pour le wrapper).
+
+**Pas de méthodes `d` ni `v`** dans le wrapper — c'est volontaire. Les
+niveaux DEBUG / VERBOSE sont strippés Story 9.1 ; le dev qui veut un
+trace verbeux passe `android.util.Log.d` directement.
+
+**Convention pour les stories futures** : utiliser `LeVoileLog.*` plutôt que
+`android.util.Log.*` pour les nouveaux logs. Les sites d'appel existants
+pré-Story 10.5 utilisent encore `android.util.Log.*` — la migration globale
+n'a pas de bénéfice de sécurité (ProGuard strippe les 2 wrappers de la
+même manière) et est reportée si demandée.
+
+#### Test scan `LogFilteringTest`
+
+Le test
+[`LogFilteringTest.kt`](./app/src/test/kotlin/fr/plateformeliberte/levoile/log/LogFilteringTest.kt)
+scanne tous les `.kt` de `src/main/kotlin/` et échoue si un site `Log.*`
+ou `LeVoileLog.*` contient l'une des variables interdites :
+`$url`, `$domain`, `$destIp`, `$userContent`, `$requestBody`,
+`$responseBody`, `$packageName`, `$foreignAppId`, `$pinnedApp`.
+
+**Test local** :
+
+```bash
+cd android
+./gradlew :app:testDebugUnitTest --tests "fr.plateformeliberte.levoile.log.LogFilteringTest"
+```
+
+Le scan **inclut** `Log.w` / `Log.e` (qui restent visibles release —
+NFR-AND-9 « WARN+ uniquement ») : un dev qui introduirait
+`Log.w(TAG, "User clicked $url")` passerait ProGuard mais le scan
+statique l'attraperait avant merge. Le scan est le filet de sécurité ultime.
+
+En cas d'échec, l'output liste exactement le `fichier:ligne` et la variable
+offensive. **Reformuler le log** en supprimant l'interpolation, ou — si la
+variable est en réalité non-sensible (ex. constante de build) — justifier
+via ADR avant ajustement de la liste.
+
+Le scan est exécuté en CI à chaque PR via le workflow
+[`.github/workflows/android-audit.yml`](../.github/workflows/android-audit.yml)
+(Story 10.4 + 10.5).
+
 ### Sync frontend desktop (Story 11.1 à venir)
 
 ```bash

@@ -137,12 +137,12 @@ development_status:
   # Epic 10: Kill Switch OS-Delegue + Conflit VPN + Zero Telemetrie
   # Parallelisable avec Epic 11 une fois Epic 9 livre. Story 10.4 (audit Gradle CI) peut demarrer
   # des Story 9.1 livree (necessite seulement le module Gradle).
-  epic-10: in-progress
-  10-1-heuristique-detection-kill-switch-via-settings-global-always-on-vpn-app: ready-for-dev
-  10-2-composant-c17-bandeau-alerte-kill-switch-persistant: ready-for-dev
-  10-3-detection-autre-app-vpn-active-via-vpnservice-prepare: ready-for-dev
-  10-4-audit-gradle-ci-bloquant-assertion-absence-dependances-telemetrie: ready-for-dev
-  10-5-filtrage-logs-android-util-log-par-buildtype: ready-for-dev
+  epic-10: done
+  10-1-heuristique-detection-kill-switch-via-settings-global-always-on-vpn-app: done
+  10-2-composant-c17-bandeau-alerte-kill-switch-persistant: done
+  10-3-detection-autre-app-vpn-active-via-vpnservice-prepare: done
+  10-4-audit-gradle-ci-bloquant-assertion-absence-dependances-telemetrie: done
+  10-5-filtrage-logs-android-util-log-par-buildtype: done
   epic-10-retrospective: optional
 
   # Epic 11: UI Mobile + Onboarding « VPN permanent »

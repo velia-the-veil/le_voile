@@ -16,3 +16,49 @@ main { padding: 24px; }
 h1 { font-size: 1.4rem; margin: 0 0 12px; font-weight: 600; }
 p { margin: 0; opacity: 0.8; font-size: 0.95rem; }
 #status-dot { color: #2a8dff; font-variant-numeric: tabular-nums; }
+
+/* ==============================================================
+   Android C17 — Bandeau alerte kill switch persistant
+   Story 10.2 · Visible UNIQUEMENT si body.platform-android.
+   ux-design-specification.md l. 1328-1339 + epics.md l. 1701-1732
+   ============================================================== */
+
+body.platform-android .android-c17-banner {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 40px;
+  padding: 0 16px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(212, 43, 43, 0.9);    /* #d42b2b à 90% (ux l. 1334) */
+  color: #ffffff;
+  font-family: 'Rajdhani', sans-serif;   /* fallback générique si Story 11.1 pas livrée */
+  font-size: 14px;
+  font-weight: 600;
+  z-index: 1000;
+  transform: translateY(-100%);
+  transition: transform 200ms ease-out;
+  user-select: none;                     /* Empêcher la sélection texte */
+  cursor: pointer;                       /* Cible tactile RGAA AA full-width */
+}
+
+body.platform-android .android-c17-banner:not([hidden]) {
+  transform: translateY(0);
+}
+
+body.platform-android .android-c17-banner__text {
+  flex: 1;
+}
+
+body.platform-android .android-c17-banner__chevron {
+  font-size: 18px;
+  line-height: 1;
+}
+
+/* Décale le contenu du body de 40px quand le bandeau est visible. */
+body.platform-android.has-c17-banner {
+  padding-top: 40px;
+}

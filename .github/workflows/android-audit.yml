@@ -1,0 +1,70 @@
+# Story 10.4 — Audit télémétrie zéro-tracking pour le client Android Le Voile.
+#
+# Bloque toute PR / push sur main qui introduirait une dépendance Gradle
+# de télémétrie / analytics / crash reporter (Firebase, Sentry, Bugsnag,
+# Crashlytics, Mixpanel, Adjust, Branch, Amplitude). Cohérent avec
+# FR-AND-8 (prd.md l. 614-617), NFR-AND-8 (prd.md l. 704), ADR-15
+# (architecture.md l. 2439-2442).
+#
+# Exception ADR-08 documentée : ce workflow vit sous .github/workflows/
+# par construction GitHub Actions (aucune sub-config possible). Il est
+# 100% Android (jobs Gradle uniquement) — aucune mutualisation cross-OS
+# avec release.yml ou aur-publish.yml. Pattern aligné avec ces 2
+# workflows existants (Story 7.x desktop).
+#
+# Le pipeline release Android complet (build APK + signature + F-Droid)
+# est livré Story 12.2 dans un workflow séparé release-android.yml. Les
+# 2 workflows coexistent : audit minimaliste léger sur chaque PR
+# (cette story), pipeline release sur tag git (Story 12.2).
+name: Android · Audit télémétrie
+
+on:
+  pull_request:
+    paths:
+      - 'android/**'
+      - '.github/workflows/android-audit.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'android/**'
+      - '.github/workflows/android-audit.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-audit-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  audit-dependencies:
+    name: Audit dépendances Gradle (zéro-tracking)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v3
+
+      - name: Run telemetry audit task
+        working-directory: android
+        run: ./gradlew :app:auditTelemetryDependencies :levoile-core:auditTelemetryDependencies --no-daemon --stacktrace
+
+      - name: Run AuditCITest unit test
+        working-directory: android
+        run: ./gradlew :app:testDebugUnitTest --tests "fr.plateformeliberte.levoile.audit.AuditCITest" --no-daemon
+
+      # Story 10.5 — scan zéro-data-utilisateur des templates de log Kotlin.
+      # Step séparé pour lisibilité de l'output CI (préférence vs un appel
+      # consolidé qui mélangerait les outputs des 2 tests d'audit).
+      - name: Run LogFilteringTest unit test
+        working-directory: android
+        run: ./gradlew :app:testDebugUnitTest --tests "fr.plateformeliberte.levoile.log.LogFilteringTest" --no-daemon

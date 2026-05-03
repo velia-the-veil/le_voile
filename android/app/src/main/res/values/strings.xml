@@ -33,4 +33,18 @@
          que Story 11.2 n'ait qu'a la consommer (parite EN/FR garantie par le
          test NotificationHelperTest.STORY_9_6_KEYS si etendu). -->
     <string name="vpn_consent_denied_message">Le Voile a besoin de votre consentement pour activer le tunnel.</string>
+
+    <!-- Story 10.2 : Toast affiche en fallback si Settings.ACTION_VPN_SETTINGS
+         est indisponible sur la ROM (rare — certaines ROM custom). Pas de log
+         (NFR-AND-9 : ne revele pas l'info ROM custom au logcat). -->
+    <string name="android_c17_settings_unavailable">Activez « VPN permanent » dans les paramètres Android pour bénéficier de la protection complète.</string>
+
+    <!-- Story 10.3 : strings affichees par Story 11.2 cote frontend lors
+         d'un verdict VpnConflictVerdict.ForeignVpnActive (autre app VPN
+         detient le slot). Posees ici pour single-source-of-truth i18n
+         Android (canonique strings.xml). FR identique en values/ et
+         values-fr/ (MVP mono-langue, EN gap mineur architecture.md l. 2197). -->
+    <string name="android_vpn_conflict_title">Conflit VPN détecté</string>
+    <string name="android_vpn_conflict_message">Une autre application VPN est active sur cet appareil. Désactivez-la pour utiliser Le Voile.</string>
+    <string name="android_vpn_conflict_button_settings">Ouvrir les paramètres VPN</string>
 </resources>

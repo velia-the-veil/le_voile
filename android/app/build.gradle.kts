@@ -117,10 +117,24 @@ dependencies {
     // wrapping des appels JNI gomobile bloquants — architecture.md l. 1213-1214).
     implementation(libs.kotlinx.coroutines.android)
 
+    // Story 10.1 : KillSwitchDetector expose un LiveData<KillSwitchStatus>.
+    // Tirée transitivement par appcompat (lifecycle-livedata-core), explicitée
+    // ici pour rendre l'usage volontaire et accéder à l'extension KTX (cohérent
+    // version catalog — cf. gradle/libs.versions.toml).
+    implementation(libs.androidx.lifecycle.livedata.ktx)
+
     // Tests unitaires JVM-only (Story 9.2 LeVoileCoreSmokeTest, Story 9.7
-    // GoCoreAdapterContractTest + GoBackedPacketRelayTest). N'entrent pas
-    // dans l'APK release.
+    // GoCoreAdapterContractTest + GoBackedPacketRelayTest, Story 10.1
+    // KillSwitchDetectorTest). N'entrent pas dans l'APK release.
     testImplementation(libs.junit)
+    // Story 10.1 : InstantTaskExecutorRule pour forcer LiveData.postValue
+    // synchrone côté tests JVM-only (sans Robolectric).
+    testImplementation(libs.androidx.arch.core.testing)
+    // Story 10.2 + 10.3 : Mockito pour mocker android.content.Context dans les
+    // tests JVM-only (LeVoileBridgeKillSwitchTest, VpnConflictDetectorTest).
+    // MockContext de android.jar throw "Stub!" au constructor — Mockito est
+    // la voie standard Android pour ce cas.
+    testImplementation(libs.mockito.core)
 
     // Tests instrumentés — alignés avec testInstrumentationRunner ci-dessus.
     // Permet à connectedAndroidTest de s'exécuter dès la première story qui livrera

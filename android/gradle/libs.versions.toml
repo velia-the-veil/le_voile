@@ -25,8 +25,20 @@ androidx-webkit = "1.10.0"
 # cf. architecture.md l. 1213-1214). 1.7.3 stable + compatible Kotlin 1.9.x.
 kotlinx-coroutines = "1.7.3"
 
+# Story 10.1 : LiveData KTX pour KillSwitchDetector (état observable du
+# kill switch OS-délégué). 2.7.0 stable au 2026-05-02, pas de breaking
+# change connu à minSdk 29. core-testing 2.2.0 fournit
+# InstantTaskExecutorRule (force LiveData synchrone côté tests JVM-only).
+androidx-lifecycle = "2.7.0"
+androidx-arch-core-testing = "2.2.0"
+
 # Tests
 junit = "4.13.2"
+# Story 10.2 + 10.3 : Mockito pour mock le `android.content.Context` exigé
+# par les constructeurs de LeVoileBridge / VpnConflictDetector dans les tests
+# JVM-only. android.test.mock.MockContext throw "Stub!" au constructor en
+# unitTests.isReturnDefaultValues — voie standard Android = Mockito.
+mockito-core = "5.11.0"
 androidx-test-junit = "1.2.1"
 androidx-test-espresso = "3.6.1"
 
@@ -35,7 +47,10 @@ androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = 
 androidx-appcompat = { group = "androidx.appcompat", name = "appcompat", version.ref = "androidx-appcompat" }
 androidx-webkit = { group = "androidx.webkit", name = "webkit", version.ref = "androidx-webkit" }
 kotlinx-coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-android", version.ref = "kotlinx-coroutines" }
+androidx-lifecycle-livedata-ktx = { group = "androidx.lifecycle", name = "lifecycle-livedata-ktx", version.ref = "androidx-lifecycle" }
+androidx-arch-core-testing = { group = "androidx.arch.core", name = "core-testing", version.ref = "androidx-arch-core-testing" }
 junit = { group = "junit", name = "junit", version.ref = "junit" }
+mockito-core = { group = "org.mockito", name = "mockito-core", version.ref = "mockito-core" }
 androidx-test-junit = { group = "androidx.test.ext", name = "junit", version.ref = "androidx-test-junit" }
 androidx-test-espresso-core = { group = "androidx.test.espresso", name = "espresso-core", version.ref = "androidx-test-espresso" }
 
