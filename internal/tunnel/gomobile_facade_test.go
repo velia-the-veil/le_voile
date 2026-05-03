@@ -78,7 +78,7 @@ func TestGomobile_StatusCallbackInvoked(t *testing.T) {
 	var mu sync.Mutex
 	var captured []string
 
-	SetGomobileStatusCallback(func(state, message string) {
+	SetGomobileStatusCallback(func(state, message, _, _ string) {
 		mu.Lock()
 		captured = append(captured, state+":"+message)
 		mu.Unlock()
@@ -178,7 +178,7 @@ func TestGomobile_StatusCallbackReceivesRedactedErrors(t *testing.T) {
 	defer ResetGomobileForTest()
 
 	var captured string
-	SetGomobileStatusCallback(func(state, message string) {
+	SetGomobileStatusCallback(func(state, message, _, _ string) {
 		if state == "error" {
 			captured = message
 		}

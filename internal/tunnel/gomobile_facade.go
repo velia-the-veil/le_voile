@@ -38,7 +38,12 @@ package tunnel
 import (
 	"context"
 	"errors"
+	"net"
+	"strings"
 	"sync"
+	"time"
+
+	"github.com/velia-the-veil/le_voile/internal/registry"
 )
 
 // ErrSessionAlreadyOpen est retourné si ConnectGomobile est appelé alors
@@ -64,11 +69,16 @@ type gomobileSession struct {
 }
 
 var (
-	gomobileMu        sync.Mutex
+	gomobileMu         sync.Mutex
 	gomobileConnecting bool // M-4 : guard contre handshake concurrent dupliqué
-	gomobileActive    *gomobileSession
-	gomobilePacketCB  func([]byte)
-	gomobileStatusCB  func(state, message string)
+	gomobileActive     *gomobileSession
+	gomobilePacketCB   func([]byte)
+	// Story 11.7-bis : signature étendue pour transporter l'IP visible et le
+	// pays effectif au moment de la transition `connected`. Pour les autres
+	// transitions (connecting/disconnected/error), visibleIp et effectiveCountry
+	// restent vides — leur résolution n'a de sens qu'une fois la session
+	// établie.
+	gomobileStatusCB func(state, message, visibleIp, effectiveCountry string)
 )
 
 // SetGomobilePacketCallback enregistre le handler appelé pour chaque paquet
@@ -93,11 +103,21 @@ func SetGomobilePacketCallback(cb func(packet []byte)) {
 // d'état de la session : "connecting", "connected", "disconnected", "error".
 // Passer nil pour désenregistrer.
 //
+// Story 11.7-bis : signature étendue avec `visibleIp` et `effectiveCountry`.
+// Ces 2 paramètres sont remplis UNIQUEMENT au moment de la transition
+// `connected` (résolution DNS du domaine relais + extraction code pays).
+// Pour les autres transitions, ils sont vides ("").
+//
 // IMPORTANT (NFR-AND-9) : le paramètre `message` passé au callback est
 // TOUJOURS une classe d'erreur canonique redactée (e.g. "pinning_failed",
 // "network_error") — JAMAIS le message brut Go qui contiendrait URL/IP
 // du relais. Voir redactErrorForStatus.
-func SetGomobileStatusCallback(cb func(state, message string)) {
+//
+// `visibleIp` n'est PAS de la PII utilisateur — c'est l'IP publique du
+// relais Le Voile (qui sera vue par les serveurs externes). Sa publication
+// est intentionnelle (UX : rassurer l'utilisateur sur l'effectivité du
+// tunnel).
+func SetGomobileStatusCallback(cb func(state, message, visibleIp, effectiveCountry string)) {
 	gomobileMu.Lock()
 	gomobileStatusCB = cb
 	gomobileMu.Unlock()
@@ -151,12 +171,15 @@ func redactErrorForStatus(err error) string {
 
 // emitStatus invoque le statusCallback enregistré sous lock.
 // Conçu pour être appelé sans gomobileMu détenu (sinon deadlock côté shim).
+//
+// Story 11.7-bis : visibleIp et effectiveCountry restent vides ("") par défaut.
+// Pour les pousser au moment d'un `connected`, utiliser emitStatusConnected.
 func emitStatus(state, message string) {
 	gomobileMu.Lock()
 	cb := gomobileStatusCB
 	gomobileMu.Unlock()
 	if cb != nil {
-		cb(state, message)
+		cb(state, message, "", "")
 	}
 }
 
@@ -164,6 +187,68 @@ func emitStatus(state, message string) {
 // emitStatus("error", redacted) — point unique de redaction.
 func emitStatusErr(err error) {
 	emitStatus("error", redactErrorForStatus(err))
+}
+
+// emitStatusConnected est le helper qui pousse l'événement `connected` enrichi
+// avec l'IP visible (résolution DNS du domaine relais) + le code pays effectif
+// (extrait du domaine via internal/registry.ExtractCountryCode).
+//
+// Story 11.7-bis — résolution DNS via net.LookupIP : retourne l'IP IPv4
+// préférentiellement (les relais Le Voile sont DNS-only sans CDN fronting,
+// architecture.md ; un seul A record par domaine). Si la résolution échoue
+// (offline, DNS bloqué, etc.), visibleIp reste vide — le callback reçoit
+// "connected" sans IP, le caller Kotlin gère le fallback "—".
+//
+// Le code pays retourné est en majuscules (ex. "DE") pour correspondre à la
+// whitelist Kotlin LeVoileBridge.COUNTRIES_WHITELIST. CountryMetaMap interne
+// utilise des codes minuscules historiques.
+func emitStatusConnected(relayDomain string) {
+	gomobileMu.Lock()
+	cb := gomobileStatusCB
+	gomobileMu.Unlock()
+	if cb == nil {
+		return
+	}
+	visibleIP := resolveRelayVisibleIP(relayDomain)
+	effectiveCountry := strings.ToUpper(registry.ExtractCountryCode("", relayDomain))
+	cb("connected", "", visibleIP, effectiveCountry)
+}
+
+// resolveRelayVisibleIP résout le domaine relais en IP via le resolver par
+// défaut, avec timeout court (2s) pour éviter de bloquer le callback
+// `connected` indéfiniment si DNS lent/bloqué. Retourne la première IPv4
+// trouvée, ou la première IP tout court si aucune IPv4. Retourne "" en cas
+// d'erreur ou timeout (le caller gère le fallback "—" UX-side).
+//
+// Code-review post-11.7-bis (H-6) : timeout explicite 2s — le callback
+// `connected` est synchrone côté Kotlin (caller attend ce retour avant
+// d'activer le pump). Sans timeout, un DNS bloqué (firewall captif,
+// résolveur lent, adversarial DNS attack) bloquerait jusqu'à 5s+ par
+// défaut système.
+//
+// NFR-AND-9 : aucun log de l'IP résolue côté Go (le caller Kotlin reçoit
+// l'IP via le callback et décide de l'afficher dans la notif — c'est UX,
+// pas log).
+const resolveRelayVisibleIPTimeout = 2 * time.Second
+
+func resolveRelayVisibleIP(relayDomain string) string {
+	if relayDomain == "" {
+		return ""
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), resolveRelayVisibleIPTimeout)
+	defer cancel()
+	addrs, err := net.DefaultResolver.LookupIPAddr(ctx, relayDomain)
+	if err != nil || len(addrs) == 0 {
+		return ""
+	}
+	// On préfère IPv4 si disponible (notifs UX affichent typiquement "5.45.6.7"
+	// plus court que IPv6).
+	for _, a := range addrs {
+		if v4 := a.IP.To4(); v4 != nil {
+			return v4.String()
+		}
+	}
+	return addrs[0].IP.String()
 }
 
 // ConnectGomobile établit la session QUIC/HTTP3 vers `relayDomain` avec
@@ -235,7 +320,8 @@ func ConnectGomobile(relayDomain, relayPubKeyBase64 string) error {
 	connectingCleared = true
 	gomobileMu.Unlock()
 
-	emitStatus("connected", "")
+	// Story 11.7-bis : émission enrichie avec IP visible + pays effectif.
+	emitStatusConnected(relayDomain)
 
 	// Goroutine de pump — vit jusqu'à CloseGomobile ou erreur de stream.
 	go runGomobilePump(ctx, c, outbound)
