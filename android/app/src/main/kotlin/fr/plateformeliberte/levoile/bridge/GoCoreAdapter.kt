@@ -191,8 +191,21 @@ object GoCoreAdapter {
                 Protocol.setStatusCallback(
                     statusCb?.let {
                         object : fr.plateformeliberte.levoile.core.protocol.StatusCallback {
-                            override fun onStateChange(state: String?, message: String?) {
-                                statusCb.onStateChange(state ?: "unknown", message ?: "")
+                            // Story 11.7-bis : 4 params côté shim Go (state, message,
+                            // visibleIp, effectiveCountry). gomobile peut nuller chaque
+                            // String individuellement — guard défensif.
+                            override fun onStateChange(
+                                state: String?,
+                                message: String?,
+                                visibleIP: String?,
+                                effectiveCountry: String?,
+                            ) {
+                                statusCb.onStateChange(
+                                    state ?: "unknown",
+                                    message ?: "",
+                                    visibleIP ?: "",
+                                    effectiveCountry ?: "",
+                                )
                             }
                         }
                     },

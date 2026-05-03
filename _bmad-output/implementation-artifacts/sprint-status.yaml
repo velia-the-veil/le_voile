@@ -38,6 +38,12 @@
 #   aucune telemetrie (cf. ADR-15, audit Gradle CI bloquant Story 10.4).
 # - Chemin critique Android recommande : Epic 9 (noyau VpnService + gomobile) avant tout, puis Epic 10
 #   (kill switch + audit telemetrie) en parallele d'Epic 11 (UI mobile), puis Epic 12 (distribution + tests).
+# - 2026-05-03: Code-review post-Epic 11 livre (139 tests verts, lint propre).
+#   ADR-16 ajoute (assets Android-natifs versionnes - Option 2 Story 11.1).
+#   Story 11.7-bis creee (ready-for-dev) : wiring Go backend complet (registry + currentIp + bascule
+#   NoOpPacketRelay -> GoBackedPacketRelay). A planifier debut Phase 2 Android avant Story 12.1.
+#   Sequencing recommande Phase 2 : 11.7-bis (chemin critique tunnel reel) -> 12.1 metadata F-Droid
+#   -> 12.2 pipeline CI -> 12.3 signature -> 12.4 reproductibilite -> 12.5 auto-update -> 12.6 tests instr.
 
 generated: 2026-05-02
 project: bmad_vpn_le_voile_de_velia
@@ -147,16 +153,19 @@ development_status:
 
   # Epic 11: UI Mobile + Onboarding « VPN permanent »
   # Reuse frontend desktop via sync-frontend.sh + body.platform-android (cf. ADR-14).
-  # Story 11.5 livre placeholder Ecran 3, Story 11.6 enrichit en composant C15 complet.
-  epic-11: backlog
-  11-1-script-sync-frontend-sh-webviewassetloader-responsive-body-platform-android: backlog
-  11-2-js-bridge-javascriptinterface-complet: backlog
-  11-3-composant-c13-appbar-material-56dp: backlog
-  11-4-composant-c14-country-selector-bottom-sheet: backlog
-  11-5-onboardingactivity-3-ecrans-persistence-onboarding-completed: backlog
-  11-6-composant-c15-onboarding-kill-switch-screen-deeplink-settings: backlog
-  11-7-enrichissement-notification-c16-pays-ip-action-dynamiques: backlog
-  11-8-config-json-getfilesdir-config-json: backlog
+  # ADR-16 (post-2026-05-03) : Option 2 retenue — assets web Android = sources Android-natives.
+  # Story 11.5 et 11.6 livrees conjointement (acceptee post-review).
+  # Story 11.7-bis cree post-review pour wiring Go backend + currentIp + registry Android.
+  epic-11: done
+  11-1-script-sync-frontend-sh-webviewassetloader-responsive-body-platform-android: done
+  11-2-js-bridge-javascriptinterface-complet: done
+  11-3-composant-c13-appbar-material-56dp: done
+  11-4-composant-c14-country-selector-bottom-sheet: done
+  11-5-onboardingactivity-3-ecrans-persistence-onboarding-completed: done
+  11-6-composant-c15-onboarding-kill-switch-screen-deeplink-settings: done
+  11-7-enrichissement-notification-c16-pays-ip-action-dynamiques: done
+  11-7bis-wiring-go-backend-relay-registry-currentip: done
+  11-8-config-json-getfilesdir-config-json: done
   epic-11-retrospective: optional
 
   # Epic 12: Distribution F-Droid + APK Direct + Auto-Update + Tests Instrumentes

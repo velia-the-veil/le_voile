@@ -25,6 +25,44 @@
     <!-- Story 10.2 : voir values/strings.xml pour le contexte. -->
     <string name="android_c17_settings_unavailable">Activez « VPN permanent » dans les paramètres Android pour bénéficier de la protection complète.</string>
 
+    <!-- Story 11.5 — Onboarding 3 écrans -->
+    <string name="onboarding_screen1_title">Bienvenue</string>
+    <string name="onboarding_screen1_body">Le Voile protège votre connexion en chiffrant tout votre trafic vers nos relais européens. Aucun journal, aucune télémétrie.</string>
+    <string name="onboarding_screen2_title">Autorisation VPN</string>
+    <string name="onboarding_screen2_body">Android va vous demander d\'autoriser Le Voile à créer un tunnel VPN. C\'est une étape système obligatoire pour intercepter le trafic.</string>
+    <string name="onboarding_screen2_subtle">Aucune donnée n\'est envoyée pendant cette étape — uniquement votre consentement.</string>
+    <string name="onboarding_btn_continue">Continuer</string>
+
+    <!-- Story 11.6 — Composant C15 -->
+    <string name="c15_warning_icon_desc">Avertissement protection incomplète</string>
+    <string name="c15_title">Une dernière étape</string>
+    <string name="c15_body">Activez le « VPN permanent » dans les paramètres Android pour bloquer toute connexion en dehors du tunnel.</string>
+    <string name="c15_consequence">Sans cette étape, votre trafic peut s\'échapper si la connexion VPN tombe.</string>
+    <string name="c15_btn_open_settings">Ouvrir les paramètres</string>
+    <string name="c15_link_skip">Continuer sans (déconseillé)</string>
+    <string name="c15_link_skip_desc">Continuer sans activer le kill switch — déconseillé</string>
+    <string name="c15_verifying">Vérification…</string>
+    <string name="c15_btn_retry">Réessayer</string>
+    <string name="c15_btn_manual_verified">J\'ai vérifié manuellement</string>
+    <string name="c15_skip_dialog_title">Continuer sans le kill switch ?</string>
+    <string name="c15_skip_dialog_body">Vous pourrez l\'activer plus tard depuis les paramètres système Android.</string>
+    <string name="c15_skip_dialog_cancel">Annuler</string>
+    <string name="c15_skip_dialog_confirm">Continuer sans</string>
+
+    <!-- Story 11.3 — Labels drawer Android C13 -->
+    <string name="android_appbar_menu">Menu</string>
+    <string name="android_appbar_notifications">Notifications</string>
+    <string name="android_appbar_more">Plus d\'options</string>
+    <string name="android_drawer_close">Fermer le menu</string>
+    <string name="android_drawer_settings">Paramètres</string>
+    <string name="android_drawer_about">À propos</string>
+    <string name="android_drawer_legal">Mentions légales</string>
+    <string name="android_drawer_system_settings">Paramètres système Android</string>
+
+    <!-- Story 11.7 — Notification enrichie -->
+    <string name="notif_text_reconnecting">Reconnexion…</string>
+    <string name="notif_text_killswitch_inactive_alert">⚠️ Kill switch inactif · Activer</string>
+
     <!-- Story 10.3 : voir values/strings.xml pour le contexte. -->
     <string name="android_vpn_conflict_title">Conflit VPN détecté</string>
     <string name="android_vpn_conflict_message">Une autre application VPN est active sur cet appareil. Désactivez-la pour utiliser Le Voile.</string>

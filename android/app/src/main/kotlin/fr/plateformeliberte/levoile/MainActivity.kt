@@ -19,6 +19,7 @@ import fr.plateformeliberte.levoile.bridge.LeVoileBridge
 import fr.plateformeliberte.levoile.conflict.VpnConflictDetector
 import fr.plateformeliberte.levoile.kill.KillSwitchDetector
 import fr.plateformeliberte.levoile.kill.KillSwitchStatus
+import fr.plateformeliberte.levoile.log.LeVoileLog
 import fr.plateformeliberte.levoile.vpn.LeVoileVpnService
 import fr.plateformeliberte.levoile.vpn.VpnConstants
 
@@ -87,6 +88,30 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        // Story 11.5 — vérifier l'onboarding au tout début. Si non complété,
+        // déléguer à OnboardingActivity et finish() pour ne pas charger le WebView pour rien.
+        val prefs = getSharedPreferences(
+            fr.plateformeliberte.levoile.onboarding.OnboardingActivity.PREFS_NAME,
+            MODE_PRIVATE
+        )
+        if (!prefs.getBoolean(
+                fr.plateformeliberte.levoile.onboarding.OnboardingActivity.KEY_ONBOARDING_COMPLETED,
+                false
+            )
+        ) {
+            startActivity(
+                Intent(
+                    this,
+                    fr.plateformeliberte.levoile.onboarding.OnboardingActivity::class.java
+                )
+            )
+            finish()
+            return
+        }
+
+        // Story 11.7 — handler extra openKillSwitchFlow (notification tap → flow C15).
+        handleKillSwitchFlowExtra(intent)
+
         // M-2 (code-review 9.3) : WebContents debugging activé UNIQUEMENT en debug pour
         // permettre l'inspection via chrome://inspect (cf. README-android.md « Lancement de
         // l'app debug »). Guard impératif sur BuildConfig.DEBUG — laisser actif en release
@@ -130,16 +155,16 @@ class MainActivity : AppCompatActivity() {
 
         // AC #4 (Story 9.3) : addJavascriptInterface AVANT loadUrl — le bridge doit être
         // disponible dès que la page commence à exécuter du JS.
-        // M-3 (code-review 9.3) : applicationContext (pas `this`) — évite la rétention de
-        // l'Activity par le bridge (qui survit via le thread JS background des
-        // @JavascriptInterface). Story 11.2 lira SharedPreferences / Settings.Global qui
-        // acceptent applicationContext.
+        // Story 11.2 — passage de `this` (MainActivity) plutôt que applicationContext :
+        // LeVoileBridge.connect/disconnect doit caster en MainActivity pour appeler
+        // runOnUiThread + requestVpnStart/Stop. La rétention M-3 est mitigée par le
+        // removeJavascriptInterface explicite dans onDestroy ci-dessous (détachement avant
+        // destroy() = pas de fuite résiduelle).
         // Story 10.2 — passage du détecteur kill switch au bridge.
         // Story 10.3 — passage du détecteur conflit VPN au bridge pour
-        // exposer checkVpnConflict() au JS (consommé Story 11.2 au tap
-        // « Connecter »).
+        // exposer checkVpnConflict() au JS.
         webView.addJavascriptInterface(
-            LeVoileBridge(applicationContext, killSwitchDetector, vpnConflictDetector),
+            LeVoileBridge(this, killSwitchDetector, vpnConflictDetector),
             JS_BRIDGE_NAME,
         )
         webView.loadUrl(ASSET_INDEX_URL)
@@ -174,6 +199,34 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         killSwitchDetector.refresh()
+    }
+
+    /**
+     * Story 11.7 — handler nouvel Intent (notification tap kill switch alerte).
+     * launchMode singleTop garantit qu'onNewIntent est appelé sur l'instance
+     * existante plutôt que de recréer l'Activity.
+     */
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleKillSwitchFlowExtra(intent)
+    }
+
+    /**
+     * Story 11.7 — Si la notif a été tappée en mode kill switch alerte,
+     * deeplink direct vers Settings VPN. Décision dev : pas de relance
+     * OnboardingActivity (l'utilisateur a déjà complété l'onboarding ; on
+     * cible directement la page Settings la plus pertinente).
+     */
+    private fun handleKillSwitchFlowExtra(intent: Intent?) {
+        if (intent?.getBooleanExtra(EXTRA_OPEN_KILL_SWITCH_FLOW, false) == true) {
+            LeVoileLog.i(TAG, "Notification tap → kill switch flow")
+            try {
+                startActivity(Intent(android.provider.Settings.ACTION_VPN_SETTINGS))
+            } catch (t: android.content.ActivityNotFoundException) {
+                LeVoileLog.w(TAG, "Settings.ACTION_VPN_SETTINGS indisponible — ROM custom")
+            }
+        }
     }
 
     /**
@@ -252,7 +305,7 @@ class MainActivity : AppCompatActivity() {
      *   `EXTRA_COUNTRY` au service (consommé par Story 9.7 pour la sélection
      *   du relais).
      */
-    @Suppress("unused") // Wired by Story 11.2 — LeVoileBridge.connect() will call this helper.
+    // Story 11.2 — wired par LeVoileBridge.connect(country).
     internal fun requestVpnStart(country: String? = null) {
         pendingConnectCountry = country
         val prepareIntent = VpnService.prepare(this)
@@ -285,7 +338,7 @@ class MainActivity : AppCompatActivity() {
      *
      * **Story 11.2** wirera ce helper depuis `LeVoileBridge.disconnect()`.
      */
-    @Suppress("unused") // Wired by Story 11.2 — LeVoileBridge.disconnect() will call this helper.
+    // Story 11.2 — wired par LeVoileBridge.disconnect().
     internal fun requestVpnStop() {
         if (LeVoileVpnService.instance == null) {
             Log.i(TAG, "requestVpnStop ignore — aucun service actif")
@@ -316,8 +369,12 @@ class MainActivity : AppCompatActivity() {
         // Nom exposé au DOM via window.LeVoile — figé Story 9.3, consommé tel quel
         // par le frontend desktop partagé (Story 11.1) et l'enrichissement bridge (Story 11.2).
         const val JS_BRIDGE_NAME = "LeVoile"
+
+        /** Story 11.7 — extra pour le tap notif kill switch alerte. */
+        const val EXTRA_OPEN_KILL_SWITCH_FLOW = "openKillSwitchFlow"
         // URL virtuelle servie par WebViewAssetLoader (host appassets.androidplatform.net
         // est l'authority réservée Google pour les assets locaux — pas de DNS, pas de réseau).
-        private const val ASSET_INDEX_URL = "https://appassets.androidplatform.net/assets/index.html"
+        // Story 11.1 : repointé vers le sous-arbre web/ (séparation assets sync vs natifs).
+        private const val ASSET_INDEX_URL = "https://appassets.androidplatform.net/assets/web/index.html"
     }
 }

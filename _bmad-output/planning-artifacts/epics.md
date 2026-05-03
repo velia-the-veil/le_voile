@@ -2007,6 +2007,34 @@ So que je voie ma protection effective d'un coup d'œil sans ouvrir l'app.
 **Then** `setContentDescription` complet annonce « Le Voile, état {état}, pays {pays}, IP {IP_lu_chiffres_un_par_un} »
 **And** l'action « DÉCONNECTER » reste accessible au focus séquentiel
 
+### Story 11.7-bis: Wiring Go Backend — Relay Registry + currentIp + bascule NoOpPacketRelay
+
+> **Origine** : ajoutée post-code-review Epic 11 (2026-05-03). Consolide 3 dettes
+> techniques héritées de Stories 9.7 + 11.7 (cf. `epic-11-retrospective-notes.md`).
+> Story file : `_bmad-output/implementation-artifacts/11-7bis-wiring-go-backend-relay-registry-currentip.md`.
+
+As a utilisateur Android Le Voile,
+I want que mon trafic soit RÉELLEMENT chiffré vers les relais européens et que la notification persistante affiche mon IP visible (pas seulement le pays),
+So que la promesse de protection soit effective et que je puisse vérifier d'un coup d'œil que ma connexion sort bien par le pays attendu (FR-AND-1, FR-AND-2).
+
+**Given** un device Android avec `LeVoileVpnService` actif
+**When** l'utilisateur appuie sur « Connecter » avec pays DE sélectionné
+**Then** `LeVoileVpnService.provideRelay()` charge le `relay-registry.json` (cache ConfigStore ou fetch online via shim Go étendu) puis instancie `GoBackedPacketRelay(domainDE, pinnedKeyDE, sink, onStateChanged)`
+**And** le tunnel QUIC/HTTP3 s'établit réellement (vs `NoOpPacketRelay` qui dropait tout)
+**And** le `StatusCallback` enrichi pousse `visibleIp` au callback Kotlin → `currentIp` mis à jour → notification affiche « 🇩🇪 Allemagne · 5.45.6.7 »
+
+**Given** le shim Go `android/shims/registry/` est étendu pour exposer Parse + Verify gomobile-bindable
+**When** l'app démarre et qu'aucun cache registry n'existe
+**Then** un fetch online est déclenché vers le bootstrap relay (hardcoded dans `res/raw/`)
+**And** la signature Ed25519 est vérifiée avec la master pubkey bundled dans l'APK
+**And** le résultat est persisté dans `ConfigStore.registryCache` (placeholder Story 11.8)
+
+**Given** le facade Go `internal/tunnel/gomobile_facade.go` est étendu
+**When** la session passe à l'état `connected`
+**Then** le `StatusCallback` reçoit `visibleIp` (récupéré via Leakcheck STUN ou /verify enrichi côté relais)
+**And** le callback Kotlin met à jour `LeVoileVpnService.currentIp` + `currentCountry`
+**And** la notification est repostée avec le contenu enrichi
+
 ### Story 11.8: Config JSON `getFilesDir()/config.json`
 
 As a utilisateur Android,

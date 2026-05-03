@@ -47,6 +47,15 @@
             </intent-filter>
         </activity>
 
+        <!-- Story 11.5 — OnboardingActivity (3 écrans, lancée si onboarding_completed = false).
+             exported=false : Activity interne, lancée uniquement par MainActivity.startActivity.
+             configChanges : préserve l'écran courant lors d'une rotation. -->
+        <activity
+            android:name=".onboarding.OnboardingActivity"
+            android:exported="false"
+            android:theme="@style/Theme.LeVoile"
+            android:configChanges="orientation|screenSize|smallestScreenSize|keyboardHidden" />
+
         <!-- Story 9.4 : VpnService + Foreground Service "specialUse" subtype "vpn" (Android 14+).
              - android:permission BIND_VPN_SERVICE : seul le système Android peut
                bind ce service (sécurité, architecture.md l. 658).

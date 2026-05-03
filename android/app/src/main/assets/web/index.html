@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Le Voile</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="style-android.css">
+</head>
+<body>
+  <!-- Story 10.2 — Bandeau C17 kill switch persistant. Visible uniquement
+       sous body.platform-android (cf. style.css), masqué via attribut HTML5
+       `hidden` tant que KillSwitchDetector.status n'est pas Active.
+       role="alert" + aria-live="assertive" → TalkBack annonce immédiatement
+       à l'apparition (RGAA AA, ux l. 1339). -->
+  <div
+      id="android-c17-banner"
+      class="android-c17-banner"
+      role="alert"
+      aria-live="assertive"
+      hidden>
+    <span class="android-c17-banner__icon" aria-hidden="true">⚠️</span>
+    <span class="android-c17-banner__text">Kill switch inactif — Activer</span>
+    <span class="android-c17-banner__chevron" aria-hidden="true">›</span>
+  </div>
+
+  <!-- Story 11.3 — AppBar C13 (visible uniquement Android via body.platform-android) -->
+  <header class="android-only android-appbar" role="banner">
+    <button
+        type="button"
+        class="android-appbar__burger"
+        aria-label="Menu"
+        aria-controls="android-drawer"
+        aria-expanded="false">☰</button>
+    <h1 class="android-appbar__title">LE VOILE</h1>
+    <button
+        type="button"
+        class="android-appbar__bell"
+        aria-label="Notifications">ⓘ</button>
+    <button
+        type="button"
+        class="android-appbar__overflow"
+        aria-label="Plus d'options"
+        aria-haspopup="menu"
+        aria-expanded="false">⋮</button>
+  </header>
+
+  <!-- Story 11.3 — Drawer latéral (slide-in depuis la gauche) -->
+  <nav
+      class="android-only android-drawer"
+      id="android-drawer"
+      role="navigation"
+      aria-label="Menu principal"
+      aria-hidden="true">
+    <button
+        type="button"
+        class="android-drawer__close"
+        aria-label="Fermer le menu">×</button>
+    <ul class="android-drawer__list">
+      <li><a href="#settings" class="android-drawer__link">Paramètres</a></li>
+      <li><a href="#about" class="android-drawer__link">À propos</a></li>
+      <li><a href="#legal" class="android-drawer__link">Mentions légales</a></li>
+      <li><a
+            href="#"
+            class="android-drawer__link"
+            id="android-drawer-link-system-settings">Paramètres système Android</a></li>
+    </ul>
+  </nav>
+  <div
+      class="android-only android-drawer-backdrop"
+      id="android-drawer-backdrop"
+      hidden
+      aria-hidden="true"></div>
+
+  <main>
+    <h1>Le Voile · <span id="status-text">Démarrage…</span></h1>
+    <p>Statut : <span id="status-dot">…</span></p>
+    <p class="ip-line">IP visible : <span id="status-ip">—</span></p>
+
+    <!-- Story 11.4 — Pill ouverture C14 (visible uniquement Android) -->
+    <button
+        type="button"
+        class="android-only android-country-pill"
+        id="android-country-pill"
+        aria-label="Changer de pays"
+        aria-haspopup="dialog"
+        aria-expanded="false">
+      <span class="android-country-pill__flag" aria-hidden="true">🇩🇪</span>
+      <span class="android-country-pill__label">CHANGER DE PAYS</span>
+      <span class="android-country-pill__chevron" aria-hidden="true">▼</span>
+    </button>
+
+    <!-- Bouton Connect/Disconnect Android (Story 11.2 le câble) -->
+    <button
+        type="button"
+        class="android-only android-action-btn"
+        id="android-btn-connect">CONNECTER</button>
+  </main>
+
+  <!-- Story 11.4 — Bottom-sheet Country Selector (visible uniquement Android) -->
+  <aside
+      class="android-only android-bottomsheet"
+      id="android-country-sheet"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="android-country-sheet-title"
+      aria-hidden="true">
+    <div class="android-bottomsheet__handle" aria-hidden="true"></div>
+    <h2
+        class="android-bottomsheet__title"
+        id="android-country-sheet-title">PAYS</h2>
+    <ul class="android-bottomsheet__list" role="listbox">
+      <li
+          class="android-bottomsheet__item"
+          role="option"
+          data-iso="DE"
+          tabindex="0">
+        <span class="android-bottomsheet__flag" aria-hidden="true">🇩🇪</span>
+        <span class="android-bottomsheet__country">Allemagne</span>
+        <span class="android-bottomsheet__star" aria-hidden="true"></span>
+        <span class="android-bottomsheet__check" aria-hidden="true">✓</span>
+      </li>
+      <li
+          class="android-bottomsheet__item"
+          role="option"
+          data-iso="ES"
+          tabindex="0">
+        <span class="android-bottomsheet__flag" aria-hidden="true">🇪🇸</span>
+        <span class="android-bottomsheet__country">Espagne</span>
+        <span class="android-bottomsheet__star" aria-hidden="true"></span>
+        <span class="android-bottomsheet__check" aria-hidden="true">✓</span>
+      </li>
+      <li
+          class="android-bottomsheet__item"
+          role="option"
+          data-iso="GB"
+          tabindex="0">
+        <span class="android-bottomsheet__flag" aria-hidden="true">🇬🇧</span>
+        <span class="android-bottomsheet__country">Royaume-Uni</span>
+        <span class="android-bottomsheet__star" aria-hidden="true"></span>
+        <span class="android-bottomsheet__check" aria-hidden="true">✓</span>
+      </li>
+      <li
+          class="android-bottomsheet__item"
+          role="option"
+          data-iso="US"
+          tabindex="0">
+        <span class="android-bottomsheet__flag" aria-hidden="true">🇺🇸</span>
+        <span class="android-bottomsheet__country">États-Unis</span>
+        <span class="android-bottomsheet__star" aria-hidden="true"></span>
+        <span class="android-bottomsheet__check" aria-hidden="true">✓</span>
+      </li>
+    </ul>
+  </aside>
+  <div
+      class="android-only android-bottomsheet-backdrop"
+      id="android-country-sheet-backdrop"
+      hidden
+      aria-hidden="true"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>

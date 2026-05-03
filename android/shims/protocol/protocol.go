@@ -50,9 +50,15 @@ type PacketCallback interface {
 // StatusCallback est l'interface implementee cote Kotlin pour observer les
 // transitions d'etat de la session : "connecting", "connected",
 // "disconnected", "error". Le second argument transporte un message
-// optionnel (ex. message d'erreur Go converti en string par .Error()).
+// optionnel (ex. message d'erreur Go redacte canonique).
+//
+// Story 11.7-bis : 2 nouveaux parametres `visibleIP` (IP du relais resolue
+// via DNS au moment de `connected`) et `effectiveCountry` (code ISO 3166-1
+// alpha-2 majuscules, extrait du domaine relais). Vides ("") pour les autres
+// transitions (connecting/disconnected/error). Permet a Kotlin
+// d'enrichir la notification persistante avec « 🇩🇪 Allemagne · 5.45.6.7 ».
 type StatusCallback interface {
-	OnStateChange(state string, message string)
+	OnStateChange(state, message, visibleIP, effectiveCountry string)
 }
 
 // SetPacketCallback enregistre le handler de paquets IP entrants. Doit etre
@@ -72,6 +78,11 @@ func SetPacketCallback(cb PacketCallback) {
 
 // SetStatusCallback enregistre le handler de transitions d'etat.
 // Passer nil pour desenregistrer.
+//
+// Story 11.7-bis : la signature gomobile facade transporte 4 strings
+// (state, message, visibleIP, effectiveCountry) — visibleIP et
+// effectiveCountry sont remplis uniquement lors de la transition
+// `connected`, vides pour les autres etats.
 func SetStatusCallback(cb StatusCallback) {
 	if cb == nil {
 		tunnel.SetGomobileStatusCallback(nil)

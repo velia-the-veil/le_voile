@@ -313,30 +313,31 @@ class MainActivityConfigTest {
 
     @Test
     fun `Assets folder contains index_html style_css and app_js committed`() {
-        // AC #5 — les 3 fichiers placeholder DOIVENT être committés (pas
-        // synchronisés depuis frontend/ racine). Story 11.1 livrera le sync.
+        // Story 11.1 — les fichiers ont été déplacés dans le sous-dossier web/
+        // (séparation assets sync vs natifs). MainActivity.ASSET_INDEX_URL
+        // pointe désormais vers /assets/web/index.html.
         val candidates = listOf(
-            File("src/main/assets"),
-            File("app/src/main/assets"),
-            File("../app/src/main/assets")
+            File("src/main/assets/web"),
+            File("app/src/main/assets/web"),
+            File("../app/src/main/assets/web")
         )
-        val assetsDir = candidates.firstOrNull { it.isDirectory }
+        val webDir = candidates.firstOrNull { it.isDirectory }
             ?: throw AssertionError(
-                "Dossier assets/ introuvable. " +
+                "Dossier assets/web/ introuvable. " +
                     "user.dir=${System.getProperty("user.dir")} ; " +
                     "candidates testés : ${candidates.joinToString { it.absolutePath }}"
             )
         assertTrue(
-            "assets/index.html doit exister",
-            File(assetsDir, "index.html").exists()
+            "assets/web/index.html doit exister",
+            File(webDir, "index.html").exists()
         )
         assertTrue(
-            "assets/style.css doit exister",
-            File(assetsDir, "style.css").exists()
+            "assets/web/style.css doit exister",
+            File(webDir, "style.css").exists()
         )
         assertTrue(
-            "assets/app.js doit exister",
-            File(assetsDir, "app.js").exists()
+            "assets/web/app.js doit exister",
+            File(webDir, "app.js").exists()
         )
     }
 
@@ -377,13 +378,12 @@ class MainActivityConfigTest {
     }
 
     private fun resolveAsset(name: String): File {
-        // Helper M-5 (code-review 9.3) : résout un fichier sous app/src/main/assets/
-        // en cherchant dans les candidats classiques (cwd Gradle peut être :app ou root
-        // selon la configuration). Cohérent avec `parseManifest`/`Assets folder contains`.
+        // Helper M-5 (code-review 9.3) : résout un fichier sous app/src/main/assets/web/.
+        // Story 11.1 a déplacé les assets dans le sous-dossier web/.
         val candidates = listOf(
-            File("src/main/assets/$name"),
-            File("app/src/main/assets/$name"),
-            File("../app/src/main/assets/$name")
+            File("src/main/assets/web/$name"),
+            File("app/src/main/assets/web/$name"),
+            File("../app/src/main/assets/web/$name")
         )
         return candidates.firstOrNull { it.exists() }
             ?: throw AssertionError(

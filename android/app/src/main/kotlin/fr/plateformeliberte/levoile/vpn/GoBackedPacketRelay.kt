@@ -6,6 +6,7 @@ import fr.plateformeliberte.levoile.bridge.GoCoreAdapter
 import fr.plateformeliberte.levoile.bridge.LeVoileCoreException
 import fr.plateformeliberte.levoile.bridge.PacketCallback
 import fr.plateformeliberte.levoile.bridge.StatusCallback
+import fr.plateformeliberte.levoile.ui.VpnState
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -71,6 +72,30 @@ class GoBackedPacketRelay(
      * max in-flight (MTU 1420). Drop silencieux au-delà.
      */
     private val outboundCapacity: Int = 256,
+    /**
+     * Code-review post-Epic 11 (M4) + Story 11.7-bis : callback de transition
+     * d'état tunnel enrichi. Reçoit aussi l'IP visible et le pays effectif
+     * extraits du callback Go au moment de `connected`.
+     *
+     * Invoqué à chaque `StatusCallback` Go → Kotlin :
+     *  - `state` : [VpnState] mappé depuis le string Go via [goStateToVpnState]
+     *  - `visibleIp` : IP du relais résolue via DNS (vide pour autres états que
+     *    CONNECTED, ou si DNS lookup a échoué — caller fallback "—")
+     *  - `effectiveCountry` : code ISO 3166-1 alpha-2 (« DE », « ES ») extrait
+     *    du domaine relais (vide pour autres états que CONNECTED)
+     *
+     * Le caller (typiquement [LeVoileVpnService]) passera
+     * `{ state, ip, country -> notificationHelper.notify(state, country ?: currentCountry, ip ?: currentIp, currentKillStatus) }`.
+     *
+     * Reste null par défaut pour ne pas casser les tests existants. Quand
+     * `LeVoileVpnService` bascule de `NoOpPacketRelay` vers
+     * `GoBackedPacketRelay`, ce callback sera fourni.
+     *
+     * Invoqué depuis le thread JVM gomobile — le caller ne doit PAS appeler
+     * de méthode mutatrice du `GoCoreAdapter` ici (cf. avertissement
+     * réentrance). Pour `notificationHelper.notify` c'est OK (pas de réentrance).
+     */
+    private val onStateChanged: ((state: VpnState, visibleIp: String?, effectiveCountry: String?) -> Unit)? = null,
 ) : PacketRelay {
 
     private val running = AtomicBoolean(false)
@@ -118,12 +143,31 @@ class GoBackedPacketRelay(
      * `message` arrive déjà redacté par la facade Go (cf. fix H-1
      * `redactErrorForStatus` — classes canoniques type "pinning_failed"
      * plutôt que message brut avec URL/IP).
+     *
+     * Story 11.7-bis : `visibleIp` et `effectiveCountry` sont remplis
+     * uniquement pour `state == "connected"`, vides pour autres transitions.
+     * Forward au caller via `onStateChanged(state, visibleIp, effectiveCountry)`
+     * pour permettre `notificationHelper.notify(state, country, ip, killStatus)`
+     * côté Service avec données fraîches.
      */
-    private val statusCallback = StatusCallback { state, message ->
+    private val statusCallback = StatusCallback { state, message, visibleIp, effectiveCountry ->
         Log.i(TAG, "tunnel state: $state${if (message.isNotEmpty()) " — $message" else ""}")
-        // TODO Story 9.5/9.6 : forwarder à NotificationHelper / lifecycle
-        //                      du Service pour màj titre « Le Voile · {État} ».
+        val vpnState = mapGoStateToVpnState(state)
+        try {
+            onStateChanged?.invoke(
+                vpnState,
+                visibleIp.takeIf { it.isNotEmpty() },
+                effectiveCountry.takeIf { it.isNotEmpty() },
+            )
+        } catch (t: Throwable) {
+            // Anti-réentrance : le callback ne doit JAMAIS lever d'exception
+            // qui remonterait dans la goroutine pump (M-8 GoCoreAdapter).
+            Log.w(TAG, "onStateChanged callback error (ignored): ${t.javaClass.simpleName}")
+        }
     }
+
+    private fun mapGoStateToVpnState(goState: String): VpnState =
+        goStateToVpnState(goState)
 
     /**
      * Job de la coroutine de connect — permet d'attendre la complétion
@@ -286,4 +330,23 @@ class GoBackedPacketRelay(
     companion object {
         private const val TAG = "GoBackedPacketRelay"
     }
+}
+
+/**
+ * Code-review post-Epic 11 (M4) : mapping String → VpnState exposé `internal`
+ * pour testabilité JVM-only. États Go canoniques émis par
+ * `internal/tunnel/gomobile_facade.go.emitStatus` :
+ *  - `"connecting"` → [VpnState.RECONNECTING] (handshake QUIC + /verify)
+ *  - `"connected"`  → [VpnState.CONNECTED]
+ *  - `"disconnected"` → [VpnState.DISCONNECTED]
+ *  - `"error"`     → [VpnState.ERROR]
+ *
+ * Tout autre state → DISCONNECTED par défense (fail-safe).
+ */
+internal fun goStateToVpnState(goState: String): VpnState = when (goState) {
+    "connected" -> VpnState.CONNECTED
+    "connecting" -> VpnState.RECONNECTING
+    "error" -> VpnState.ERROR
+    "disconnected" -> VpnState.DISCONNECTED
+    else -> VpnState.DISCONNECTED
 }

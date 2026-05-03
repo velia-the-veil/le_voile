@@ -1,0 +1,357 @@
+/* Story 11.1 — Overrides Android sous body.platform-android.
+ *
+ * Le style.css desktop (Story 9.3) reste single source of truth Android-natif
+ * (cas Option 2 documentée Story 11.1 — pas de sync depuis windows/frontend/).
+ * Ce fichier ajoute les styles Android-only pour les composants C13-C17.
+ *
+ * Cohérent ux-design-specification.md l. 1255-1357 + epics.md l. 1812-1837.
+ */
+
+/* === Désactivation des composants desktop interdits mobile (cf. ux l. 1353) === */
+body.platform-android .desktop-only,
+body.platform-android .titlebar,
+body.platform-android .sidebar,
+body.platform-android .sidebar .country-item,
+body.platform-android .star-favorite,
+body.platform-android .quit-modal {
+  display: none !important;
+}
+
+/* === Activation des éléments .android-only (Story 11.3+) === */
+.android-only {
+  display: none;
+}
+body.platform-android .android-only {
+  display: revert;
+}
+
+/* === Layout vertical pleine largeur (téléphone portrait < 600dp) === */
+@media (max-width: 600px) {
+  body.platform-android {
+    display: block !important;
+    text-align: left;
+    overflow-y: auto;
+  }
+  body.platform-android main {
+    padding: 16px;
+    width: 100%;
+    max-width: 100%;
+  }
+}
+
+/* === Cibles tactiles minimum 48dp (Material guidelines, RGAA AA) === */
+body.platform-android button,
+body.platform-android a.button,
+body.platform-android [role="button"],
+body.platform-android input[type="button"],
+body.platform-android input[type="submit"] {
+  min-height: 48px;
+  min-width: 48px;
+  padding: 12px 24px;
+}
+
+/* === Pas de hover effects (no hover sur tactile, RGAA) === */
+@media (hover: none) {
+  body.platform-android *:hover {
+    background-color: inherit;
+    color: inherit;
+    transform: none;
+  }
+}
+
+/* === Réservation espace pour AppBar (Story 11.3) === */
+body.platform-android.has-android-appbar main {
+  padding-top: 56px;
+}
+body.platform-android.has-c17-banner.has-android-appbar main {
+  padding-top: 96px;  /* 40 (C17) + 56 (AppBar) */
+}
+
+/* ==============================================================
+   Story 11.3 — Composant C13 AppBar Material 56dp
+   ============================================================== */
+
+/* AppBar 56dp standard Material */
+body.platform-android .android-appbar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 56px;
+  padding: 0 4px;
+  background-color: #0b1526;
+  color: #ffffff;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  z-index: 100;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+}
+
+/* Si bandeau C17 visible, descendre AppBar de 40dp */
+body.platform-android.has-c17-banner .android-appbar {
+  top: 40px;
+}
+
+/* Boutons AppBar : 48dp tappables */
+body.platform-android .android-appbar__burger,
+body.platform-android .android-appbar__bell,
+body.platform-android .android-appbar__overflow {
+  width: 48px;
+  height: 48px;
+  min-width: 48px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: #ffffff;
+  font-size: 24px;
+  line-height: 48px;
+  cursor: pointer;
+  border-radius: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+body.platform-android .android-appbar__burger:active,
+body.platform-android .android-appbar__bell:active,
+body.platform-android .android-appbar__overflow:active {
+  background-color: rgba(255, 255, 255, 0.12);
+}
+
+/* Titre centré */
+body.platform-android .android-appbar__title {
+  flex: 1;
+  text-align: center;
+  font-family: 'Bebas Neue', system-ui, sans-serif;
+  font-size: 20px;
+  letter-spacing: 0.05em;
+  color: #ffffff;
+  margin: 0;
+  padding: 0;
+  font-weight: normal;
+}
+
+/* === Drawer latéral (slide-in 250ms ease-out depuis la gauche) === */
+body.platform-android .android-drawer {
+  position: fixed;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  width: 280px;
+  max-width: 80vw;
+  background-color: #0e1e38;
+  color: #f0f4ff;
+  z-index: 200;
+  transform: translateX(-100%);
+  transition: transform 250ms ease-out;
+  overflow-y: auto;
+  padding: 16px 0;
+}
+body.platform-android .android-drawer[aria-hidden="false"] {
+  transform: translateX(0);
+}
+body.platform-android .android-drawer__close {
+  width: 48px;
+  height: 48px;
+  border: none;
+  background: transparent;
+  color: #ffffff;
+  font-size: 24px;
+  cursor: pointer;
+  margin: 0 8px 8px 8px;
+}
+body.platform-android .android-drawer__list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+body.platform-android .android-drawer__link {
+  display: block;
+  min-height: 48px;
+  padding: 12px 16px;
+  color: #f0f4ff;
+  text-decoration: none;
+  font-family: 'Inter', system-ui, sans-serif;
+  font-size: 16px;
+  line-height: 1.5;
+}
+body.platform-android .android-drawer__link:active {
+  background-color: rgba(255, 255, 255, 0.08);
+}
+
+body.platform-android .android-drawer-backdrop {
+  position: fixed;
+  inset: 0;
+  background-color: rgba(0, 0, 0, 0.4);
+  z-index: 150;
+  opacity: 0;
+  transition: opacity 250ms ease-out;
+}
+body.platform-android .android-drawer-backdrop:not([hidden]) {
+  opacity: 1;
+}
+
+/* ==============================================================
+   Story 11.4 — Composant C14 Country Selector Bottom-Sheet
+   ============================================================== */
+
+/* Pill "CHANGER DE PAYS" */
+body.platform-android .android-country-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 48px;
+  padding: 12px 20px;
+  margin-top: 24px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 24px;
+  background-color: rgba(26, 111, 196, 0.15);
+  color: #f0f4ff;
+  font-family: 'Rajdhani', system-ui, sans-serif;
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  cursor: pointer;
+}
+body.platform-android .android-country-pill:active {
+  background-color: rgba(26, 111, 196, 0.3);
+}
+body.platform-android .android-country-pill__flag {
+  font-size: 24px;
+  line-height: 1;
+}
+
+/* Bouton primaire (CONNECTER) */
+body.platform-android .android-action-btn {
+  display: block;
+  margin: 16px 0;
+  padding: 12px 24px;
+  width: 100%;
+  border: none;
+  border-radius: 8px;
+  background-color: #1a6fc4;
+  color: #f0f4ff;
+  font-family: 'Rajdhani', system-ui, sans-serif;
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  cursor: pointer;
+}
+body.platform-android .android-action-btn:active {
+  background-color: #2a8dff;
+}
+body.platform-android .android-action-btn[data-state="connected"] {
+  background-color: #d42b2b;
+}
+
+/* Bottom-sheet container */
+body.platform-android .android-bottomsheet {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 60vh;
+  max-height: 60vh;
+  background-color: #0e1e38;
+  color: #f0f4ff;
+  border-radius: 16px 16px 0 0;
+  z-index: 250;
+  transform: translateY(100%);
+  transition: transform 250ms ease-out;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+body.platform-android .android-bottomsheet[aria-hidden="false"] {
+  transform: translateY(0);
+}
+body.platform-android .android-bottomsheet[data-closing="true"] {
+  transition: transform 200ms ease-in;
+  transform: translateY(100%);
+}
+
+body.platform-android .android-bottomsheet__handle {
+  width: 40px;
+  height: 4px;
+  background-color: rgba(255, 255, 255, 0.3);
+  border-radius: 2px;
+  margin: 12px auto 8px;
+  flex-shrink: 0;
+}
+
+body.platform-android .android-bottomsheet__title {
+  margin: 0;
+  padding: 8px 24px 16px;
+  font-family: 'Bebas Neue', system-ui, sans-serif;
+  font-size: 24px;
+  letter-spacing: 0.05em;
+  color: #ffffff;
+  text-align: center;
+}
+
+body.platform-android .android-bottomsheet__list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  overflow-y: auto;
+  flex: 1;
+}
+body.platform-android .android-bottomsheet__item {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  min-height: 56px;
+  padding: 8px 24px;
+  cursor: pointer;
+}
+body.platform-android .android-bottomsheet__item:active {
+  background-color: rgba(255, 255, 255, 0.08);
+}
+body.platform-android .android-bottomsheet__item:focus-visible {
+  outline: 2px solid #2a8dff;
+  outline-offset: -2px;
+}
+body.platform-android .android-bottomsheet__flag {
+  font-size: 32px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+body.platform-android .android-bottomsheet__country {
+  flex: 1;
+  font-family: 'Inter', system-ui, sans-serif;
+  font-size: 16px;
+}
+body.platform-android .android-bottomsheet__star {
+  font-size: 20px;
+  color: #f0c419;
+  opacity: 0;
+}
+body.platform-android .android-bottomsheet__item[data-favorite="true"] .android-bottomsheet__star {
+  opacity: 1;
+}
+body.platform-android .android-bottomsheet__star::before {
+  content: "\2605";  /* étoile pleine */
+}
+body.platform-android .android-bottomsheet__check {
+  font-size: 24px;
+  color: #4ade80;
+  opacity: 0;
+}
+body.platform-android .android-bottomsheet__item[aria-selected="true"] .android-bottomsheet__check {
+  opacity: 1;
+}
+body.platform-android .android-bottomsheet__item[aria-selected="true"] {
+  background-color: rgba(74, 222, 128, 0.05);
+}
+
+body.platform-android .android-bottomsheet-backdrop {
+  position: fixed;
+  inset: 0;
+  background-color: rgba(0, 0, 0, 0.5);
+  z-index: 240;
+  opacity: 0;
+  transition: opacity 250ms ease-out;
+}
+body.platform-android .android-bottomsheet-backdrop:not([hidden]) {
+  opacity: 1;
+}

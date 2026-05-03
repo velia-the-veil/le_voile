@@ -1,0 +1,10 @@
+# Story 11.1 — Décision dev Option 2 (cf. Completion Notes 11.1) : pas de sync
+# depuis windows/frontend/. Les fichiers sous web/ sont versionnés (assets
+# Android-natifs, cohérent ADR-08 isolation OS + memory feedback_os_isolation).
+#
+# Ce .gitignore reste vide intentionnellement. Si une story future réintroduit
+# un sync (ADR-16 « source frontend canonique » à créer), décommenter la
+# règle ci-dessous et créer `web/.gitkeep` (placeholder) lors du switch.
+#
+# web/*
+# !web/style-android.css

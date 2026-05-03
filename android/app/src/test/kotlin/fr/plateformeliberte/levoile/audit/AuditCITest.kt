@@ -75,6 +75,52 @@ class AuditCITest {
         }
     }
 
+    /**
+     * Code-review post-Epic 11 (M5) : Story 11.8 a introduit
+     * `testImplementation(libs.org.json)` (Maven org.json:json:20240303) pour
+     * permettre les tests JVM-only de ConfigStore. La règle de l'ADR-08 +
+     * NFR-AND-3 exige que cette dépendance reste **scope test only**, donc :
+     *  - la déclaration doit être `testImplementation(libs.org.json)` ou
+     *    `testImplementation("org.json:json:...")`.
+     *  - PAS de `implementation(libs.org.json)` (qui ferait fuiter dans l'APK).
+     *  - PAS de `androidTestImplementation` non plus (cohérent NFR-AND-3 :
+     *    pas de bloat test instrumenté).
+     *
+     * Ce test fail explicitement si une PR future bascule la dépendance hors
+     * scope test ou crée un usage `runtime` accidentel.
+     */
+    @Test
+    fun `org json reste scope testImplementation only NFR-AND-3`() {
+        val appBuildGradle = resolveAppBuildGradle()
+        val content = appBuildGradle.readText()
+        assertTrue(
+            "app/build.gradle.kts doit declarer testImplementation(libs.org.json) — Story 11.8 ConfigStore",
+            content.contains("testImplementation(libs.org.json)"),
+        )
+        // Anti-fuite : refuser implementation(libs.org.json) ou api(libs.org.json).
+        assertTrue(
+            "app/build.gradle.kts NE DOIT PAS contenir implementation(libs.org.json) — " +
+                "violation ADR-08 + NFR-AND-3 (la stub Android.jar suffit en runtime).",
+            !content.contains("\n    implementation(libs.org.json)") &&
+                !content.contains("\n    api(libs.org.json)"),
+        )
+    }
+
+    private fun resolveAppBuildGradle(): File {
+        val candidates = listOf(
+            File("build.gradle.kts"),                      // cwd = android/app/
+            File("app/build.gradle.kts"),                   // cwd = android/
+            File("android/app/build.gradle.kts"),           // cwd = repo root
+        )
+        // Filtre : on veut le module :app — détectable via `applicationId` qui
+        // n'apparaît jamais dans un module library ou top-level.
+        return candidates.firstOrNull { it.exists() && it.readText().contains("applicationId") }
+            ?: throw AssertionError(
+                "android/app/build.gradle.kts introuvable. " +
+                    "user.dir=${System.getProperty("user.dir")}",
+            )
+    }
+
     @Test
     fun `auditTelemetryDependencies est branchee sur la lifecycle task check`() {
         // Garde-fou : le hook `afterEvaluate { tasks.findByName("check")?.dependsOn(...) }`

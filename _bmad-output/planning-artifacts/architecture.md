@@ -2441,6 +2441,20 @@ La frontière contractuelle reste **étroite** (5 shims, types primitifs uniquem
 - Justification : un crash reporter externe contredit la promesse zéro-log et zéro-tracking. Même un Sentry self-hosted introduit une surface (qui héberge ? quelle juridiction ? etc.). Cohérent avec posture confidentialité du projet
 - Conséquence : perte de visibilité sur les crashes en production. Mitigation : tests instrumentés robustes pré-release + bug reports utilisateur volontaires + canal F-Droid issues GitHub. Acceptable car l'engagement zéro-log prime sur le monitoring
 
+**ADR-16: Assets web Android = sources Android-natives versionnées** (vs sync depuis `windows/frontend/`)
+- Date : 2026-05-03 — formalisation post-implémentation Story 11.1 (Option 2)
+- Décision : les fichiers `android/app/src/main/assets/web/{index.html, style.css, app.js, style-android.css}` sont **versionnés directement** dans le repo comme assets Android-natifs. Le script `android/scripts/sync-frontend.sh` ne synchronize PAS depuis `windows/frontend/` — il sert d'**idempotency check** (vérifie présence des fichiers requis pour préparer Story 12.2 CI Android). Le `.gitignore` `assets/.gitignore` reste vide commenté (anti-régression au cas où une story future réintroduirait un sync)
+- Justification :
+  1. Le frontend `windows/frontend/` est lourdement Windows-spécifique : `.titlebar` custom (C1), sidebar pays (C2/C3), serveur HTTP local `/api/*`, modal `quit-modal` (C8) — la majorité du markup est inutilisable Android
+  2. Story 10.2 (bandeau C17) a été livrée DIRECTEMENT dans les assets Android (`assets/index.html` + `style.css` + `app.js`) — un sync depuis `windows/frontend/` aurait écrasé/cassé ce composant
+  3. Cohérent ADR-08 (isolation OS maximale) + memory `feedback_os_isolation` : « duplication code Win/Linux/Android préférée à abstraction partagée »
+  4. La duplication de markup entre `windows/frontend/` et `android/app/src/main/assets/web/` est faible (composants partagés visuellement = `style.css` palette + typo, mais markup divergent : Android = AppBar 56dp + bottom-sheet, desktop = titlebar + sidebar). La maintenance double est acceptable vs. une abstraction de templating qui serait sur-conçue pour 4 fichiers
+- Conséquence :
+  - Le AC #1 et AC #2 originaux Story 11.1 (script qui copie + sed find/replace + `.gitignore` actif `web/*`) sont OBSOLÈTES — voir révision Story 11.1 post-implémentation
+  - Toute évolution UI Android passe par éditer directement `android/app/src/main/assets/web/*` (pas via `windows/frontend/`)
+  - Aucun ADR cross-OS n'impose la duplication des composants visuels — chaque OS reste libre de son markup tant que la palette CSS commune (couleurs, typo) reste cohérente
+- Surface impactée : Story 11.1 (script + `.gitignore`), toutes les stories 11.3/11.4/11.6/11.7 qui ont enrichi les assets Android directement
+
 ## Epic-Boundary Records (EBR)
 
 Mini-décisions formalisant les frontières inter-epics établies lors du découpage Phase 2 Android (élicitation comparative 2026-05-02). Documentent comment des fonctionnalités initialement contiguës ont été splittées entre epics pour préserver l'indépendance de livraison de chaque epic. Référencés dans `epics.md` §FR Coverage Map et §Epic List Phase 2.

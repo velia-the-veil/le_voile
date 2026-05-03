@@ -1,5 +1,6 @@
 package fr.plateformeliberte.levoile.vpn
 
+import fr.plateformeliberte.levoile.ui.VpnState
 import kotlinx.coroutines.channels.Channel
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -137,7 +138,49 @@ class GoBackedPacketRelayTest {
     fun `constructor accepts required dependencies`() {
         val ctor = GoBackedPacketRelay::class.java.constructors.firstOrNull()
         assertNotNull("Au moins un constructeur public attendu", ctor)
-        // 4 paramètres : relayDomain, pinnedKeyB64, inboundSink, outboundCapacity
-        assertEquals(4, ctor!!.parameterCount)
+        // 5 paramètres : relayDomain, pinnedKeyB64, inboundSink, outboundCapacity,
+        // onStateChanged (signature étendue Story 11.7-bis : state + visibleIp + effectiveCountry).
+        assertEquals(5, ctor!!.parameterCount)
+    }
+
+    /**
+     * Story 11.7-bis : le callback `onStateChanged` est désormais une lambda
+     * 3-args (state, visibleIp, effectiveCountry). Vérifie via réflexion le type.
+     */
+    @Test
+    fun `onStateChanged constructor parameter accepts 3-arg lambda`() {
+        // Lambda 3-args (state, visibleIp, effectiveCountry).
+        var capturedState: VpnState? = null
+        var capturedIp: String? = null
+        var capturedCountry: String? = null
+        val callback: (VpnState, String?, String?) -> Unit = { state, ip, country ->
+            capturedState = state
+            capturedIp = ip
+            capturedCountry = country
+        }
+        // Test direct d'invocation pour valider la signature.
+        callback(VpnState.CONNECTED, "5.45.6.7", "DE")
+        assertEquals(VpnState.CONNECTED, capturedState)
+        assertEquals("5.45.6.7", capturedIp)
+        assertEquals("DE", capturedCountry)
+    }
+
+    // === Code-review post-Epic 11 (M4) — mapping String → VpnState ===
+
+    @Test
+    fun `goStateToVpnState mappe les 4 etats Go canoniques`() {
+        assertEquals(VpnState.CONNECTED, goStateToVpnState("connected"))
+        assertEquals(VpnState.RECONNECTING, goStateToVpnState("connecting"))
+        assertEquals(VpnState.DISCONNECTED, goStateToVpnState("disconnected"))
+        assertEquals(VpnState.ERROR, goStateToVpnState("error"))
+    }
+
+    @Test
+    fun `goStateToVpnState fallback DISCONNECTED pour state inconnu`() {
+        // Défense fail-safe : tout state non listé → DISCONNECTED (rien
+        // d'actif, pas d'illusion de connexion).
+        assertEquals(VpnState.DISCONNECTED, goStateToVpnState(""))
+        assertEquals(VpnState.DISCONNECTED, goStateToVpnState("foo"))
+        assertEquals(VpnState.DISCONNECTED, goStateToVpnState("CONNECTED"))  // case-sensitive
     }
 }

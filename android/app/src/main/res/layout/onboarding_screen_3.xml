@@ -1,0 +1,126 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Story 11.5 + 11.6 — Écran 3 composant C15 complet (warning + skip link).
+     Cohérent ux-design-specification.md l. 1285-1303 + epics.md l. 1956-1979. -->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:orientation="vertical"
+        android:gravity="center"
+        android:padding="32dp">
+
+        <ImageView
+            android:layout_width="64dp"
+            android:layout_height="64dp"
+            android:src="@drawable/ic_warning_orange"
+            android:contentDescription="@string/c15_warning_icon_desc"
+            android:layout_marginBottom="24dp" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/c15_title"
+            android:textSize="28sp"
+            android:textColor="@color/text_primary"
+            android:fontFamily="sans-serif-condensed"
+            android:layout_marginBottom="16dp" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:maxWidth="320dp"
+            android:text="@string/c15_body"
+            android:textSize="16sp"
+            android:textColor="@color/text_primary"
+            android:gravity="center"
+            android:layout_marginBottom="12dp" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:maxWidth="320dp"
+            android:text="@string/c15_consequence"
+            android:textSize="14sp"
+            android:textColor="@color/text_secondary"
+            android:alpha="0.7"
+            android:gravity="center"
+            android:layout_marginBottom="48dp" />
+
+        <Button
+            android:id="@+id/onboarding_btn_open_settings"
+            android:layout_width="match_parent"
+            android:layout_height="48dp"
+            android:text="@string/c15_btn_open_settings"
+            android:backgroundTint="@color/primary_blue"
+            android:textColor="@color/text_primary"
+            android:textSize="16sp"
+            android:textAllCaps="true"
+            android:layout_marginBottom="24dp" />
+
+        <TextView
+            android:id="@+id/onboarding_link_skip"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/c15_link_skip"
+            android:textSize="13sp"
+            android:textColor="@color/text_secondary"
+            android:alpha="0.5"
+            android:padding="12dp"
+            android:clickable="true"
+            android:focusable="true"
+            android:contentDescription="@string/c15_link_skip_desc" />
+
+        <LinearLayout
+            android:id="@+id/onboarding_fallback_actions"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:visibility="gone"
+            android:layout_marginTop="16dp">
+
+            <Button
+                android:id="@+id/onboarding_btn_retry"
+                android:layout_width="match_parent"
+                android:layout_height="48dp"
+                android:text="@string/c15_btn_retry"
+                android:backgroundTint="@color/primary_blue"
+                android:textColor="@color/text_primary"
+                android:layout_marginBottom="8dp" />
+
+            <Button
+                android:id="@+id/onboarding_btn_manual_verified"
+                android:layout_width="match_parent"
+                android:layout_height="48dp"
+                android:text="@string/c15_btn_manual_verified"
+                android:backgroundTint="@android:color/transparent"
+                android:textColor="@color/text_secondary" />
+        </LinearLayout>
+    </LinearLayout>
+
+    <!-- Overlay vérification (caché initialement, visible 1s au retour Settings) -->
+    <LinearLayout
+        android:id="@+id/onboarding_verifying_overlay"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:orientation="vertical"
+        android:gravity="center"
+        android:background="@color/bg_dark"
+        android:visibility="gone">
+
+        <ProgressBar
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:indeterminateTint="@color/primary_blue"
+            android:layout_marginBottom="16dp" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/c15_verifying"
+            android:textSize="16sp"
+            android:textColor="@color/text_primary" />
+    </LinearLayout>
+</FrameLayout>

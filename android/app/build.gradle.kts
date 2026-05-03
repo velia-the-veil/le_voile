@@ -135,6 +135,11 @@ dependencies {
     // MockContext de android.jar throw "Stub!" au constructor — Mockito est
     // la voie standard Android pour ce cas.
     testImplementation(libs.mockito.core)
+    // Story 11.8 : org.json:json pour fournir l'implémentation réelle de
+    // JSONObject côté tests JVM (le stub android.jar retourne null/0).
+    // Cohérent ConfigStoreTest + ConfigMigrationTest. Test scope only —
+    // n'entre pas dans l'APK release (Android utilise sa propre org.json).
+    testImplementation(libs.org.json)
 
     // Tests instrumentés — alignés avec testInstrumentationRunner ci-dessus.
     // Permet à connectedAndroidTest de s'exécuter dès la première story qui livrera

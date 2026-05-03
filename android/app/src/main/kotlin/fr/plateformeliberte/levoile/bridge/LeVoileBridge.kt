@@ -3,36 +3,35 @@ package fr.plateformeliberte.levoile.bridge
 import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import android.provider.Settings
 import android.webkit.JavascriptInterface
 import android.widget.Toast
+import fr.plateformeliberte.levoile.MainActivity
 import fr.plateformeliberte.levoile.R
 import fr.plateformeliberte.levoile.conflict.VpnConflictDetector
 import fr.plateformeliberte.levoile.conflict.VpnConflictVerdict
 import fr.plateformeliberte.levoile.kill.KillSwitchDetector
 import fr.plateformeliberte.levoile.kill.KillSwitchStatus
+import fr.plateformeliberte.levoile.log.LeVoileLog
+import fr.plateformeliberte.levoile.vpn.LeVoileVpnService
 
 /**
- * Bridge JS↔Kotlin — Story 9.3 (stub `getStatus`) + Story 10.2 (statut
- * kill switch + deeplink Settings.ACTION_VPN_SETTINGS).
+ * Bridge JS↔Kotlin. Story 9.3 → 10.2 → 10.3 → 11.2 → 11.3.
  *
- * Le bridge complet (connect, disconnect, selectCountry, getRegistry,
- * checkLeak, openVpnSettings, openBatteryOptimizationSettings,
- * isAlwaysOnEnabled, getPreferences, setPreference, quit — voir
- * architecture.md l. 612-624) est livré Story 11.2 ; les méthodes liées
- * au tunnel dépendent de Story 9.4-9.7 (VpnService + Foreground + .aar
- * gomobile).
+ * Story 11.2 enrichit avec connect/disconnect/selectCountry et un getStatus
+ * dynamique lisant LeVoileVpnService.instance + KillSwitchDetector.
+ * Story 11.3 ajoute openAppDetailsSettings.
+ * Story 11.8 (à venir) migrera selectCountry vers ConfigStore.
  *
- * Ne PAS étendre cette classe avec d'autres méthodes @JavascriptInterface
- * dans le scope de Story 10.2 — voir Périmètre de modification de la story.
+ * Le bridge est un adapter mince : il valide les inputs JS, marshalle vers les
+ * helpers MainActivity ou les Intents LeVoileVpnService, et retourne du JSON.
+ * Aucune logique métier côté bridge (cohérent architecture.md l. 1057-1061).
  *
- * @param context Conservé pour Story 11.2 (SharedPreferences, Settings.Global,
- *   ContentResolver, etc.) ET utilisé Story 10.2 pour `startActivity` du
- *   deeplink Settings + Toast fallback.
- * @param killSwitchDetector Story 10.2 — détecteur consommé par
- *   [getKillSwitchStatus]. Nullable pour permettre l'instanciation de
- *   tests JVM-only sans détecteur (le contrat retourne alors `"Unverifiable"`,
- *   cohérent état prudent par défaut).
+ * @param context applicationContext pour SharedPreferences/Settings.Global ;
+ *   peut aussi être l'Activity quand utilisé pour startActivity.
+ * @param killSwitchDetector Story 10.2 — null en test JVM (retourne "Unverifiable").
+ * @param vpnConflictDetector Story 10.3 — null en test JVM.
  */
 class LeVoileBridge(
     private val context: Context,
@@ -41,22 +40,83 @@ class LeVoileBridge(
 ) {
 
     /**
-     * Story 9.3 — JSON status placeholder. Story 11.2 remplacera ce stub
-     * par une logique dynamique lisant l'état de `LeVoileVpnService` +
-     * `applicationContext`.
+     * Story 11.2 — getStatus dynamique. Remplace le placeholder Story 9.3.
+     *
+     * Lit LeVoileVpnService.instance (null = disconnected) et KillSwitchDetector.
+     * Retour < 4 Ko (FR-AND-5 epics.md l. 1854).
      */
     @JavascriptInterface
-    fun getStatus(): String = STATUS_JSON
+    fun getStatus(): String {
+        val instance = LeVoileVpnService.instance
+        val killStatus = when (killSwitchDetector?.status?.value) {
+            is KillSwitchStatus.Active -> "Active"
+            is KillSwitchStatus.Inactive -> "Inactive"
+            is KillSwitchStatus.Unverifiable -> "Unverifiable"
+            null -> "Unverifiable"
+        }
+        val state = if (instance != null) "connected" else "disconnected"
+        return """{"state":"$state","platform":"android","version":"$VERSION","killSwitchStatus":"$killStatus"}"""
+    }
 
     /**
-     * Story 10.2 — retourne l'état courant du kill switch comme string
-     * stable parmi `"Active" | "Inactive" | "Unverifiable"` (protocole
-     * machine consommé par `assets/app.js`, AC #3 + #6).
+     * Story 11.2 — démarre le tunnel VPN via le système Android.
      *
-     * Pas de localisation — ces valeurs sont du protocole, pas du texte UI.
-     * Si `killSwitchDetector` est null (cas de test ou erreur d'init),
-     * retourne `"Unverifiable"` (état prudent par défaut, cohérent avec
-     * l'initialisation Story 10.1).
+     * Validation country whitelist [DE, ES, GB, US] (Story 3.8 distribution
+     * relais MVP) ou null (round-robin Go). Cast safe Context → MainActivity ;
+     * runOnUiThread car requestVpnStart utilise vpnConsentLauncher (main thread).
+     */
+    @JavascriptInterface
+    fun connect(country: String?): String {
+        val safeCountry = validateCountry(country)
+        if (country != null && safeCountry == null) {
+            return """{"error":"invalid_country_code","value":"${escapeJson(country.take(8))}"}"""
+        }
+        val activity = context as? MainActivity
+            ?: return """{"error":"context_not_activity"}"""
+        activity.runOnUiThread { activity.requestVpnStart(safeCountry) }
+        val countryJson = if (safeCountry != null) "\"$safeCountry\"" else "null"
+        return """{"ok":true,"action":"connect_requested","country":$countryJson}"""
+    }
+
+    /**
+     * Story 11.2 — coupe le tunnel actif. No-op si service idle.
+     */
+    @JavascriptInterface
+    fun disconnect(): String {
+        val activity = context as? MainActivity
+            ?: return """{"error":"context_not_activity"}"""
+        if (LeVoileVpnService.instance == null) {
+            return """{"ok":true,"action":"noop","reason":"service_idle"}"""
+        }
+        activity.runOnUiThread { activity.requestVpnStop() }
+        return """{"ok":true,"action":"disconnect_requested"}"""
+    }
+
+    /**
+     * Story 11.2 — sélectionne le pays préféré sans déclencher de connexion.
+     *
+     * Persistence SharedPreferences MODE_PRIVATE (UID-only, NFR-AND-7).
+     * Story 11.8 migrera vers ConfigStore JSON (équivalent fonctionnel desktop TOML).
+     */
+    @JavascriptInterface
+    fun selectCountry(iso: String?): String {
+        val safe = validateCountry(iso)
+            ?: return """{"error":"invalid_country_code","value":"${escapeJson(iso?.take(8) ?: "")}"}"""
+        try {
+            // Story 11.8 — migré vers ConfigStore JSON.
+            fr.plateformeliberte.levoile.config.ConfigStore(context).update {
+                it.copy(preferredCountry = safe)
+            }
+        } catch (t: Throwable) {
+            LeVoileLog.w(TAG, "selectCountry persistence echoue: ${t.javaClass.simpleName}")
+            return """{"error":"persistence_failed"}"""
+        }
+        return """{"ok":true,"country":"$safe"}"""
+    }
+
+    /**
+     * Story 10.2 — retourne l'état courant du kill switch (protocole figé
+     * "Active" | "Inactive" | "Unverifiable", consommé par app.js).
      */
     @JavascriptInterface
     fun getKillSwitchStatus(): String {
@@ -69,18 +129,7 @@ class LeVoileBridge(
     }
 
     /**
-     * Story 10.2 — ouvre le panneau natif Android « VPN » (`Settings.ACTION_VPN_SETTINGS`).
-     * Branche fallback EBR-02 (architecture.md l. 2455-2461) — Story 11.6
-     * enrichira pour ouvrir le composant C15 (onboarding kill switch screen)
-     * si Epic 11 est livré, sans casser cette signature `@JavascriptInterface`.
-     *
-     * `FLAG_ACTIVITY_NEW_TASK` obligatoire si `context` peut être
-     * `applicationContext` — défensif, fonctionne aussi quand `context` est
-     * une Activity.
-     *
-     * Sur ROM custom où `ACTION_VPN_SETTINGS` n'est pas exposé,
-     * `ActivityNotFoundException` déclenche un Toast pédagogique sans
-     * donnée utilisateur (NFR-AND-9 : pas de log révélant l'info ROM custom).
+     * Story 10.2 — ouvre Settings.ACTION_VPN_SETTINGS (kill switch flow).
      */
     @JavascriptInterface
     fun openKillSwitchTarget() {
@@ -98,25 +147,25 @@ class LeVoileBridge(
     }
 
     /**
-     * Story 10.3 — détection de conflit VPN. Retourne une string JSON
-     * stable consommée par `window.LeVoile.checkVpnConflict()` côté JS
-     * (Story 11.2 cible cette méthode au tap « Connecter »).
-     *
-     * Contrat de retour (snake_case côté JSON, mapping vers
-     * [VpnConflictVerdict] Kotlin) :
-     *  - `{"verdict":"no_conflict"}` — tunnel peut démarrer
-     *  - `{"verdict":"consent_required"}` — popup système Story 11.5
-     *  - `{"verdict":"foreign_vpn_active","foreign_app_id":"..."}` — autre VPN
-     *  - `{"verdict":"unverifiable"}` — détecteur null (cas test ou init incomplet)
-     *
-     * Le `foreign_app_id` est filtré sur la whitelist `[a-zA-Z0-9._]` +
-     * tronqué à 255 chars — défense en profondeur contre une éventuelle
-     * injection JSON / XSS si Story 11.2 affiche la valeur sans escape.
-     *
-     * Pas de transport d'`Intent` côté JS (non sérialisable cleanly) —
-     * Story 11.5 re-callera `vpnConflictDetector.check()` au moment de
-     * `requestVpnConsent()` pour récupérer un Intent frais (cohérent
-     * avec le design « pas de cache » du détecteur).
+     * Story 11.3 — ouvre la fiche Réglages > Apps > Le Voile (permissions,
+     * notifications, force-stop). Différent de openKillSwitchTarget qui cible
+     * VPN settings.
+     */
+    @JavascriptInterface
+    fun openAppDetailsSettings(): String {
+        val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
+            .setData(Uri.fromParts("package", context.packageName, null))
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        return try {
+            context.startActivity(intent)
+            """{"ok":true,"action":"opened_app_details"}"""
+        } catch (t: ActivityNotFoundException) {
+            """{"error":"settings_unavailable"}"""
+        }
+    }
+
+    /**
+     * Story 10.3 — détection conflit VPN. Retourne JSON stable.
      */
     @JavascriptInterface
     fun checkVpnConflict(): String {
@@ -127,11 +176,6 @@ class LeVoileBridge(
             is VpnConflictVerdict.ConsentNotGiven ->
                 "{\"verdict\":\"consent_required\"}"
             is VpnConflictVerdict.ForeignVpnActive -> {
-                // Whitelist ASCII [a-zA-Z0-9._] strict — pas `isLetterOrDigit()`
-                // (qui accepte aussi lettres/chiffres Unicode arabes, chinois,
-                // etc.). Java package names sont ASCII par spec, donc ce filtre
-                // ne perd aucun packageName légitime mais bloque toute tentative
-                // d'injection via caractère Unicode exotique.
                 val safeAppId = verdict.foreignAppId
                     ?.filter { c ->
                         c in 'a'..'z' || c in 'A'..'Z' || c in '0'..'9' ||
@@ -144,12 +188,58 @@ class LeVoileBridge(
         }
     }
 
+    /**
+     * Whitelist ISO 3166-1 alpha-2 — pays MVP Le Voile (cohérent Story 3.8).
+     *
+     * Validation stricte (pas de trim) : un input "  DE  " est probablement un
+     * bug frontend, le refuser est une défense en profondeur.
+     */
+    private fun validateCountry(iso: String?): String? {
+        if (iso == null) return null
+        return if (iso in COUNTRIES_WHITELIST) iso else null
+    }
+
+    private fun escapeJson(s: String): String =
+        s.filter { c -> c in ' '..'~' && c != '"' && c != '\\' }
+            .take(8)
+
     companion object {
+        private const val TAG = "LeVoileBridge"
+
         /**
-         * JSON figé Story 9.3 — exposé en const pour testabilité JVM-only sans
-         * instanciation. Story 11.2 remplacera ce stub par un getStatus() dynamique.
+         * JSON figé Story 9.3 — exposé en const pour testabilité JVM-only.
+         * @Deprecated Story 11.2 — getStatus() est maintenant dynamique,
+         * STATUS_JSON conservé pour rétro-compat tests legacy.
          */
+        @Deprecated(
+            "Story 11.2 — getStatus() est dynamique, STATUS_JSON conservé pour tests legacy uniquement.",
+        )
         const val STATUS_JSON =
             """{"state":"placeholder","message":"Story 9.3 — squelette UI, noyau VPN à venir Story 9.4-9.7","platform":"android","version":"0.1.0"}"""
+
+        /**
+         * Story 11.2 — whitelist pays acceptés par connect/selectCountry.
+         * Synchronisé avec FLAGS map JS (app.js Story 11.4) et CountryDisplay
+         * Kotlin (Story 11.7).
+         */
+        val COUNTRIES_WHITELIST = setOf("DE", "ES", "GB", "US")
+
+        /**
+         * Story 11.2 — namespace SharedPreferences. Aligné OnboardingActivity
+         * (Story 11.5) — single scope app.
+         */
+        const val PREFS_NAME = "levoile_prefs"
+
+        /**
+         * Story 11.2 — clé pays préféré. Story 11.8 migre cette clé vers
+         * ConfigStore.preferredCountry.
+         */
+        const val PREF_KEY_PREFERRED_COUNTRY = "preferred_country"
+
+        /**
+         * Story 11.2 — version exposée dans getStatus(). Aligné BuildConfig.VERSION_NAME
+         * (Story 9.1) — hard-codé ici pour testabilité JVM-only sans BuildConfig.
+         */
+        const val VERSION = "0.1.0"
     }
 }

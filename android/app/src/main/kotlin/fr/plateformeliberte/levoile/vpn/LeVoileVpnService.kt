@@ -8,16 +8,21 @@ import android.os.Looper
 import android.os.ParcelFileDescriptor
 import android.util.Log
 import fr.plateformeliberte.levoile.R
+import fr.plateformeliberte.levoile.registry.RegistryLoader
+import fr.plateformeliberte.levoile.registry.RelayPicker
 import fr.plateformeliberte.levoile.ui.NotificationHelper
 import fr.plateformeliberte.levoile.ui.VpnState
 import fr.plateformeliberte.levoile.vpn.VpnConstants.ACTION_CONNECT
 import fr.plateformeliberte.levoile.vpn.VpnConstants.ACTION_DISCONNECT
 import fr.plateformeliberte.levoile.vpn.VpnConstants.MAX_IP_PACKET
 import fr.plateformeliberte.levoile.vpn.VpnConstants.NOTIF_ID
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.channels.ClosedReceiveChannelException
+import kotlinx.coroutines.runBlocking
 import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.io.IOException
-import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
@@ -53,13 +58,16 @@ import java.util.concurrent.atomic.AtomicBoolean
  *     no-op apres le premier (vpnInterface = null, tunnelStartedFired = false).
  *   - MainActivity helpers requestVpnStart/Stop livres (dormants jusqu'a
  *     Story 11.2 qui cablera depuis LeVoileBridge.connect()/disconnect()).
- * Story 9.7 enrichira : remplace NoOpPacketRelay par GoBackedPacketRelay
- * (handshake QUIC/HTTP3 via gomobile + stream /tunnel) ; ajoutera
- * potentiellement addAddress IPv6 + setBlocking false pour tirer parti des
- * coroutines + detachFd pour passer le fd directement a Go (cf. Dev Notes
- * code-review post-9.4 : findings M-6, M-7). Cablera aussi les transitions
- * d'etat reelles (RECONNECTING pendant handshake, CONNECTED apres premier
- * paquet) via notificationHelper.notify(state).
+ * Story 11.7-bis (livree) : bascule effective NoOpPacketRelay -> GoBackedPacketRelay
+ * via le factory provideRelay(country) — handshake QUIC/HTTP3 via gomobile +
+ * stream /tunnel + transitions d'etat reelles (RECONNECTING/ERROR) cablees
+ * via le callback onStateChanged(state, visibleIp, effectiveCountry) qui
+ * forwarde vers notificationHelper.notify(...) avec donnees fraiches.
+ *
+ * Dette residuelle Phase 2 (cohérent NFR9-IPv6-out-of-tunnel) :
+ *   - addAddress IPv6 (fd00:6:6::2) + IPv6 routing dans le tunnel — actuellement
+ *     v6 hors tunnel (cf. commentaire `addRoute("::", 0)` dans connectInternal).
+ *   - setBlocking false + detachFd Go pour optimiser le pump (findings M-6/M-7).
  *
  * Hors scope definitif : split tunneling per-app (architecture.md l. 469, Phase 2).
  */
@@ -82,14 +90,53 @@ class LeVoileVpnService : VpnService() {
     private var tunnelStartedFired: Boolean = false
 
     private val running = AtomicBoolean(false)
-    private val packetSink = ConcurrentLinkedQueue<ByteArray>()
-    // Story 9.7 injectera GoBackedPacketRelay via DI / setter visible @VisibleForTesting.
-    private val packetRelay: PacketRelay = NoOpPacketRelay()
+
+    /**
+     * Story 11.7-bis : Channel<ByteArray> remplace ConcurrentLinkedQueue
+     * pour permettre back-pressure bornée + interruption propre via close().
+     * Capacité 256 paquets ≈ 360 KB max in-flight (cohérent
+     * GoBackedPacketRelay outboundCapacity). Recréé à chaque connectInternal
+     * car Channel.close() est terminal — un Channel fermé refuse send/receive.
+     */
+    @Volatile
+    private var packetSink: Channel<ByteArray> = Channel(capacity = 256)
+
+    /**
+     * Story 11.7-bis : `packetRelay` est désormais construit dans
+     * [connectInternal] où `currentCountry` est connu (post-onStartCommand).
+     *
+     * Si le registry charge OK + un relais est sélectionné pour le pays
+     * demandé → [GoBackedPacketRelay] (tunnel réel).
+     * Sinon → [NoOpPacketRelay] fallback gracieux (UX dégradée mais pas de crash).
+     *
+     * `lateinit` (et non `val provideRelay()`) car la construction nécessite
+     * un suspend `RegistryLoader.load()` qui doit être appelée après onCreate.
+     */
+    private lateinit var packetRelay: PacketRelay
 
     // Story 9.6 : orchestrateur unique notification persistante (channel +
     // builder + PendingIntents). Lifecycle Service = lateinit dans onCreate
     // (pas by lazy : onCreate est l'endroit canonique d'init Service Android).
     private lateinit var notificationHelper: NotificationHelper
+
+    // Story 11.7 — état enrichi consommé par NotificationHelper.notify(state, country, ip, killStatus).
+    // Lecture/écriture cross-thread (onStartCommand main, pumps daemon, callbacks Story 9.7).
+    @Volatile
+    private var currentCountry: String? = null
+    /**
+     * Story 11.7-bis : `currentIp` est mis à jour depuis le callback
+     * `onStateChanged(state, visibleIp, effectiveCountry)` du
+     * [GoBackedPacketRelay] — résolu via `net.LookupIP(relayDomain)` côté Go
+     * facade au moment de la transition `connected`. Reste `null` tant que la
+     * transition n'a pas eu lieu (pre-handshake, ou si DNS lookup échoue —
+     * fallback "—" UX-side dans la notification).
+     */
+    @Volatile
+    private var currentIp: String? = null
+    @Volatile
+    private var currentKillStatus: fr.plateformeliberte.levoile.kill.KillSwitchStatus? = null
+
+    private lateinit var killSwitchDetector: fr.plateformeliberte.levoile.kill.KillSwitchDetector
 
     // Story 9.5 : handler main-thread pour le teardown differe 5 s.
     // lateinit + creation onCreate = seul site d'init valide pour un Service
@@ -112,6 +159,11 @@ class LeVoileVpnService : VpnService() {
         // "levoile_vpn_status_stub" (idempotent).
         notificationHelper = NotificationHelper(this)
         notificationHelper.ensureChannel()
+        // Story 11.7 — KillSwitchDetector pour enrichir la notification
+        // (alerte « ⚠️ Kill switch inactif · Activer » si détecté Inactive).
+        killSwitchDetector = fr.plateformeliberte.levoile.kill.KillSwitchDetector(applicationContext)
+        killSwitchDetector.refresh()
+        currentKillStatus = killSwitchDetector.status.value
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -141,7 +193,26 @@ class LeVoileVpnService : VpnService() {
             ACTION_CONNECT -> VpnState.CONNECTED
             else -> VpnState.DISCONNECTED
         }
-        startForeground(NOTIF_ID, notificationHelper.build(initialState))
+        // Story 11.7 — récupère le pays depuis l'Intent EXTRA_COUNTRY (transmis
+        // par MainActivity.startVpnService Story 9.5). Fallback : ConfigStore
+        // preferredCountry (Story 11.8) si EXTRA_COUNTRY absent.
+        if (action == ACTION_CONNECT) {
+            // Smart-cast : action != null implique intent != null (action vient de intent?.action).
+            val extraCountry = intent.getStringExtra(VpnConstants.EXTRA_COUNTRY)
+            currentCountry = extraCountry ?: try {
+                fr.plateformeliberte.levoile.config.ConfigStore(applicationContext)
+                    .load().preferredCountry
+            } catch (_: Throwable) {
+                null
+            }
+            // Refresh kill switch status au connect (re-vérification heuristique).
+            killSwitchDetector.refresh()
+            currentKillStatus = killSwitchDetector.status.value
+        }
+        startForeground(
+            NOTIF_ID,
+            notificationHelper.build(initialState, currentCountry, currentIp, currentKillStatus)
+        )
         Log.i(TAG, "onStartCommand action=$action startId=$startId")
         when (action) {
             ACTION_CONNECT -> connectInternal()
@@ -200,6 +271,15 @@ class LeVoileVpnService : VpnService() {
             Log.w(TAG, "connectInternal appelee alors que vpnInterface != null — ignore")
             return
         }
+
+        // Story 11.7-bis : (re)créer un Channel fresh — un précédent close()
+        // l'aurait rendu inutilisable. Construit AVANT le packetRelay car ce
+        // dernier consomme inboundSink en référence.
+        packetSink = Channel(capacity = 256)
+
+        // Story 11.7-bis : construire le packetRelay maintenant que
+        // currentCountry est connu (post-onStartCommand).
+        packetRelay = provideRelay(currentCountry)
         val builder = Builder()
             .setSession(getString(R.string.vpn_session_name))
             // addAddress AVANT addRoute : certains OEM (Xiaomi MIUI, Huawei EMUI)
@@ -208,13 +288,16 @@ class LeVoileVpnService : VpnService() {
             .addRoute("0.0.0.0", 0)
             // Fix M-7 (code-review post-9.4) : addRoute("::", 0) sans addAddress
             // IPv6 correspondant signifie qu'aucun paquet IPv6 n'atteindra la TUN
-            // (le kernel n'a pas de source v6 sur l'interface). Comportement neutre
-            // pour Story 9.4 (NoOpPacketRelay = aucun trafic relaye). Story 9.7
-            // doit ajouter ".addAddress("fd00:6:6::2", 64)" (ULA Le Voile) ou
-            // similaire AVANT cette route si IPv6 doit etre tunnelise pour de vrai.
-            // Tant que l'addresse v6 manque, les paquets v6 utilisateur sortent par
-            // l'interface physique normale (= comportement "v6 hors tunnel" du
-            // desktop, FR option NFR9-IPv6-out-of-tunnel).
+            // (le kernel n'a pas de source v6 sur l'interface). C'est INTENTIONNEL
+            // — comportement « v6 hors tunnel » equivalent NFR9-IPv6-out-of-tunnel
+            // desktop : les paquets v6 utilisateur sortent par l'interface
+            // physique normale (pas leak car le routing system v4 par defaut va
+            // dans le tunnel).
+            //
+            // Pour activer IPv6 dans le tunnel (Phase 2) : ajouter
+            // `.addAddress("fd00:6:6::2", 64)` (ULA Le Voile) AVANT cette route.
+            // Necessitera coordination avec internal/tunnel pour que le pump
+            // accepte les paquets v6 + relais qui resolvent dual-stack.
             .addRoute("::", 0)
             .addDnsServer("10.6.6.1")
             .setMtu(1420)
@@ -239,6 +322,7 @@ class LeVoileVpnService : VpnService() {
         // pour que disconnectInternal sache si le contrat lifecycle a ete declenche.
         tunnelStartedFired = true
         try {
+            // packetRelay garanti initialisé en début de connectInternal (Story 11.7-bis).
             packetRelay.onTunnelStarted()
         } catch (t: Throwable) {
             Log.w(TAG, "packetRelay.onTunnelStarted error", t)
@@ -307,17 +391,33 @@ class LeVoileVpnService : VpnService() {
         inPumpThread?.interrupt()
         outPumpThread = null
         inPumpThread = null
-        packetSink.clear()
+        // Story 11.7-bis : fermer le Channel proprement — le inPumpThread
+        // levera ClosedReceiveChannelException et break out de sa boucle.
+        try { packetSink.close() } catch (_: Throwable) {}
         // Fix M-5 (code-review post-9.4) : ne notifier que si onTunnelStarted a
         // effectivement ete appele — sinon GoBackedPacketRelay (Story 9.7) verrait
         // un "close before open" inconsistant.
-        if (tunnelStartedFired) {
+        // Story 11.7-bis : packetRelay est lateinit, guard supplémentaire.
+        //
+        // Code-review post-11.7-bis (H-8) : onTunnelStopped() appelé AVANT
+        // shutdown(). onTunnelStopped fait `runBlocking + NonCancellable` qui
+        // appelle GoCoreAdapter.disconnect() — c'est OBLIGATOIRE pour fermer la
+        // session côté Go. shutdown() seul cancel le scope mais NE FAIT PAS
+        // disconnect — l'inverser laissait la session Go ouverte sur reconnect
+        // rapide (ErrSessionAlreadyOpen).
+        if (tunnelStartedFired && ::packetRelay.isInitialized) {
             try {
                 packetRelay.onTunnelStopped()
             } catch (t: Throwable) {
                 Log.w(TAG, "packetRelay.onTunnelStopped error", t)
             }
             tunnelStartedFired = false
+        }
+        // shutdown() après onTunnelStopped pour libérer le scope coroutine
+        // résiduel (idempotent vs cancellations déjà faites).
+        if (::packetRelay.isInitialized && packetRelay is GoBackedPacketRelay) {
+            try { (packetRelay as GoBackedPacketRelay).shutdown() }
+            catch (t: Throwable) { Log.w(TAG, "GoBackedPacketRelay.shutdown error", t) }
         }
         try {
             // Fix M-6 (code-review post-9.4) : on close ICI le ParcelFileDescriptor
@@ -347,7 +447,7 @@ class LeVoileVpnService : VpnService() {
         // n'est postee QUE quand un changement d'etat reel a eu lieu.
         if (wasActive && ::notificationHelper.isInitialized) {
             try {
-                notificationHelper.notify(VpnState.DISCONNECTED)
+                notificationHelper.notify(VpnState.DISCONNECTED, currentCountry, currentIp, currentKillStatus)
             } catch (t: Throwable) {
                 // Defense en profondeur : si le notify echoue (channel supprime
                 // par le systeme, etc.), ne PAS bloquer le cleanup.
@@ -397,18 +497,24 @@ class LeVoileVpnService : VpnService() {
         inPumpThread = Thread({
             try {
                 while (running.get()) {
-                    val pkt = packetSink.poll()
-                    if (pkt == null) {
-                        // Story 9.4 : sink vide en permanence (NoOpPacketRelay).
-                        // Story 9.7 remplacera par BlockingQueue.take() ou supprimera
-                        // la pompe in Kotlin au profit d'un callback Go direct -> fos.write(...).
-                        try {
-                            Thread.sleep(5)
-                        } catch (e: InterruptedException) {
-                            Thread.currentThread().interrupt()
-                            break
-                        }
-                        continue
+                    // Story 11.7-bis : Channel<ByteArray>.receive() blocking via
+                    // runBlocking. Si le Channel est fermé (cleanupSync OR
+                    // packetSink renouvelé sur reconnect), ClosedReceiveChannelException
+                    // est levée — on break proprement.
+                    //
+                    // Code-review post-11.7-bis (H-3) : Dispatchers.IO explicite
+                    // pour éviter d'allouer un EventLoop par paquet. Un refactor
+                    // full-coroutine (scope.launch + for(pkt in channel)) reste
+                    // un follow-up Phase 2 pour éliminer le coût runBlocking
+                    // résiduel à haut throughput (8000 paquets/s à 100 Mbps).
+                    val pkt = try {
+                        runBlocking(Dispatchers.IO) { packetSink.receive() }
+                    } catch (e: ClosedReceiveChannelException) {
+                        Log.d(TAG, "in-pump ferme via ClosedReceiveChannelException (close attendu)")
+                        break
+                    } catch (e: InterruptedException) {
+                        Thread.currentThread().interrupt()
+                        break
                     }
                     try {
                         fos.write(pkt)
@@ -424,6 +530,69 @@ class LeVoileVpnService : VpnService() {
             isDaemon = true
             start()
         }
+    }
+
+    /**
+     * Story 11.7-bis : factory PacketRelay basé sur le pays demandé.
+     *
+     * Pipeline :
+     *  1. RegistryLoader.load() — cache ConfigStore (Story 11.8) OU bundle res/raw
+     *  2. RelayPicker.pick(country) — round-robin intra-pays
+     *  3. Si succès → GoBackedPacketRelay(domain, pubKey, packetSink, onStateChanged)
+     *     où onStateChanged forwarde transitions + visibleIp + effectiveCountry à
+     *     notificationHelper.notify(...)
+     *  4. Si échec (registry indispo, pays inexistant) → NoOpPacketRelay fallback
+     *
+     * `runBlocking` sur le main thread Service est OK pour MVP : la suspend
+     * fun `RegistryLoader.load()` est rapide (lecture cache RAM ou bundle
+     * res/raw + verify Ed25519 ~5ms). Si Story future ajoute fetch online,
+     * il faudra passer en background (CoroutineScope du Service).
+     *
+     * Code-review post-11.7-bis (H-2) : anti-pattern Android documenté —
+     * acceptable car l'opération est < 50ms avec le bundle res/raw. Action
+     * item Phase 2 si fetch online ajouté.
+     */
+    private fun provideRelay(country: String?): PacketRelay {
+        if (country.isNullOrBlank()) {
+            Log.w(TAG, "provideRelay : pays absent, fallback NoOp")
+            return NoOpPacketRelay()
+        }
+        val registryData = try {
+            runBlocking { RegistryLoader(applicationContext).load() }
+        } catch (t: Throwable) {
+            Log.w(TAG, "RegistryLoader.load echoue : ${t.javaClass.simpleName}, fallback NoOp")
+            null
+        } ?: return NoOpPacketRelay()
+
+        val relayInfo = RelayPicker(registryData).pick(country)
+            ?: run {
+                Log.w(TAG, "RelayPicker.pick : pas de relais pour le pays demande, fallback NoOp")
+                return NoOpPacketRelay()
+            }
+
+        // Code-review post-11.7-bis (H-1) : pas de log du domaine ni du pays
+        // (NFR-AND-9 — un attaquant avec READ_LOGS ne doit pas savoir quel
+        // relais utilise l'utilisateur). Log neutre confirmant juste l'état.
+        Log.i(TAG, "provideRelay: GoBackedPacketRelay actif")
+
+        return GoBackedPacketRelay(
+            relayDomain = relayInfo.domain,
+            pinnedKeyB64 = relayInfo.pinnedKeyB64,
+            inboundSink = packetSink,
+            onStateChanged = { state, visibleIp, effectiveCountry ->
+                // Story 11.7-bis Task 6 : update currentIp + currentCountry depuis
+                // le callback Go enrichi, puis re-notify avec données fraîches.
+                if (visibleIp != null) currentIp = visibleIp
+                if (effectiveCountry != null) currentCountry = effectiveCountry
+                if (::notificationHelper.isInitialized) {
+                    try {
+                        notificationHelper.notify(state, currentCountry, currentIp, currentKillStatus)
+                    } catch (t: Throwable) {
+                        Log.w(TAG, "onStateChanged notify error (ignored): ${t.javaClass.simpleName}")
+                    }
+                }
+            },
+        )
     }
 
     // Story 9.6 : ensureNotificationChannel() + buildStubOngoingNotification()

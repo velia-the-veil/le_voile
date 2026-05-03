@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Story 11.6 — Dialog confirmation skip kill switch. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:padding="24dp"
+    android:background="@color/bg_dark_alt">
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="@string/c15_skip_dialog_title"
+        android:textSize="18sp"
+        android:textColor="@color/text_primary"
+        android:fontFamily="sans-serif-medium"
+        android:layout_marginBottom="12dp" />
+
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="@string/c15_skip_dialog_body"
+        android:textSize="14sp"
+        android:textColor="@color/text_primary"
+        android:layout_marginBottom="24dp" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="end">
+
+        <Button
+            android:id="@+id/dialog_skip_cancel"
+            android:layout_width="wrap_content"
+            android:layout_height="48dp"
+            android:text="@string/c15_skip_dialog_cancel"
+            android:backgroundTint="@android:color/transparent"
+            android:textColor="@color/primary_blue"
+            android:layout_marginEnd="8dp" />
+
+        <Button
+            android:id="@+id/dialog_skip_confirm"
+            android:layout_width="wrap_content"
+            android:layout_height="48dp"
+            android:text="@string/c15_skip_dialog_confirm"
+            android:backgroundTint="@color/alert_red"
+            android:textColor="@color/text_primary" />
+    </LinearLayout>
+</LinearLayout>

@@ -42,6 +42,12 @@ mockito-core = "5.11.0"
 androidx-test-junit = "1.2.1"
 androidx-test-espresso = "3.6.1"
 
+# Story 11.8 : org.json est dans android.jar mais stubbé sous
+# testOptions.unitTests.isReturnDefaultValues = true (méthodes returnant null/0).
+# La référence Java org.json:json fournit l'implémentation réelle pour les tests
+# JVM-only de ConfigStore (load/save/parse JSONObject). ~70 KB, scope test only.
+org-json = "20240303"
+
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "androidx-core-ktx" }
 androidx-appcompat = { group = "androidx.appcompat", name = "appcompat", version.ref = "androidx-appcompat" }
@@ -53,6 +59,7 @@ junit = { group = "junit", name = "junit", version.ref = "junit" }
 mockito-core = { group = "org.mockito", name = "mockito-core", version.ref = "mockito-core" }
 androidx-test-junit = { group = "androidx.test.ext", name = "junit", version.ref = "androidx-test-junit" }
 androidx-test-espresso-core = { group = "androidx.test.espresso", name = "espresso-core", version.ref = "androidx-test-espresso" }
+org-json = { group = "org.json", name = "json", version.ref = "org-json" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
