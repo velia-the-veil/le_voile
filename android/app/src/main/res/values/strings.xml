@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Le Voile</string>
+
+    <!-- Story 9.4 : nom de session affiché dans Réglages > VPN. Conservé. -->
+    <string name="vpn_session_name">Le Voile</string>
+
+    <!-- Story 9.6 : Notification persistante MVP (statut texte minimal).
+         Le titre dynamique « Le Voile · {État} » est composé dans
+         NotificationHelper à partir de notif_title_prefix + statusLabel(state).
+         Le sous-texte reste vide en MVP (Story 11.7 enrichira pays + IP).
+
+         IMPORTANT : Story 9.1 livre le FR comme locale par défaut. Tant que
+         Story 11.x n'a pas migré l'EN par défaut, ces valeurs DOIVENT contenir
+         leurs accents (« é », « à », « è », « ê »...) — sinon les utilisateurs
+         hors locale fr verront « Connecte » au lieu de « Connecté » (regression
+         9.6/H-1, code-review post-9.6). values-fr/strings.xml duplique ces mêmes
+         valeurs : test de parité dans NotificationHelperTest. -->
+    <string name="notif_channel_status_name">Statut Le Voile</string>
+    <string name="notif_channel_status_desc">Indique l\'état du tunnel VPN. Cette notification est nécessaire pour maintenir la protection en arrière-plan.</string>
+    <string name="notif_title_prefix">Le Voile</string>
+    <string name="vpn_status_connected">Connecté</string>
+    <string name="vpn_status_reconnecting">Reconnexion…</string>
+    <string name="vpn_status_disconnected">Déconnecté</string>
+    <string name="vpn_status_error">Erreur</string>
+    <string name="notif_action_disconnect">Déconnecter</string>
+    <string name="notif_content_description_disconnect">Couper le tunnel Le Voile et revenir à votre connexion réseau habituelle</string>
+
+    <!-- Fix L-4 (code-review post-9.5) : message UI affiche par Story 11.2 quand
+         l'utilisatrice refuse le popup systeme de consent VpnService. Story 9.5
+         se contente d'un Log.w (pas de Toast/UI feedback dans cette story —
+         scope MainActivity helpers dormants). Cle declaree des maintenant pour
+         que Story 11.2 n'ait qu'a la consommer (parite EN/FR garantie par le
+         test NotificationHelperTest.STORY_9_6_KEYS si etendu). -->
+    <string name="vpn_consent_denied_message">Le Voile a besoin de votre consentement pour activer le tunnel.</string>
+</resources>

@@ -1,4 +1,4 @@
-# generated: 2026-04-15
+# generated: 2026-05-02
 # project: bmad_vpn_le_voile_de_velia
 # project_key: NOKEY
 # tracking_system: file-system
@@ -29,14 +29,17 @@
 # WORKFLOW NOTES:
 # ===============
 # - 2026-04-15: Restructure complete suite a la revision Linux + capture L3 (TUN/Wintun) + suppression extension navigateur.
-# - Anciens 12 epics obsoletes. Nouveaux 8 epics organises par valeur utilisateur (FR1-FR36, FR37-40 supprimes).
+# - Anciens 12 epics obsoletes. Nouveaux 8 epics organises par valeur utilisateur (FR1-FR36).
 # - Snapshot Windows-stable preserve : git tag windows-stable-2026-04-15 + branch backup/windows-stable.
-# - Code existant couvre substantiellement Epics 1, 4, 8 et partiellement 3, 5, 6, 7. Verification story par story
-#   via create-story qui ouvrira le code et marquera done si deja implemente.
-# - Chemin critique recommande : Epic 2 (TUN/firewall) + Epic 3 stories 3.3-3.5 (refactor /tunnel + NAT) en parallele
-#   d'abord, puis Epic 1 + Epic 6 (validation), puis Epic 5 stories nouvelles + Epic 7 packaging Linux.
+# - 2026-05-02: Ajout Phase Android (Epics 9-12) suite a revision PRD/Architecture/UX/Epics 2026-04-29..05-02.
+# - Epics 9-12 = nouveau noyau Android (VpnService + gomobile), kill switch OS-delegue, UI mobile WebView,
+#   distribution F-Droid + APK direct. Tous en backlog (aucune story-file Android encore creee).
+# - Cles ISO/RGAA preservees : OS-isolation maximale (cf. ADR-08), reuse 100% noyau Go (cf. ADR-09),
+#   aucune telemetrie (cf. ADR-15, audit Gradle CI bloquant Story 10.4).
+# - Chemin critique Android recommande : Epic 9 (noyau VpnService + gomobile) avant tout, puis Epic 10
+#   (kill switch + audit telemetrie) en parallele d'Epic 11 (UI mobile), puis Epic 12 (distribution + tests).
 
-generated: 2026-04-15
+generated: 2026-05-02
 project: bmad_vpn_le_voile_de_velia
 project_key: NOKEY
 tracking_system: file-system
@@ -44,7 +47,6 @@ story_location: _bmad-output/implementation-artifacts
 
 development_status:
   # Epic 1: Tunnel Chiffre et Authentification Relais
-  # Code existant couvre l'essentiel (issu des anciens Epics 1+2). A verifier story par story.
   epic-1: done
   1-1-etablir-un-tunnel-quic-http3-vers-un-relais-via-cloudflare-avec-certificate-pinning: done
   1-2-reconnexion-automatique-avec-backoff-exponentiel-et-circuit-breaker: done
@@ -52,7 +54,6 @@ development_status:
   epic-1-retrospective: optional
 
   # Epic 2: Capture L3 Machine-Wide & Kill Switch Firewall
-  # CHEMIN CRITIQUE — entierement nouveau (refactor majeur TUN/Wintun + nftables/WFP).
   epic-2: done
   2-1-creation-et-destruction-de-l-interface-tun-wintun-levoile0: done
   2-2-watchdog-tun-detection-d-alteration-externe: done
@@ -66,8 +67,6 @@ development_status:
   epic-2-retrospective: optional
 
   # Epic 3: Relais Stateless Multi-VPS avec Tunnel IP & NAT
-  # Mix : binaire relais + verify + rate limiting + organisation pays = existant ;
-  # handler /tunnel + NAT + DNS interne + blocklist cote relais = NOUVEAU.
   epic-3: done
   3-1-binaire-relais-go-http3-stateless-deployable-via-systemd: done
   3-2-endpoint-verify-avec-emission-session-tokens-ed25519: done
@@ -80,7 +79,6 @@ development_status:
   epic-3-retrospective: optional
 
   # Epic 4: Decouverte & Failover Multi-Pays
-  # Largement existant (issu de l'ancien Epic 9). 4.2 a enrichir avec DoH bootstrap (NFR9i).
   epic-4: done
   4-1-endpoint-well-known-relay-registry-json-signe-ed25519: done
   4-2-bootstrap-via-relais-hardcode-au-premier-lancement: done
@@ -89,8 +87,6 @@ development_status:
   epic-4-retrospective: optional
 
   # Epic 5: Interface Desktop Cross-Platform (Tray + Webview)
-  # Stories 5.1-5.5 et 5.8 substantiellement existantes (ancien Epic 10).
-  # 5.6 (fallback service down), 5.7 (supervision UI Linux), 5.9 (mode degrade) = NOUVEAU.
   epic-5: done
   5-1-binaire-ui-unique-systray-webview-serveur-http-local-avec-affichage-de-statut: done
   5-2-affichage-du-pays-selectionne-du-relais-actif-et-de-l-ip-visible: done
@@ -104,7 +100,6 @@ development_status:
   epic-5-retrospective: optional
 
   # Epic 6: Validation Anti-Fuite (STUN + Watchdog TUN)
-  # 6.1 existant (STUN Binding). 6.2 refactor (role redefini : validation TUN au lieu de relay STUN). 6.3 partiel.
   epic-6: done
   6-1-emission-de-stun-binding-requests-via-la-tun: done
   6-2-comparaison-ip-stun-vs-ip-tunnel-attendue: done
@@ -112,7 +107,6 @@ development_status:
   epic-6-retrospective: optional
 
   # Epic 7: Distribution & Installation Cross-Platform Signee
-  # 7.1 (NSIS Windows) et 7.5 (config TOML) existants. 7.2/7.3/7.4 = NOUVEAU (packaging Linux + signature paquets).
   epic-7: done
   7-1-installeur-nsis-windows-service-scm-ui-autostart-wintun-dll: done
   7-2-paquets-linux-deb-rpm-apk-via-goreleaser-nfpm: done
@@ -122,8 +116,57 @@ development_status:
   epic-7-retrospective: optional
 
   # Epic 8: Auto-Update Securise avec Rollback
-  # Largement existant (ancien Epic 6). A valider + ajout systemctl restart pour Linux.
   epic-8: done
   8-1-verification-periodique-des-releases-github: done
   8-2-telechargement-signe-application-rollback-automatique: done
   epic-8-retrospective: optional
+
+  # Epic 9: Noyau Android — VpnService + Foreground Service + Bridge gomobile
+  # CHEMIN CRITIQUE Android — fondations natives. Doit livrer en premier (bloque 10/11/12).
+  # Reuse 100% noyau Go via gomobile (.aar) — cf. ADR-09.
+  epic-9: done
+  9-1-module-gradle-android-structure-projet: done
+  9-2-script-build-aar-sh-gomobile-bind-du-noyau-go-partage: done
+  9-3-mainactivity-squelette-webview-placeholder: done
+  9-4-levoilevpnservice-creation-tun-pump-paquets-ip: done
+  9-5-foreground-service-lifecycle-action-deconnecter: done
+  9-6-notification-persistante-mvp-statut-texte-minimal: done
+  9-7-integration-noyau-go-via-aar-handshake-quic-http3-pump-ip-http-3: done
+  epic-9-retrospective: optional
+
+  # Epic 10: Kill Switch OS-Delegue + Conflit VPN + Zero Telemetrie
+  # Parallelisable avec Epic 11 une fois Epic 9 livre. Story 10.4 (audit Gradle CI) peut demarrer
+  # des Story 9.1 livree (necessite seulement le module Gradle).
+  epic-10: in-progress
+  10-1-heuristique-detection-kill-switch-via-settings-global-always-on-vpn-app: ready-for-dev
+  10-2-composant-c17-bandeau-alerte-kill-switch-persistant: ready-for-dev
+  10-3-detection-autre-app-vpn-active-via-vpnservice-prepare: ready-for-dev
+  10-4-audit-gradle-ci-bloquant-assertion-absence-dependances-telemetrie: ready-for-dev
+  10-5-filtrage-logs-android-util-log-par-buildtype: ready-for-dev
+  epic-10-retrospective: optional
+
+  # Epic 11: UI Mobile + Onboarding « VPN permanent »
+  # Reuse frontend desktop via sync-frontend.sh + body.platform-android (cf. ADR-14).
+  # Story 11.5 livre placeholder Ecran 3, Story 11.6 enrichit en composant C15 complet.
+  epic-11: backlog
+  11-1-script-sync-frontend-sh-webviewassetloader-responsive-body-platform-android: backlog
+  11-2-js-bridge-javascriptinterface-complet: backlog
+  11-3-composant-c13-appbar-material-56dp: backlog
+  11-4-composant-c14-country-selector-bottom-sheet: backlog
+  11-5-onboardingactivity-3-ecrans-persistence-onboarding-completed: backlog
+  11-6-composant-c15-onboarding-kill-switch-screen-deeplink-settings: backlog
+  11-7-enrichissement-notification-c16-pays-ip-action-dynamiques: backlog
+  11-8-config-json-getfilesdir-config-json: backlog
+  epic-11-retrospective: optional
+
+  # Epic 12: Distribution F-Droid + APK Direct + Auto-Update + Tests Instrumentes
+  # Necessite Epics 9-11 livres. Story 12.6 (tests instrumentes) gating obligatoire pour tag release.
+  # Reproductibilite APK (Story 12.4) condition F-Droid (cf. ADR-11).
+  epic-12: backlog
+  12-1-metadonnees-f-droid-metadata-com-velia-levoile-yml-versionnees: backlog
+  12-2-pipeline-github-actions-android-lint-tests-audits: backlog
+  12-3-signature-apk-v2-v3-key-rotation-par-master-key-ed25519: backlog
+  12-4-verification-reproductibilite-apk-ci: backlog
+  12-5-workmanager-24h-check-version-notification-ui-mise-a-jour-apk-direct: backlog
+  12-6-tests-instrumentes-espresso-androidx-test-sur-emulateur-api-29-33-34: backlog
+  epic-12-retrospective: optional

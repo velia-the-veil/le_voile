@@ -1,6 +1,6 @@
 ---
-stepsCompleted: ['step-01-init', 'step-02-discovery', 'step-02b-vision', 'step-02c-executive-summary', 'step-03-success', 'step-04-journeys', 'step-05-domain', 'step-06-innovation', 'step-07-project-type', 'step-08-scoping', 'step-09-functional', 'step-10-nonfunctional', 'step-11-polish', 'step-12-complete', 'step-e-01-discovery', 'step-e-02-review', 'step-e-03-edit', 'step-e-01-discovery-2', 'step-e-02-review-2', 'step-e-03-edit-2']
-inputDocuments: ['../brainstorming/brainstorming-session-2026-03-08-1530.md', 'architecture.md']
+stepsCompleted: ['step-01-init', 'step-02-discovery', 'step-02b-vision', 'step-02c-executive-summary', 'step-03-success', 'step-04-journeys', 'step-05-domain', 'step-06-innovation', 'step-07-project-type', 'step-08-scoping', 'step-09-functional', 'step-10-nonfunctional', 'step-11-polish', 'step-12-complete', 'step-e-01-discovery', 'step-e-02-review', 'step-e-03-edit', 'step-e-01-discovery-2', 'step-e-02-review-2', 'step-e-03-edit-2', 'step-e-01-discovery-3', 'step-e-02-review-3', 'step-e-03-edit-3']
+inputDocuments: ['../brainstorming/brainstorming-session-2026-03-08-1530.md', 'architecture.md', 'implementation-readiness-report-2026-04-29-android.md']
 workflowType: 'prd'
 documentCounts:
   briefs: 0
@@ -8,12 +8,16 @@ documentCounts:
   brainstorming: 1
   projectDocs: 0
 classification:
-  projectType: 'desktop_app + network_server'
+  projectType: 'desktop_app + mobile_app + network_server'
   domain: 'cybersecurity_privacy'
   complexity: 'high'
   projectContext: 'greenfield'
-lastEdited: '2026-04-15'
+lastEdited: '2026-04-30'
 editHistory:
+  - date: '2026-04-30'
+    changes: 'Polish post-validation 2026-04-30 (Top 3 Improvements identifiés au rapport `validation-report-2026-04-30.md`) : (1) Mapping §4 enrichi de 4 lignes Léa #9 (FR-AND-5 JS Bridge, FR-AND-6 détection autre VPN, FR-AND-8 zéro télémétrie, FR-AND-10 config getFilesDir) — parallélisme complet avec le pattern Léa #9 ; (2) FR-AND-9 précisé : périodicité auto-update au lancement + WorkManager 24h (cohérence FR35 desktop) ; (3) NFR-AND-2 condition réseau ajoutée : LTE/4G+ ou Wi-Fi domestique, RTT < 80ms vers VPS relais (parallèle NFR11 desktop ADSL/fibre RTT < 50ms).'
+  - date: '2026-04-30'
+    changes: 'Prise en compte Phase Android (Phase 2) — alignement PRD avec architecture (révision 2026-04-29, ADR-08 à ADR-15) suite au rapport d''implementation-readiness 2026-04-29 identifiant 3 gaps critiques. Étendu §1 (Executive Summary), §2 (Classification : type desktop+mobile, distribution F-Droid+APK, complexité gomobile/JNI), §3 (Success Criteria : sous-section Phase 2 avec démarrage VpnService < 3s, RAM < 60 MB, APK < 25 MB, taux activation "VPN permanent" > 95%, build F-Droid reproductible). Ajouté Parcours 9 (Léa, utilisatrice Android grand public) + 6 lignes Journey→Capabilities Mapping. Étendu §5 (TalkBack, sous-sections Distribution Android + Permissions Android Minimales, 4 risques Android au tableau). Étendu §6 (innovation frontend partagé desktop↔Android + noyau Go via gomobile, compromis kill switch délégué OS + pas autostart boot, validation reproductibilité F-Droid + TalkBack). Renommé §7 "Desktop App Requirements" → "Client App Requirements" avec sous-sections Desktop (Windows+Linux) + Android Phase 2 (architecture mono-processus MainActivity+WebView + LeVoileVpnService Foreground+VpnService, gomobile .aar, lifecycle, auto-update F-Droid/APK direct, Platform Support étendu). Étendu §8 Phase 2 avec support Android explicite + hors-scope iOS/Wear/TV/Auto. §9 : ajouté FR-AND-1..10 dans sous-section "Phase 2 — Android" (VpnService Builder, Foreground Service, onboarding "VPN permanent" + deeplink, MainActivity+WebView+JS Bridge, détection autre VPN via VpnService.prepare, distribution F-Droid+APK signé v2/v3, zéro télémétrie, auto-update différencié, config JSON getFilesDir). Updates ciblés FR8/14/15/15b/16/16b/20/22 pour clarifier scope OS. §10 : ajouté NFR-AND-1..11 dans sous-section "Phase 2 — Android" (RAM, démarrage, APK size, minSdk 29 targetSdk 34, signature v2+v3, build reproductible, permissions minimales auditables, zéro télémétrie auditée, logs filtrés, matrice tests Espresso API 29/33/34, R8/ProGuard release). Updates NFR9j (scoped storage Android), NFR22 (matrice étendue Android), NFR22a (Logcat), NFR22d (pipeline CI Android : gradle lint, audit dépendances, reproductibilité), NFR26 (vérif intégrité APK déléguée PackageManager). TOC §7 mis à jour. Classification projectType étendu : desktop_app + mobile_app + network_server.'
   - date: '2026-04-15'
     changes: 'Polish post-validation (Top 3 Improvements): (1) 8 corrections mesurabilité (FR13c texte exact, FR15 leakage fyne retiré, FR19b quantif chiffré, NFR2 libs Go nommées, NFR3 TTL chiffrés, NFR11 condition précisée, NFR15 méthode mesure, NFR22 matrice tests). (2) Ajout TOC + numérotation H2 1-10. (3) 2 User Journeys edge: Théo #7 (IPv6 opt-in), Camille #8 (mode dégradé). Journey→Capabilities Mapping étendu.'
   - date: '2026-04-15'
@@ -32,7 +36,7 @@ editHistory:
 
 **Author:** Akerimus
 **Date:** 2026-03-08
-**Dernière révision :** 2026-04-15
+**Dernière révision :** 2026-04-30
 
 ## Table of Contents
 
@@ -42,7 +46,7 @@ editHistory:
 4. [User Journeys](#4-user-journeys)
 5. [Domain-Specific Requirements](#5-domain-specific-requirements)
 6. [Innovation & Novel Patterns](#6-innovation--novel-patterns)
-7. [Desktop App Requirements](#7-desktop-app-requirements)
+7. [Client App Requirements](#7-client-app-requirements)
 8. [Project Scoping & Phased Development](#8-project-scoping--phased-development)
 9. [Functional Requirements](#9-functional-requirements)
 10. [Non-Functional Requirements](#10-non-functional-requirements)
@@ -54,6 +58,8 @@ Le Voile est un VPN desktop qui garantit le zero-log par architecture — les re
 Destiné au grand public francophone soucieux de sa vie privée, le produit cible un besoin urgent : la France s'apprête à bloquer les VPN traditionnels. Le Voile y survivra grâce à un trafic QUIC/HTTP/3 indistinguable du trafic web normal (TLS 1.3, ALPN h3, SNI standard), sans handshake VPN détectable au DPI.
 
 Le client desktop 2 processus (service privilégié + UI unique combinant system tray et webview) est disponible sur **Windows et Linux** (Debian/Ubuntu, Fedora/RHEL, Arch, Alpine). Il capture tout le trafic IP de la machine via une interface virtuelle **TUN (Linux) / Wintun (Windows)**, l'encapsule dans HTTP/3 en connexion directe au VPS relais (DNS A record → origin, pas de CDN intermédiaire), et l'achemine vers un relais stateless qui agit comme gateway NAT. Le DNS est résolu côté relais (avec blocklist StevenBlack/hosts intégrée). Un **kill switch firewall OS-level** (nftables Linux / Windows Filtering Platform) survit aux crashes du service et rend les fuites structurellement impossibles.
+
+**Android (Phase 2)** — Application mobile prévue pour Android 10+ (API 29+), distribuée via F-Droid + APK direct GitHub releases. Architecture mono-processus distincte du desktop : `MainActivity` (WebView plein écran avec assets HTML/CSS/JS partagés desktop) + `LeVoileVpnService` (Foreground Service héritant de `android.net.VpnService` — seule API non-rootée pour la capture L3). Le kill switch est délégué à l'OS via le réglage utilisateur "VPN permanent + bloquer connexions sans VPN" (kernel-level, inviolable côté app), guidé par un onboarding obligatoire au premier lancement. Le noyau Go (protocole, registre, auth, crypto, leak check) est partagé avec le desktop via gomobile (`.aar`), garantissant la cohérence de la couche réseau cross-OS.
 
 Gratuit, financé par donations, distribué via plateformeliberte.fr.
 
@@ -69,13 +75,14 @@ Gratuit, financé par donations, distribué via plateformeliberte.fr.
 
 ## 2. Project Classification
 
-- **Type :** Application desktop (client) + serveurs réseau (relais VPS stateless multi-pays)
+- **Type :** Application desktop + mobile (client) + serveurs réseau (relais VPS stateless multi-pays)
 - **Domaine :** Cybersécurité / Vie privée
-- **Complexité :** Élevée — QUIC/HTTP3, encapsulation IP (TUN/Wintun), NAT côté relais, nftables/WFP, Ed25519, registre distribué, packaging multi-distro Linux
+- **Complexité :** Élevée — QUIC/HTTP3, encapsulation IP (TUN/Wintun/VpnService), NAT côté relais, nftables/WFP, kill switch OS-delegated Android, Ed25519, registre distribué, packaging multi-distro Linux, gomobile + JNI bridge Android, build reproductible F-Droid
 - **Contexte :** Greenfield
 - **Distribution :**
   - Windows : Installeur NSIS (service SCM + UI + Wintun DLL) via GoReleaser
   - Linux : Paquets natifs .deb (Debian/Ubuntu), .rpm (Fedora/RHEL), AUR (Arch), .apk (Alpine) via GoReleaser + nfpm
+  - Android (Phase 2) : F-Droid (catalogue officiel, build reproductible) + APK direct via GitHub releases (signé v2/v3 par master key Ed25519). Pas de Google Play en MVP/Phase 2
 - **Ressources :** Développeur unique (Akerimus) + IA
 
 ## 3. Success Criteria
@@ -105,6 +112,14 @@ Gratuit, financé par donations, distribué via plateformeliberte.fr.
 - IP web masquée vérifiable via whatismyip.com
 - Failover entre relais d'un même pays : < 5 secondes, transparent pour l'utilisateur
 - Uptime par relais : ≥ 99.5% mensuel mesuré via endpoint /health
+
+### Measurable Outcomes — Phase 2 (Android)
+
+- Démarrage VpnService Android → tunnel actif : < 3 secondes sur Pixel 6+ ou équivalent (Snapdragon 7-gen 1+)
+- Consommation RAM client Android : < 60 MB en fonctionnement normal (mesuré via `adb shell dumpsys meminfo`)
+- Taille APK signé : < 25 MB (mesuré via `apkanalyzer apk file-size`)
+- Taux d'activation "VPN permanent" via onboarding : > 95% des utilisateurs Android au premier lancement (mesuré via heuristique Settings.Global, agrégat anonyme local — non remonté)
+- Build F-Droid reproductible : 2 builds successifs depuis le même tag git produisent un APK avec hash SHA256 identique
 
 ## 4. User Journeys
 
@@ -196,6 +211,18 @@ Gratuit, financé par donations, distribué via plateformeliberte.fr.
 
 **Résolution :** Mode dégradé transitoire, automatiquement réversible. Camille n'a pas été coincée sans internet. L'indicateur visuel permanent l'a empêchée d'oublier qu'elle n'était pas protégée.
 
+### Parcours 9 : Léa — Utilisatrice Android grand public (Phase 2)
+
+**Qui :** Léa, 29 ans, communicante. Smartphone Pixel 7 (Android 14, API 34). Cherche un VPN simple sur mobile.
+
+**Scène d'ouverture :** Elle découvre Le Voile via plateformeliberte.fr → page Android. Deux options proposées : F-Droid (recommandé, build reproductible) ou APK direct GitHub releases (signé v2/v3, vérifiable par PackageManager).
+
+**Action :** Elle installe via F-Droid. Au premier lancement, popup système Android natif : "Le Voile demande l'autorisation de configurer un VPN" (consent VpnService). Elle accepte. L'app affiche un onboarding obligatoire : "Pour une protection maximale, activez 'VPN permanent + bloquer connexions sans VPN' dans les paramètres système. Sans cela, Le Voile peut être contourné par des apps qui démarrent avant lui." Bouton "Ouvrir les paramètres" → deeplink `Settings.ACTION_VPN_SETTINGS`. Elle active les deux toggles. Retour à l'app.
+
+**Moment clé :** Statut "Connecté — Allemagne (de-01)". Notification persistante dans la barre de statut Android (icône Le Voile + "Connecté Allemagne — IP 5.x.x.x"). whatismyip.com via Chrome confirme l'IP allemande. Elle ferme l'app par swipe → la notification reste, le tunnel reste actif (Foreground Service).
+
+**Résolution :** Usage normal du téléphone. Aucun trafic ne sort hors tunnel (kill switch OS). Le mode économie d'énergie agressif n'arrête pas le service (Foreground Service exempt). Au reboot, Léa relance l'app manuellement (pas d'autostart au boot — limitation Android), mais le réglage OS "VPN permanent" reconnecte automatiquement le dernier VPN actif avant qu'elle n'ouvre l'app.
+
 ### Journey → Capabilities Mapping
 
 | Capacité requise | Parcours source |
@@ -219,6 +246,16 @@ Gratuit, financé par donations, distribué via plateformeliberte.fr.
 | Option IPv6 hors tunnel (décochée par défaut) + avertissement explicite | Théo #7 |
 | Mode dégradé (désactivation temporaire kill switch) + indicateur visuel permanent | Camille #8 |
 | Réactivation automatique kill switch après rétablissement tunnel | Camille #8 |
+| Capture L3 via `android.net.VpnService` (Builder + tun fd via establish) — Phase 2 | Léa #9 |
+| Foreground Service avec notification persistante ongoing (rôle équivalent du tray Android) — Phase 2 | Léa #9 |
+| Onboarding obligatoire "VPN permanent" + deeplink `Settings.ACTION_VPN_SETTINGS` — Phase 2 | Léa #9 |
+| Kill switch délégué OS Android (réglage utilisateur "VPN permanent + bloquer connexions sans VPN") — Phase 2 | Léa #9 |
+| MainActivity + WebView Android plein écran (assets HTML/CSS/JS partagés desktop, JS Bridge `@JavascriptInterface`) — Phase 2 | Léa #9 |
+| Distribution F-Droid (build reproductible) + APK direct GitHub releases (signé v2/v3) — Phase 2 | Léa #9 |
+| JS Bridge `@JavascriptInterface` exposant Connect/Disconnect/GetStatus/SelectCountry — Phase 2 | Léa #9 |
+| Détection autre app VPN active via `VpnService.prepare()` (refus + message UI) — Phase 2 | Léa #9 |
+| Zéro télémétrie / crash reporter / analytics côté Android (audit Gradle CI) — Phase 2 | Léa #9 |
+| Config utilisateur Android persistée en JSON dans `getFilesDir()` (scoped storage) — Phase 2 | Léa #9 |
 
 ## 5. Domain-Specific Requirements
 
@@ -243,7 +280,25 @@ Gratuit, financé par donations, distribué via plateformeliberte.fr.
 
 ### Accessibilité
 
-- **RGAA niveau AA** (exigence légale produits français) — cibles minimales MVP : contraste AA (4.5:1 texte), navigation clavier complète, aria-labels sur tous contrôles, taille police réglable, focus visible. Test avec lecteur d'écran NVDA (Windows) / Orca (Linux) avant release
+- **RGAA niveau AA** (exigence légale produits français) — cibles minimales MVP : contraste AA (4.5:1 texte), navigation clavier complète, aria-labels sur tous contrôles, taille police réglable, focus visible. Test avec lecteur d'écran NVDA (Windows) / Orca (Linux) / **TalkBack (Android — Phase 2)** avant release. Sur Android, cibles tactiles ≥ 48dp (Material guidelines), navigation séquentielle TalkBack sans piège (focus order cohérent dans la WebView)
+
+### Distribution Android (Phase 2)
+
+- **F-Droid** — Catalogue officiel logiciel libre. Build reproductible obligatoire (vérifié par fingerprinting APK hash entre 2 builds successifs depuis le même tag git). Métadonnées XML versionnées dans le repo. Pas de compte Google requis pour l'utilisateur
+- **APK direct** — Disponible via GitHub releases, signé v2 (APK Signature Scheme v2) + v3 (key rotation) par la master key Ed25519 (cohérent NFR22g). Vérifié automatiquement à l'install par PackageManager Android
+- **Pas de Google Play en MVP/Phase 2** — Justification : ToS Play Store sur les VPN apps trop restrictives, scrutin chronophage, contradiction avec posture OSS. Phase 3+ : publication Play Store si traction (AAB déjà buildable, Play App Signing à mettre en place)
+- **Mise à jour** — F-Droid : géré par le client F-Droid de l'utilisateur. APK direct : notification UI + lien GitHub releases (pas d'auto-update embarqué — limitation Android non-rooté + posture sécurité)
+
+### Permissions Android Minimales (Phase 2)
+
+Permissions déclarées dans `AndroidManifest.xml` :
+
+- `INTERNET` — connexion réseau
+- `FOREGROUND_SERVICE` + `FOREGROUND_SERVICE_DATA_SYNC` (API 34+) — Foreground Service obligatoire pour héberger VpnService long-lived
+- `POST_NOTIFICATIONS` (API 33+) — notification persistante du Foreground Service
+- `BIND_VPN_SERVICE` — déclaration du service VpnService (consent utilisateur via popup système Android natif)
+
+**Aucune permission dangereuse** : pas de `READ_PHONE_STATE`, pas de `READ_CONTACTS`, pas de localisation (`ACCESS_FINE_LOCATION`/`ACCESS_COARSE_LOCATION`), pas de stockage externe (`READ_EXTERNAL_STORAGE`/`WRITE_EXTERNAL_STORAGE`), pas de `CAMERA`, pas de `RECORD_AUDIO`. Auditable via `apkanalyzer manifest permissions`.
 
 ### Contraintes Techniques Domaine
 
@@ -283,6 +338,10 @@ Gratuit, financé par donations, distribué via plateformeliberte.fr.
 | Révocation de la signature Microsoft Wintun DLL | Wintun inutilisable sur Windows → produit cassé | Veille sur bulletins Microsoft. Fallback documenté : build custom driver signé via EV certificate (budget Phase 2). Probabilité faible (Wintun est stable depuis 2019) |
 | Injection de paquets sur TUN par malware root | Paquets malveillants forwardés via le relais, IP relais grillée | Watchdog TUN détecte perturbations (NFR9g). Rate limiting par tunnel. Rotation IP relais si grillage détecté (opérationnel) |
 | Session token volé via compromis mémoire client | Usurpation d'identité pendant TTL 4h | Validation IP hash côté relais (NFR9d) — token utilisable uniquement depuis IP d'origine. TTL court (4h) limite la fenêtre |
+| **(Android Phase 2)** L'utilisateur n'active pas "VPN permanent" Android | Kill switch absent — fuites possibles au reconnect ou au boot avant lancement de l'app | Onboarding obligatoire au premier lancement avec deeplink `Settings.ACTION_VPN_SETTINGS` + warning persistant UI tant que non-activé. Détection heuristique via Settings.Global au lancement |
+| **(Android Phase 2)** Autre app VPN active (Tailscale, Wireguard, OpenVPN) prend le slot VpnService | Le Voile ne peut pas établir le tunnel | Détection au lancement via `VpnService.prepare()` qui retourne un Intent. Message UI explicite : "Une autre application VPN est active. Désactivez-la pour utiliser Le Voile." |
+| **(Android Phase 2)** OS Android tue le Foreground Service en battery save agressif (OEM Xiaomi/Huawei/Oppo) | Tunnel coupé sans avertissement utilisateur | Foreground Service avec notification ongoing résiste au battery save sur Android 8+. Documentation : whitelist battery conseillée pour OEM agressifs. Reconnect automatique au prochain réveil app + reprise du "VPN permanent" OS |
+| **(Android Phase 2)** F-Droid maintainer compromise | Distribution APK F-Droid altérée | Build reproductible : tout utilisateur peut vérifier que `sha256(APK F-Droid)` == `sha256(APK GitHub releases)` (signature v2+v3 master key Ed25519 inchangée). Documentation procédure de vérification publiée |
 
 ## 6. Innovation & Novel Patterns
 
@@ -293,6 +352,8 @@ Gratuit, financé par donations, distribué via plateformeliberte.fr.
 - **Modèle gateway NAT côté relais** — Le client n'embarque pas de stack TCP/IP userspace. Le relais désencapsule, applique NAT, forwarde. Simplifie massivement le client sans sacrifier les performances
 - **Camouflage protocolaire** — QUIC/HTTP/3 + TLS 1.3 direct vers le relais (ALPN h3, SNI = domaine relais). Pour un observateur réseau, Le Voile ressemble à un site web ordinaire
 - **Kill switch firewall kernel-level** — Règles nftables (Linux) / WFP (Windows) qui survivent aux crashes du service client. Impossible à contourner accidentellement ou par défaut d'arrêt du process
+- **Frontend HTML/CSS/JS partagé desktop ↔ Android (Phase 2)** — Mêmes assets servis par WebView Android (`WebViewAssetLoader`) que par webview desktop, synchronisés au build via `android/scripts/sync-frontend.sh`. Cohérence visuelle 100% cross-OS (charte plateformeliberte.fr réutilisée), réutilisation maximale du frontend, pas de réécriture UI native (ni Compose, ni Flutter, ni RN). JS Bridge `@JavascriptInterface` exposant les commandes natives côté Android — équivalent fonctionnel du serveur HTTP local desktop, sans ouvrir de port localhost
+- **Noyau Go partagé via gomobile (Phase 2)** — 5 shims gomobile-compatibles sous `android/shims/{protocol,auth,crypto,registry,leakcheck}/` compilés en `.aar` consommable par Gradle (cf. erratum architecture ADR-09 Story 9.2 — `protocol`/`auth` shims canoniques, les 3 autres consommant en lecture les packages racine `internal/{crypto,registry,leakcheck,tunnel}`). Réutilisation 100% de la logique protocole/crypto déjà testée desktop. Pattern éprouvé production (Tailscale Android, WireGuard Android)
 
 ### Compromis Documentés
 
@@ -300,6 +361,8 @@ Gratuit, financé par donations, distribué via plateformeliberte.fr.
 - **Abandon du bypass > 50 Mo** — Les gros téléchargements (vidéos, jeux, ISO) consomment la bande passante des relais. Compromis accepté — cohérence de la protection, simplicité. Les relais sont dimensionnés pour absorber la charge (10 GiB/jour par IP)
 - **Dépendance à WebKitGTK sur Linux** — UI HTML/CSS/JS nécessite une runtime WebView. Compromis accepté — réutilisation du frontend Windows, packaging moderne
 - **DNS résolu côté relais** — Le relais voit les noms de domaine résolus en mémoire courte (le temps de la résolution, non persisté). Compromis accepté : blocklist StevenBlack centralisée, moins de dépendance au resolver système client. **Changement de modèle de confiance** : l'utilisateur déplace la confiance DNS de son ISP vers l'opérateur du relais — c'est le trade-off inhérent à tout VPN. Zero-log par architecture côté relais (aucune persistence, RAM effacée au restart)
+- **Kill switch délégué OS Android (Phase 2)** — Sur Android non-rooté, impossible d'installer des règles iptables/eBPF côté app (restriction kernel). Le réglage OS "VPN permanent + bloquer connexions sans VPN" est kernel-level, inviolable côté app, persiste aux crashes/redémarrages — supérieur à toute simulation app-level (reconnect-loop, drop sockets). Compromis : dépendance à un toggle utilisateur explicite, mitigée par onboarding obligatoire + warning persistant UI tant que non-activé. Détection heuristique via `Settings.Global` (API non-publique, fragile — fallback "non vérifiable" si Android change l'API)
+- **Pas d'autostart au boot Android (Phase 2)** — Limitation OS (Android 10+ restrictions sur les BootCompletedReceiver pour les apps en background). L'utilisateur doit ouvrir l'app après reboot pour relancer la connexion. Atténuation : le réglage OS "VPN permanent" reconnecte automatiquement le dernier VPN actif au reboot, donc le tunnel est rétabli avant que l'utilisateur ne lance l'app
 
 ### Validation
 
@@ -308,10 +371,15 @@ Gratuit, financé par donations, distribué via plateformeliberte.fr.
 - Test IP masquée : whatismyip.com
 - Test DPI : Wireshark — vérifier absence de signature protocolaire VPN (indiscernabilité par 0 pattern-match sur 100 échantillons de trafic)
 - Tests terrain avec amis d'Akerimus
+- **Tests Android (Phase 2)** : reproductibilité F-Droid (2 builds successifs → APK avec hash SHA256 identique), accessibilité TalkBack (navigation séquentielle complète sans piège), audit permissions (`apkanalyzer manifest permissions` ne révèle aucune permission dangereuse), audit dépendances Gradle (aucun module Firebase/Sentry/Bugsnag/Mixpanel/analytics)
 
-## 7. Desktop App Requirements
+## 7. Client App Requirements
 
-### Architecture
+Le client se décline en deux familles d'arbres de code complets et autonomes (cf. ADR-08 : isolation OS maximale, duplication assumée). Le strict noyau protocole/crypto/registre/session est mutualisé via packages Go (5 packages exposés cross-platform — natif sur desktop, gomobile `.aar` sur Android).
+
+### Desktop (Windows + Linux)
+
+#### Architecture
 
 **Architecture 2 processus (Windows + Linux) :**
 - **levoile-service** — Service privilégié cross-platform via kardianos/service. Orchestrateur principal : TUN/Wintun interface, firewall (nftables/WFP), routing, tunnel QUIC, registry discovery, failover, leak check, updater. Expose un serveur IPC.
@@ -329,7 +397,7 @@ Gratuit, financé par donations, distribué via plateformeliberte.fr.
 - Post-install : `setcap cap_net_admin,cap_net_raw+ep /usr/bin/levoile-service`, `systemctl enable --now levoile.service`
 - Fichiers installés : `/usr/bin/levoile-service`, `/usr/bin/levoile-ui`, `/usr/lib/systemd/system/levoile.service`, `/etc/levoile/config.toml`, `/usr/share/applications/levoile.desktop`, icônes XDG
 
-### System Integration
+#### System Integration
 
 - **Capture trafic L3** — Interface virtuelle `levoile0` (TUN Linux `/dev/net/tun` / Wintun Windows DLL). Route par défaut pointe vers cette interface. Tout le trafic IP de la machine y transite
 - **Firewall kill switch** — nftables (Linux) via ruleset `inet levoile` / Windows Filtering Platform (WFP) via provider + sublayer dédiés. Drop tout sauf interface TUN + paquets vers IP relais:443. Persiste aux crashes du service
@@ -338,7 +406,7 @@ Gratuit, financé par donations, distribué via plateformeliberte.fr.
 - **DNS** — Résolu côté relais avec blocklist StevenBlack/hosts intégrée. Plus de proxy DNS local côté client. Plus de gestion du resolver système (inutile : tout passe par la TUN)
 - **Singleton UI** — Mutex nommé Windows / flock Linux empêchant les instances multiples de l'UI
 
-### Auto-Update Strategy
+#### Auto-Update Strategy
 
 - Vérification périodique des releases GitHub
 - Téléchargement en arrière-plan + vérification signature Ed25519
@@ -346,15 +414,47 @@ Gratuit, financé par donations, distribué via plateformeliberte.fr.
 - Rollback automatique si la nouvelle version échoue (tunnel pas établi dans les 30s)
 - Notification UI : "Mise à jour prête — appliquée au prochain démarrage"
 
+### Android (Phase 2)
+
+#### Architecture
+
+**Architecture mono-processus Android (1 processus, plusieurs composants) :**
+
+- **`MainActivity`** — Activity Android hébergeant un `WebView` plein écran avec `WebViewAssetLoader`. Charge les assets HTML/CSS/JS partagés desktop (synchronisés au build via `android/scripts/sync-frontend.sh`). Layout responsive mobile (media queries, sélecteur pays vertical, boutons tactiles ≥ 48dp). JS Bridge `@JavascriptInterface` exposant les commandes natives Connect/Disconnect/GetStatus/SelectCountry, sérialisation JSON ligne par ligne, max 4 Ko par message
+- **`LeVoileVpnService`** — Foreground Service héritant de `android.net.VpnService`. Crée l'interface TUN via Builder pattern (`mtu(1420)`, `addRoute("0.0.0.0", 0)`, `addAddress(tun_ip, 24)`), récupère le file descriptor via `establish()`, lit/écrit les paquets IP bruts via `FileInputStream`/`FileOutputStream` sur le fd. Tunnel QUIC/HTTP3 vers le relais via le noyau Go partagé (gomobile)
+- **Notification persistante** — Channel `levoile_vpn_status` (importance LOW), notification ongoing non-dismissable avec statut + pays + IP visible + action "Déconnecter" (PendingIntent `FLAG_IMMUTABLE`). Joue le rôle équivalent du tray desktop
+- **Noyau Go partagé** — Build via `android/scripts/build-aar.{sh,ps1}` (hors task Gradle directe pour frontière claire). Produit `android/levoile-core/libs/levoile-core.aar` consommable par Gradle, alimenté par 5 shims gomobile sous `android/shims/{protocol,auth,crypto,registry,leakcheck}/` (cf. erratum architecture ADR-09 Story 9.2)
+
+**Distribution :**
+- F-Droid (catalogue officiel, métadonnées XML, build reproductible)
+- APK direct via GitHub releases (signé v2 + v3 par master key Ed25519, vérifié par PackageManager au install)
+
+#### System Integration
+
+- **Capture trafic L3** — `android.net.VpnService.Builder` (seule API non-rootée disponible). MTU 1420, route 0.0.0.0/0
+- **Kill switch** — Délégué à l'OS via réglage utilisateur "VPN permanent + bloquer connexions sans VPN" (`Settings.ACTION_VPN_SETTINGS`). Onboarding obligatoire au premier lancement avec deeplink + warning persistant UI tant que non-activé. Détection d'état via heuristique `Settings.Global` (fragile, fallback "non vérifiable" documenté)
+- **Routing** — Géré par VpnService (addRoute + addAddress)
+- **DNS** — Résolu côté relais (cohérent desktop)
+- **Lifecycle** — Activity destruction (swipe close) n'arrête pas le Foreground Service. Au reboot, pas d'autostart automatique (limitation Android 10+ sur les BootCompletedReceiver), mais le réglage OS "VPN permanent" reconnecte le dernier VPN actif
+- **Singleton** — Implicite (Android impose 1 seule app VPN active via `VpnService.prepare()`)
+- **Privilèges** — Aucun root requis. Permissions Android minimales (cf. §5 Permissions Android Minimales)
+
+#### Auto-Update Strategy
+
+- **F-Droid** : géré par le client F-Droid de l'utilisateur (notification de mise à jour automatique côté F-Droid)
+- **APK direct** : notification UI "Mise à jour {version} disponible" + lien GitHub releases. Pas d'auto-update embarqué (limitation Android non-rooté + posture sécurité — pas d'élévation runtime)
+- **Vérification signature** : APK signé v2 + v3 par master key Ed25519, vérifié automatiquement à l'install par PackageManager Android (mécanisme natif OS)
+
 ### Platform Support
 
-| Plateforme | Statut MVP | Notes |
+| Plateforme | Statut | Notes |
 |---|---|---|
-| Windows 10/11 | Principal | Installeur NSIS. WebView2 Runtime requis (présent par défaut Windows 11, installé automatiquement Windows 10) |
-| Debian 11+ / Ubuntu 22.04+ | Principal | Paquet .deb. Deps : libwebkit2gtk-6.0-0 \| libwebkit2gtk-4.1-0, libayatana-appindicator3-1, nftables, iproute2 |
-| Fedora 38+ / RHEL 9+ | Principal | Paquet .rpm. Deps : webkit2gtk4.1, libayatana-appindicator-gtk3, nftables, iproute |
-| Arch Linux (rolling) | Principal | AUR `levoile`. Deps : webkit2gtk-4.1, libayatana-appindicator, nftables, iproute2 |
-| Alpine 3.18+ | Principal | Paquet .apk. Deps : webkit2gtk-4.1, libayatana-appindicator, nftables, iproute2 |
+| Windows 10/11 | MVP — Principal | Installeur NSIS. WebView2 Runtime requis (présent par défaut Windows 11, installé automatiquement Windows 10) |
+| Debian 11+ / Ubuntu 22.04+ | MVP — Principal | Paquet .deb. Deps : libwebkit2gtk-6.0-0 \| libwebkit2gtk-4.1-0, libayatana-appindicator3-1, nftables, iproute2 |
+| Fedora 38+ / RHEL 9+ | MVP — Principal | Paquet .rpm. Deps : webkit2gtk4.1, libayatana-appindicator-gtk3, nftables, iproute |
+| Arch Linux (rolling) | MVP — Principal | AUR `levoile`. Deps : webkit2gtk-4.1, libayatana-appindicator, nftables, iproute2 |
+| Alpine 3.18+ | MVP — Principal | Paquet .apk. Deps : webkit2gtk-4.1, libayatana-appindicator, nftables, iproute2 |
+| Android 10+ (API 29+) | **Phase 2** | minSdk 29, targetSdk 34. F-Droid + APK direct GitHub releases. Pixel 6+ recommandé. Hors scope : iOS, Wear OS, Android TV, Auto |
 | macOS | Différé Phase 3 | Support utun via wireguard/tun possible, mais non prioritaire |
 
 ## 8. Project Scoping & Phased Development
@@ -384,15 +484,19 @@ Gratuit, financé par donations, distribué via plateformeliberte.fr.
 - Registre dynamique avec API de gestion → Phase 2
 - Support ICMP dans /tunnel (ping) — à valider selon complexité d'implémentation
 
-### Phase 2 — Enrichissements
+### Phase 2 — Enrichissements + Support Android
 
+**Priorité haute :**
+- **Support Android (API 29+, Android 10+)** — Application Android Kotlin avec architecture mono-processus : `MainActivity` (WebView plein écran avec assets HTML/CSS/JS partagés desktop, JS Bridge `@JavascriptInterface`) + `LeVoileVpnService` (Foreground Service héritant de `android.net.VpnService`). Noyau Go partagé via gomobile (`.aar`). Distribution F-Droid (build reproductible obligatoire) + APK direct GitHub releases (signé v2/v3 par master key Ed25519). Onboarding obligatoire activant "VPN permanent + bloquer connexions sans VPN" (kill switch délégué OS). Aucune télémétrie / crash reporter / analytics. Hors scope explicite : iOS, Android TV, Wear OS, Android Auto, tablettes spécifiques (la WebView responsive couvre les phones et tablettes Android standard)
+
+**Autres :**
 - Support IPv6 end-to-end si non complet au MVP
 - Support ICMP (ping) via /tunnel si différé
 - Fallback DNS multi-résolveur supplémentaire côté relais
 - Auto-test de fuite périodique (10 min) côté client
 - Registre dynamique (API de gestion pour ajouter/retirer des relais sans redéployer)
 - Certificate pinning renforcé
-- CI/CD GitHub Actions complet (build multi-arch amd64 + arm64, publication AUR automatique)
+- CI/CD GitHub Actions complet (build multi-arch amd64 + arm64, publication AUR automatique, build `.aar` Android + APK signé)
 
 ### Phase 3 — Expansion
 
@@ -421,7 +525,7 @@ Gratuit, financé par donations, distribué via plateformeliberte.fr.
 - FR6: Le client peut configurer le routage système pour router le trafic par défaut via `levoile0`, avec route spécifique vers l'IP du relais via la gateway originale
 - FR7: Le client peut détruire l'interface TUN/Wintun et restaurer les routes d'origine à la désactivation ou au shutdown propre
 - FR7b: Le client peut flusher le cache DNS système au disconnect : `ipconfig /flushdns` (Windows), `resolvectl flush-caches` ou équivalent selon le resolver détecté (Linux)
-- FR8: Le client peut activer un kill switch firewall OS-level (nftables Linux / Windows Filtering Platform) droppant tout trafic sauf (a) sur l'interface TUN, (b) sortant vers l'IP du relais sur port 443. Le kill switch persiste même si le service crashe (règles kernel indépendantes du process)
+- FR8: **(Desktop : Windows + Linux)** Le client peut activer un kill switch firewall OS-level (nftables Linux / Windows Filtering Platform) droppant tout trafic sauf (a) sur l'interface TUN, (b) sortant vers l'IP du relais sur port 443. Le kill switch persiste même si le service crashe (règles kernel indépendantes du process). Sur Android (Phase 2), le kill switch est délégué à l'OS via le réglage utilisateur "VPN permanent" — voir FR-AND-3
 - FR8b: Le relais peut filtrer les requêtes DNS via une blocklist de domaines malveillants (StevenBlack/hosts), téléchargée périodiquement et stockée en mémoire côté relais
 - FR8c: Le client peut détecter un captive portal Wi-Fi au démarrage (probe HTTP RFC 7710 ou `http://captive.apple.com/hotspot-detect.html`). Si redirect détecté, mode "captive portal" activé : lockdown firewall relaxé autorisant uniquement trafic vers gateway réseau local. Bandeau UI : "Authentifiez-vous sur le portail Wi-Fi, puis cliquez 'Activer la protection'". Transition automatique vers kill switch plein + tunnel dès que le probe réussit
 - FR8d: **IPv6 non tunnelisé (option)** — Au MVP, le tunnel transporte uniquement IPv4. Par défaut, IPv6 est **entièrement bloqué** par le firewall (aucune fuite possible). L'utilisateur peut cocher une option avancée dans l'UI (`[ ] Autoriser IPv6 hors tunnel`, décochée par défaut) qui autorise le trafic IPv6 natif en clair hors tunnel. L'activation affiche un avertissement clair : "L'IPv6 ne sera PAS protégé par Le Voile et exposera votre IP réelle sur les services IPv6". Setting persisté en config TOML (`[tunnel] allow_ipv6_leak = false`). Tunneling IPv6 complet prévu Phase 2
@@ -441,11 +545,11 @@ Gratuit, financé par donations, distribué via plateformeliberte.fr.
 
 ### Démarrage & Lifecycle
 
-- FR14: Le service démarre automatiquement au boot (SCM Windows / systemd Linux), l'UI démarre via autostart (HKCU Windows / XDG autostart Linux)
-- FR15: L'icône système (system tray) persiste en arrière-plan après fermeture de la fenêtre webview (seule la fenêtre est détruite, le tray et le service continuent). Réouverture via le menu tray "Ouvrir"
-- FR15b: Le processus UI est supervisé par un gestionnaire de redémarrage automatique. Linux : unit systemd user `levoile-ui.service` avec `Restart=on-failure` lancé via autostart XDG. Windows : détection crash via job object / Watchdog service SCM qui relance `levoile-ui.exe`. Couvre les cas de crash du desktop environment (GNOME Shell restart, KDE Plasma crash) qui tuent le processus UI
-- FR16: L'utilisateur peut quitter l'UI via le menu tray. Le service continue de tourner (contrôlé par systemd/SCM). Pour un arrêt complet : désactivation via l'UI ou `systemctl stop levoile` / `sc stop levoile-service`
-- FR16b: L'utilisateur peut désactiver temporairement le kill switch firewall via menu tray "Mode dégradé" ou CLI authentifiée (`levoile-ctl killswitch off`). État persisté en config. Restauration automatique à la prochaine connexion tunnel réussie. Indicateur visuel permanent dans l'UI tant que le mode dégradé est actif (icône tray rouge + bandeau webview)
+- FR14: **(Desktop)** Le service démarre automatiquement au boot (SCM Windows / systemd Linux), l'UI démarre via autostart (HKCU Windows / XDG autostart Linux). Sur Android (Phase 2), pas d'autostart au boot (limitation OS — restrictions Android 10+ sur les BootCompletedReceiver) : l'utilisateur lance l'app manuellement, mais le réglage OS "VPN permanent" (FR-AND-3) reconnecte le dernier VPN actif au reboot
+- FR15: **(Desktop)** L'icône système (system tray) persiste en arrière-plan après fermeture de la fenêtre webview (seule la fenêtre est détruite, le tray et le service continuent). Réouverture via le menu tray "Ouvrir". Sur Android (Phase 2), l'équivalent fonctionnel est la notification persistante du Foreground Service (FR-AND-2) qui reste affichée après swipe-close de l'Activity
+- FR15b: **(Desktop uniquement)** Le processus UI est supervisé par un gestionnaire de redémarrage automatique. Linux : unit systemd user `levoile-ui.service` avec `Restart=on-failure` lancé via autostart XDG. Windows : détection crash via job object / Watchdog service SCM qui relance `levoile-ui.exe`. Couvre les cas de crash du desktop environment (GNOME Shell restart, KDE Plasma crash) qui tuent le processus UI. Sur Android, supervision déléguée à l'OS (Android relance les Foreground Services tués dans la mesure du possible — best-effort)
+- FR16: **(Desktop)** L'utilisateur peut quitter l'UI via le menu tray. Le service continue de tourner (contrôlé par systemd/SCM). Pour un arrêt complet : désactivation via l'UI ou `systemctl stop levoile` / `sc stop levoile-service`. Sur Android (Phase 2), l'utilisateur arrête le tunnel via l'action "Déconnecter" de la notification persistante ou un bouton dans l'app
+- FR16b: **(Desktop uniquement)** L'utilisateur peut désactiver temporairement le kill switch firewall via menu tray "Mode dégradé" ou CLI authentifiée (`levoile-ctl killswitch off`). État persisté en config. Restauration automatique à la prochaine connexion tunnel réussie. Indicateur visuel permanent dans l'UI tant que le mode dégradé est actif (icône tray rouge + bandeau webview). Sur Android, le mode dégradé équivaut à désactiver "VPN permanent" dans Settings — action utilisateur explicite hors-app (cohérent avec la délégation OS)
 
 ### Relais Multi-VPS
 
@@ -459,9 +563,10 @@ Gratuit, financé par donations, distribué via plateformeliberte.fr.
 - FR20: L'utilisateur peut installer Le Voile via :
   - Windows : installeur NSIS (service SCM, UI autostart, shortcuts, Wintun DLL)
   - Linux : paquets natifs `apt install levoile` (.deb) / `dnf install levoile` (.rpm) / `yay -S levoile` (AUR) / `apk add levoile` (Alpine). Post-install configure les capabilities et active le service systemd
+  - **Android (Phase 2)** : F-Droid (recherche "Le Voile" dans le client F-Droid) ou APK direct via github.com/velia-the-veil/le_voile/releases (signé v2/v3, vérifié automatiquement par PackageManager Android au install)
 - FR20b: Tous les paquets de distribution (.exe NSIS, .deb, .rpm, .apk) sont signés Ed25519 par la master key Le Voile. Le PKGBUILD AUR embarque un checksum SHA256 vérifié upstream + signatures GPG des commits du repo AUR. Les gestionnaires de paquets rejettent toute installation sans signature valide
 - FR21: Le service persiste via SCM Windows / systemd Linux. Les règles firewall (nftables/WFP) et l'interface TUN persistent tant que le service tourne. Au shutdown propre, tout est nettoyé
-- FR22: Configuration utilisateur (pays préféré, préférences UI, relay domain, clé publique Ed25519, TUN name, MTU) stockée en TOML dans `%AppData%/LeVoile/` (Windows) ou `~/.config/levoile/` (Linux). Config service Linux : `/etc/levoile/config.toml`. Cache registre relais en JSON séparé
+- FR22: Configuration utilisateur (pays préféré, préférences UI, relay domain, clé publique Ed25519, TUN name, MTU) stockée en TOML dans `%AppData%/LeVoile/` (Windows) ou `~/.config/levoile/` (Linux). Config service Linux : `/etc/levoile/config.toml`. Sur Android (Phase 2), la config est stockée en JSON dans `getFilesDir()` (scoped storage natif AndroidX, accessible uniquement à l'UID de l'app) — voir FR-AND-10. Cache registre relais en JSON séparé
 
 ### Découverte & Sélection de Relais
 
@@ -497,6 +602,20 @@ Gratuit, financé par donations, distribué via plateformeliberte.fr.
 
 <!-- FR37-FR40 (Extension Navigateur) : SUPPRIMÉS lors de la révision 2026-04-15 — la capture L3 machine-wide (TUN/Wintun) rend l'extension redondante. Le bypass > 50 Mo est abandonné. -->
 
+### Phase 2 — Android
+
+Les FRs ci-dessous formalisent les exigences Android pour la Phase 2 (livraison après stabilisation Windows + Linux). L'architecture est actée (révision 2026-04-29, ADR-08 à ADR-15) ; ces FRs servent de baseline pour le découpage en epics/stories Android.
+
+- FR-AND-1: Le client Android peut établir un tunnel via `android.net.VpnService` (Builder pattern : `mtu(1420)`, `addRoute("0.0.0.0", 0)`, `addAddress(tun_ip, 24)`). L'interface TUN est créée par `establish()` et le file descriptor utilisé pour lire/écrire les paquets IP bruts via `FileInputStream`/`FileOutputStream`
+- FR-AND-2: Le client Android peut héberger le tunnel dans un Foreground Service (`LeVoileVpnService` héritant de `VpnService`) avec notification persistante ongoing (channel `levoile_vpn_status`, importance LOW, non-dismissable, action "Déconnecter" via PendingIntent `FLAG_IMMUTABLE`). La notification affiche statut + pays + IP visible
+- FR-AND-3: Le client Android peut afficher au premier lancement un onboarding obligatoire incitant l'utilisateur à activer "VPN permanent + bloquer connexions sans VPN" dans Settings via deeplink `Settings.ACTION_VPN_SETTINGS`. L'app détecte au lancement si le toggle est actif via heuristique `Settings.Global` et affiche un warning persistant UI (bandeau rouge non-dismissable) tant que non-activé
+- FR-AND-4: Le client Android peut héberger l'UI dans une `MainActivity` avec `WebView` plein écran chargeant les mêmes assets HTML/CSS/JS que desktop via `WebViewAssetLoader` (synchronisés au build via `android/scripts/sync-frontend.sh`). Layout responsive mobile (media queries : sélecteur pays vertical, pas de sidebar, boutons tactiles ≥ 48dp)
+- FR-AND-5: Le client Android peut exposer les commandes natives au frontend JS via `@JavascriptInterface` (méthodes `connect()`, `disconnect()`, `getStatus()`, `selectCountry(iso)`), sérialisation JSON ligne par ligne, max 4 Ko par message. Pas de serveur HTTP local (limitation Android non-rooté + posture sécurité)
+- FR-AND-6: Le client Android peut détecter au lancement la présence d'une autre app VPN active via `VpnService.prepare()` retournant un `Intent` non-null. Si détecté, refus de démarrer le tunnel avec message UI explicite : "Une autre application VPN est active sur cet appareil. Désactivez-la pour utiliser Le Voile."
+- FR-AND-7: Le client Android peut être distribué via F-Droid (catalogue officiel, métadonnées XML versionnées dans le repo) avec build reproductible obligatoire (vérifié par fingerprinting : 2 builds successifs depuis le même tag git produisent un APK avec hash SHA256 identique) et APK direct via GitHub releases signé v2 (APK Signature Scheme v2) + v3 (key rotation) par la master key Ed25519
+- FR-AND-8: Le client Android n'embarque aucune télémétrie, aucun crash reporter (pas de Firebase Crashlytics, pas de Sentry, pas de Bugsnag, pas de Mixpanel/Adjust/Branch), aucune analytics maison. Audit dépendances Gradle vérifie l'absence de ces modules. Bug reports utilisateur via export texte manuel local (sans IP, sans identifiant, sans données utilisateur)
+- FR-AND-9: Le client Android peut notifier l'utilisateur de la disponibilité d'une nouvelle version. Vérification au lancement de l'app + vérification périodique en arrière-plan toutes les 24h via `WorkManager` (cohérent FR35 desktop "vérification périodique"). Pour APK direct : notification UI "Mise à jour {version} disponible" + lien GitHub releases (pas d'auto-update embarqué — limitation Android non-rooté + posture sécurité). Pour F-Droid : la vérification embarquée est désactivée (la mise à jour est gérée nativement par le client F-Droid de l'utilisateur)
+- FR-AND-10: La configuration utilisateur Android (pays préféré, préférences UI, registre relais cache, dernière clé publique Ed25519 vérifiée) est stockée en JSON dans `getFilesDir()` (scoped storage natif AndroidX, accessible uniquement à l'UID de l'app — équivalent sécurité aux permissions 0600 desktop). Pas de TOML sur Android (convention écosystème AndroidX)
 
 ## 10. Non-Functional Requirements
 
@@ -519,7 +638,7 @@ Gratuit, financé par donations, distribué via plateformeliberte.fr.
 - NFR9g: Le client détecte l'injection de paquets externes sur l'interface TUN par comparaison de checksum et timestamp. Paquets non émis par le pump tunnel ignorés et loggés
 - NFR9h: Binaires compilés avec `-ldflags="-s -w"` (strip symbols + DWARF debug info) — freine le reverse engineering basique. Obfuscation avancée (garble) différée Phase 2
 - NFR9i: Résolution DNS du relais au bootstrap via DoH (Cloudflare DoH ou Quad9 DoH) — protège contre DNS poisoning du resolver système client lors de la première résolution
-- NFR9j: Config TOML client stockée avec permissions 0600 (Linux) / ACL user-only (Windows). Toute modification externe détectée au prochain démarrage (hash HMAC signé par clé machine-local)
+- NFR9j: Config TOML client stockée avec permissions 0600 (Linux) / ACL user-only (Windows). Sur Android (Phase 2), config JSON dans `getFilesDir()` — scoped storage natif AndroidX, accessible uniquement à l'UID de l'app, équivalent sécurité aux permissions 0600 desktop. Toute modification externe détectée au prochain démarrage (hash HMAC signé par clé machine-local — sur Android, clé dérivée via `Android Keystore`)
 
 ### Performance
 
@@ -544,19 +663,19 @@ Gratuit, financé par donations, distribué via plateformeliberte.fr.
 
 ### Platform Compatibility
 
-- NFR22: Fonctionnement équivalent sur toutes les plateformes cibles, mesuré par une matrice de tests e2e (tunneling, kill switch, leak check, UI, connect/disconnect, failover, update) dont 100% doivent passer sur Windows 11, Ubuntu 24.04, Fedora 40, Arch rolling et Alpine 3.19 avant release
+- NFR22: Fonctionnement équivalent sur toutes les plateformes cibles, mesuré par une matrice de tests e2e (tunneling, kill switch, leak check, UI, connect/disconnect, failover, update) dont 100% doivent passer sur Windows 11, Ubuntu 24.04, Fedora 40, Arch rolling et Alpine 3.19 avant release. **Phase 2 :** matrice étendue à émulateur Android API 29 + 33 + 34 (cf. NFR-AND-10)
 - NFR23: Dépendances runtime Linux résolues automatiquement par les gestionnaires de paquets natifs (apt/dnf/pacman/apk) — aucune installation manuelle requise pour libwebkit2gtk, libayatana-appindicator3, nftables, iproute2
 - NFR24: Installation Linux configure les capabilities via le unit systemd (`AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW`, `User=levoile`) — pas de sudo récurrent pour l'utilisateur au runtime, capabilities persistent aux mises à jour binaire sans réapplication
 
 ### Logging & Observability (Client)
 
-- NFR22a: Les logs client (syslog Linux / Event Log Windows) contiennent uniquement des événements opérationnels : état tunnel (connected/disconnected), erreurs, alertes fuite, updates. **Aucune URL visitée, aucun nom de domaine résolu, aucune destination IP, aucun contenu utilisateur**
+- NFR22a: Les logs client (syslog Linux / Event Log Windows / Logcat Android — Phase 2 via `android.util.Log`) contiennent uniquement des événements opérationnels : état tunnel (connected/disconnected), erreurs, alertes fuite, updates. **Aucune URL visitée, aucun nom de domaine résolu, aucune destination IP, aucun contenu utilisateur**
 - NFR22b: Niveau de log par défaut : INFO (production). Niveau DEBUG activable uniquement via flag CLI `--debug` (utilisateur avancé). DEBUG n'active JAMAIS le log de données utilisateur
 - NFR22c: Rotation logs automatique (systemd/journald ou rotation manuelle Windows) — taille max 10 Mo, conservation 7 jours
 
 ### Security Testing & Supply Chain
 
-- NFR22d: Pipeline CI exécute au minimum : `go vet`, `gosec` (SAST), `govulncheck` (dépendances vulnérables), `go test -race ./...`. Build bloqué si l'un échoue avec severity ≥ medium
+- NFR22d: Pipeline CI exécute au minimum : `go vet`, `gosec` (SAST), `govulncheck` (dépendances vulnérables), `go test -race ./...`. **Phase 2 (Android) :** `gradle lint`, audit dépendances Gradle (assertion absence de modules télémétrie : Firebase, Sentry, Bugsnag, Mixpanel, Adjust, Branch), `gradle testDebugUnitTest`, scan ProGuard rules, vérification reproductibilité APK (hash SHA256 stable entre 2 builds successifs). Build bloqué si l'un échoue avec severity ≥ medium
 - NFR22e: Les dépendances Go sont épinglées (go.sum commit) et révisées à chaque mise à jour. Renovate bot ou équivalent pour automatisation. Scan hebdomadaire govulncheck sur `main`
 - NFR22f: Fuzzing (go-fuzz / Go 1.18+ native fuzzing) sur les parsers critiques : packet IP, STUN, TOML config, registre JSON. Exécution hebdomadaire en CI
 
@@ -569,4 +688,20 @@ Gratuit, financé par donations, distribué via plateformeliberte.fr.
 ### Runtime Integrity & Startup Safety
 
 - NFR25: Le kill switch firewall est activé dans le même ordre que le reste de la séquence Connect (après TUN + routing + tunnel établi). **Risque accepté** : les apps auto-lancées au boot (clients cloud, AV, Windows Update) peuvent émettre du trafic pendant les premières secondes avant que le tunnel soit prêt. Le produit cible le grand public, pas des hackers : la protection commence quand l'utilisateur utilise activement ses services, pas pendant le boot. Une fenêtre de fuite de quelques secondes au démarrage système est acceptable face à la simplicité architecturale
-- NFR26: Le service vérifie l'intégrité de son propre binaire au démarrage — hash SHA256 comparé à une valeur signée Ed25519 embarquée dans le binaire. Échec de vérification = refus de démarrer + log syslog/Event Log + refus d'activer le tunnel. Protège contre le remplacement du binaire post-installation par un malware
+- NFR26: Le service vérifie l'intégrité de son propre binaire au démarrage — hash SHA256 comparé à une valeur signée Ed25519 embarquée dans le binaire. Échec de vérification = refus de démarrer + log syslog/Event Log + refus d'activer le tunnel. Protège contre le remplacement du binaire post-installation par un malware. **Sur Android (Phase 2)**, l'intégrité APK est vérifiée par PackageManager Android au install (signature v2 + v3 par master key Ed25519) — équivalent fonctionnel natif OS, pas besoin de vérification applicative supplémentaire
+
+### Phase 2 — Android
+
+Les NFRs ci-dessous formalisent les exigences non-fonctionnelles Android pour la Phase 2.
+
+- NFR-AND-1: Consommation RAM client Android < 60 MB en fonctionnement normal (mesuré via `adb shell dumpsys meminfo fr.plateformeliberte.levoile`, agrégé Java heap + native heap + system)
+- NFR-AND-2: Établissement tunnel Android (consent VpnService + Builder + `establish()` + handshake QUIC) < 3 secondes sur Pixel 6+ ou équivalent (Snapdragon 7-gen 1+) sur réseau LTE/4G+ ou Wi-Fi domestique avec RTT < 80ms vers le VPS relais — mesuré par chronométrage applicatif (Trace API Android). Parallèle fonctionnel à NFR11 desktop (ADSL/fibre, RTT < 50ms)
+- NFR-AND-3: Taille APK signé < 25 MB (mesuré via `apkanalyzer apk file-size`). Inclut le `.aar` gomobile + assets HTML/CSS/JS partagés desktop
+- NFR-AND-4: `minSdk = 29` (Android 10+), `targetSdk = 34` (Android 14+). Couvre ~80% du parc actif fin 2026. Refus explicite Android 8/9 (corner cases sécu/VPN ne valant pas l'effort)
+- NFR-AND-5: APK signé v2 (APK Signature Scheme v2) + v3 (key rotation) par la master key Ed25519 (cohérent NFR22g). Vérification automatique au install par PackageManager Android — refus d'install si signature invalide ou altérée
+- NFR-AND-6: Build F-Droid reproductible — 2 builds successifs depuis le même tag git produisent un APK avec hash SHA256 identique. Vérifiable manuellement par tout utilisateur via `sha256sum apk-fdroid.apk apk-github.apk` (procédure documentée dans le repo)
+- NFR-AND-7: Aucune permission Android dangereuse. Permissions déclarées dans `AndroidManifest.xml` : `INTERNET`, `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_DATA_SYNC` (API 34+), `POST_NOTIFICATIONS` (API 33+), `BIND_VPN_SERVICE`. Auditable via `apkanalyzer manifest permissions` (assertion CI). **Permission acceptée hors-liste (auto-injectée par AGP 8+) :** `<applicationId>.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION` (donc `fr.plateformeliberte.levoile.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION` en release et `fr.plateformeliberte.levoile.debug.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION` en debug). Cette permission est custom (préfixée par notre `applicationId`, donc surface d'attaque nulle — non détenable par d'autres apps), invisible utilisateur (n'apparaît pas dans la liste UI à l'install) et bénigne (sécurité dynamique des `BroadcastReceiver` Android 13+ recommandée par Google). L'assertion CI doit l'autoriser explicitement (cf. https://developer.android.com/build/releases/gradle-plugin#dynamic-receiver-not-exported-permission)
+- NFR-AND-8: Aucune télémétrie / analytics / crash reporter (cohérent ADR-15 et NFR20). Audit dépendances Gradle (`gradle dependencies`) bloqué en CI si présence de modules : Firebase, Sentry, Bugsnag, Crashlytics, Mixpanel, Adjust, Branch, Amplitude
+- NFR-AND-9: Logs Android via `android.util.Log` filtrés par buildType — release : niveau WARN+ uniquement, debug : INFO+. Aucune URL, aucun nom de domaine, aucune destination IP, aucun contenu utilisateur loggué (cohérent NFR22a). Logcat sortant filtré côté code (pas de log par défaut "user-facing data")
+- NFR-AND-10: Tests instrumentés Android via Espresso + AndroidX Test sur émulateur API 29 + 33 + 34 — matrice e2e (consent VpnService, démarrage VpnService, kill switch via heuristique "VPN permanent", UI flow, Connect/Disconnect, failover, notification persistante) à 100% de passing avant release (cohérent NFR22)
+- NFR-AND-11: Code Android obfuscation release : R8/ProGuard activé (`minifyEnabled true` + `proguard-android-optimize.txt`) — équivalent fonctionnel du strip `-ldflags="-s -w"` côté Go natif desktop (cohérent NFR9h). Configuration ProGuard préservant les classes JNI exposées par gomobile (`.aar`)

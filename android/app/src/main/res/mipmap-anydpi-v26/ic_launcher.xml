@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Adaptive icon — placeholder, icône finale livrée Story 12.x.
+     Le qualifier -v26 est techniquement redondant avec minSdk=29 (lint signale
+     ObsoleteSdkInt), mais AAPT requiert un qualifier sur les dossiers mipmap
+     (un mipmap-anydpi seul ne résout pas). Conservé. -->
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    tools:ignore="ObsoleteSdkInt">
+    <background android:drawable="@color/bg_dark" />
+    <foreground android:drawable="@drawable/ic_launcher_foreground" />
+</adaptive-icon>

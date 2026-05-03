@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Story 9.3 : layout minimaliste — `<merge>` (pas de FrameLayout racine, un seul enfant).
+     L-3 (code-review 9.3) : `<merge>` évite la double couche FrameLayout puisque le
+     content frame d'AppCompat est déjà un FrameLayout — économise un niveau de hiérarchie
+     view (perf overdraw). Le WebView est l'unique vue, plein écran. Story 11.x enrichira
+     (AppBar Material 56dp, bottom-sheet pays, bandeau kill switch C17) en remplaçant ce
+     fichier ; le `<merge>` redeviendra alors un layout structuré. -->
+<merge xmlns:android="http://schemas.android.com/apk/res/android">
+    <WebView
+        android:id="@+id/webView"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent" />
+</merge>

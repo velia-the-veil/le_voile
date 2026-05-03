@@ -1,0 +1,25 @@
+# Gradle
+.gradle/
+build/
+local.properties
+captures/
+.externalNativeBuild/
+.cxx/
+
+# Android Studio / IntelliJ
+.idea/
+*.iml
+
+# Build artefacts
+*.apk
+*.aab
+*.aar
+*.ap_
+*.dex
+
+# Keystores (réels — placeholder .gitkeep autorisé)
+keystore/*
+!keystore/.gitkeep
+
+# Logs
+*.log

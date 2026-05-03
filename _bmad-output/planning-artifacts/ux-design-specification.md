@@ -3,9 +3,14 @@ stepsCompleted: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]
 lastStep: 14
 status: 'complete'
 completedAt: '2026-03-16'
-lastRevisedAt: '2026-04-15'
-revisionNote: 'Sélecteur pays mis à jour : 4 pays (DE/ES/GB/US). FR/IS/FI retirés sur demande utilisateur.'
-inputDocuments: ['prd.md', 'architecture.md', 'epics.md']
+lastRevisedAt: '2026-05-02'
+revisionNote: 'Phase 2 Android — couverture mobile ajoutée (persona Léa, WebView plein écran, layout responsive vertical, onboarding kill switch « VPN permanent », notification persistante du Foreground Service en remplacement du tray, journeys J6-J8, composants C13-C16). Aligne UX avec architecture 2026-04-29 (ADR-08 à ADR-15, isolation OS maximale) et PRD 2026-04-30 (FR-AND-1..10, NFR-AND-1..11). Le desktop reste intact — la Direction F (Split Sidebar) demeure la référence Windows + Linux.'
+revisionHistory:
+  - date: '2026-04-15'
+    note: 'Sélecteur pays mis à jour : 4 pays (DE/ES/GB/US). FR/IS/FI retirés sur demande utilisateur.'
+  - date: '2026-05-02'
+    note: 'Phase 2 Android — couverture mobile complète ajoutée. Pas de mutualisation des composants UI desktop ↔ Android (cohérent ADR-08).'
+inputDocuments: ['prd.md', 'architecture.md', 'epics.md', 'implementation-readiness-report-2026-04-29-android.md', 'validation-report-2026-04-30.md']
 workflowType: 'ux-design'
 project_name: 'bmad_vpn_le_voile_de_velia'
 user_name: 'Akerimus'
@@ -41,6 +46,14 @@ Le produit répond à deux problèmes simultanés : le blocage imminent des VPN 
 - Besoin : déployer et monitorer les relais facilement
 - Pas d'UI spécifique — interaction via CLI et fichiers de configuration
 
+**Utilisatrice principale Phase 2 — "Léa" (Android)**
+- 29 ans, communicante, Pixel 7 (Android 14, API 34)
+- Cherche un VPN simple sur mobile, refus catégorique des apps qui demandent un compte ou collectent des données
+- Découvre Le Voile via plateformeliberte.fr → page Android. Hésite entre F-Droid (recommandé) et APK direct GitHub releases
+- Besoin : protection permanente sur mobile, sans technique. Tolérance zéro pour les permissions invasives
+- Moment "wow" attendu : ouvrir l'app, voir « Connecté — Allemagne », fermer le téléphone, vérifier whatismyip.com via Chrome → IP allemande confirmée. Notification persistante dans la barre de statut Android la rassure en permanence sans être intrusive
+- Particularité Android : doit activer un réglage OS (« VPN permanent + bloquer connexions sans VPN ») au premier lancement pour bénéficier du kill switch — l'onboarding doit la guider sans la perdre
+
 ### Key Design Challenges
 
 1. **Zero-config absolu** — Aucun écran de configuration. Le binaire se lance, le tunnel se connecte, la protection est active. Le moindre choix technique imposé à l'utilisateur est un échec UX
@@ -51,36 +64,70 @@ Le produit répond à deux problèmes simultanés : le blocage imminent des VPN 
 
 1. **Circuit de confiance immédiat** — Lien direct depuis l'UI vers plateformeliberte.fr/test-protection.html. Installation → vérification → confiance en moins de 30 secondes. Meilleur onboarding possible pour un produit de sécurité
 2. **Cohérence visuelle totale avec plateformeliberte.fr** — Thème sombre navy (#0b1526), accents bleus luminescents (#1a6fc4, #2a8dff), rouge alerte (#d42b2b), typographies Bebas Neue (titres) / Rajdhani (UI) / Inter (corps). La fenêtre desktop est une extension naturelle du site
-3. **Simplicité radicale de l'interface** — Le sélecteur de pays (4 pays : Allemagne, Espagne, Royaume-Uni, États-Unis) avec drapeaux est la seule interaction significative. Le pays préféré est sauvegardé. Pas de paramètres avancés, pas de menus complexes
+3. **Simplicité radicale de l'interface** — Le sélecteur de pays (4 pays : Allemagne, Espagne, Royaume-Uni, États-Unis) avec drapeaux est la seule interaction significative. Le pays préféré est sauvegardé. Paramètres avancés minimaux et accessibles via une section dédiée (toggle WebRTC, option IPv6 hors tunnel FR8d, mode dégradé kill switch FR16b) — masqués derrière un bouton "Avancé" pour ne pas alourdir le flow principal
 
 ## Core User Experience
 
 ### Defining Experience
 
-L'expérience définissante de Le Voile est **l'absence d'interaction**. Le produit réussit quand l'utilisateur l'oublie. L'action la plus fréquente est un coup d'œil au system tray pour confirmer que l'icône est verte. L'action occasionnelle est le changement de pays via le sélecteur de la fenêtre desktop.
+L'expérience définissante de Le Voile est **l'absence d'interaction**. Le produit réussit quand l'utilisateur l'oublie. L'action la plus fréquente est un coup d'œil à l'indicateur de statut résident — **system tray** sur desktop (icône V verte/orange/rouge), **notification persistante de la barre de statut Android** sur mobile (titre + pays + IP). L'action occasionnelle est le changement de pays via le sélecteur (sidebar desktop / bottom-sheet Android).
 
 Le Voile inverse le paradigme des VPN traditionnels : là où les concurrents demandent des choix (compte, protocole, serveur, paramètres), Le Voile élimine chaque décision. Pas de compte, pas de login, pas de choix de protocole, pas de paramètres réseau, pas d'abonnement.
 
+**Particularité Android — le rôle du tray** : sur desktop, le tray est l'interface principale. Sur Android, le concept de tray n'existe pas — son équivalent fonctionnel est la **notification persistante du Foreground Service** (`LeVoileVpnService`). Cette notification est ongoing, non-dismissable, importance LOW (silencieuse, pas de son ni vibration), et reste visible tant que le tunnel est actif — y compris après que l'utilisatrice ait fermé l'app par swipe. Elle joue trois rôles simultanés : indicateur de statut permanent, accès rapide à l'app (tap → réouvre `MainActivity`), bouton de déconnexion (action « Déconnecter »).
+
 ### Platform Strategy
 
-- **Desktop Windows** (MVP) — Binaire portable mono-processus Wails v3 (fenêtre + systray natif). WebView2 pour le rendu UI. Élévation UAC à chaque lancement
-- **Linux / macOS** — Day one via cross-compilation Go + Wails v3. Binaire portable équivalent
-- **Extension navigateur** — WebExtension Chrome MV3 + Firefox, installée automatiquement via politiques navigateur. Aucune action utilisateur
-- **Interaction primaire** — Souris/clavier. Interface minimaliste, pas de scroll complexe, pas de formulaires
-- **Offline** — Le registre des relais est caché localement. Le Voile peut redémarrer sans connexion internet initiale (cold start résilient)
+**Desktop (MVP — Windows + Linux)**
+- Architecture 2 processus : service privilégié (SCM Windows / systemd Linux via kardianos/service) + UI unique (`fyne.io/systray` + `webview/webview` dans un seul binaire). Communication IPC via named pipes (Windows) / Unix sockets (Linux)
+- Fenêtre webview frameless 420×540px non redimensionnable + tray icon résident. Élévation UAC (Windows) / capabilities `CAP_NET_ADMIN` via systemd `AmbientCapabilities=` (Linux)
+- Distribution : installeur NSIS (Windows), paquets natifs `.deb`/`.rpm`/`.apk`/AUR via GoReleaser + nfpm (Linux)
+- macOS : différé Phase 3 (support utun via `wireguard/tun` possible mais non prioritaire)
+
+**Android (Phase 2 — API 29+)**
+- Architecture mono-processus : `MainActivity` (WebView Android plein écran, charte visuelle identique desktop) + `LeVoileVpnService` (Foreground Service + `android.net.VpnService`) + bridge JNI vers le noyau Go partagé via gomobile (`.aar`)
+- **Pas de fenêtre fixe** — la WebView occupe tout l'écran, layout responsive mobile (sélecteur pays vertical, pas de sidebar, boutons tactiles ≥ 48dp). Cible : Pixel 6+ ou équivalent
+- **Pas de tray** — le rôle du tray desktop est joué par la **notification persistante du Foreground Service** dans la barre de statut Android (channel `levoile_vpn_status`, importance LOW, ongoing non-dismissable, action « Déconnecter »)
+- **Kill switch délégué OS** — activé via le réglage utilisateur Android « VPN permanent + bloquer connexions sans VPN ». Onboarding obligatoire au premier lancement avec deeplink `Settings.ACTION_VPN_SETTINGS`
+- Distribution : F-Droid (build reproductible obligatoire, hash SHA256 identique entre 2 builds successifs depuis le même tag git) + APK direct GitHub releases (signé v2/v3 par master key Ed25519, vérifié par `PackageManager` au install). Pas de Google Play en MVP/Phase 2
+- Hors scope explicite : iOS, Android TV, Wear OS, Android Auto. Tablettes Android standard couvertes par la WebView responsive (pas de layout dédié tablette)
+
+**Cross-OS — principes communs**
+- **Isolation OS maximale** (ADR-08) : pas de mutualisation des composants UI desktop ↔ Android. Duplication assumée. Seul le strict noyau protocole/crypto/registre/session est partagé via gomobile (5 packages Go)
+- **Charte visuelle identique** sur les 3 OS (palette, typographies, composants visuels) — l'identité plateformeliberte.fr est le design system commun. Adaptations responsive uniquement
+- **Pas d'extension navigateur** (retirée par ADR-02 — la capture L3 rend l'extension architecturalement redondante)
+- **Interaction primaire** : souris/clavier (desktop), tactile (Android). Pas de scroll complexe, pas de formulaires
+- **Offline** : le registre des relais est caché localement. Le Voile peut redémarrer sans connexion internet initiale (cold start résilient)
 
 ### Effortless Interactions
+
+**Desktop (Windows + Linux) :**
 
 | Interaction | Comportement attendu |
 |---|---|
 | Lancement | .exe → UAC → protégé. Zéro écran de configuration |
 | Premier lancement | Tunnel connecté automatiquement au pays par défaut. IP étrangère visible immédiatement |
-| Démarrage système | Raccourci Startup lance le binaire, UAC acceptée, tray affiché, tunnel reconnecté. Invisible |
-| Changement de pays | Clic sur le drapeau dans la fenêtre. Reconnexion < 5s. Pays sauvegardé |
-| Coupure réseau | Kill switch DNS instantané. Reconnexion automatique. Failover transparent |
-| Extension navigateur | Installée automatiquement. Bypass gros fichiers automatique. Aucune config |
-| Mise à jour | Téléchargement en arrière-plan. Notification tray. Appliquée au redémarrage |
-| Crash processus | Watchdog DNS restaure le resolver < 5s. Crash-recovery au redémarrage < 5s |
+| Démarrage système | Service SCM/systemd lancé au boot, UI autostart (HKCU Windows / XDG Linux), tray affiché, tunnel reconnecté. Invisible |
+| Changement de pays | Clic sur le pays dans la sidebar → bouton « Connecter ». Reconnexion < 5s. Pays sauvegardé |
+| Coupure réseau | Kill switch firewall (nftables/WFP) instantané. Reconnexion automatique. Failover transparent |
+| Mise à jour | Téléchargement en arrière-plan. Cloche notification dans titlebar. Appliquée au redémarrage |
+| Crash processus | Règles firewall persistent (kernel-level). Crash-recovery au redémarrage service < 5s |
+
+**Android (Phase 2) :**
+
+| Interaction | Comportement attendu |
+|---|---|
+| Installation | F-Droid (recommandé) ou APK direct. Aucune permission dangereuse au manifest |
+| Premier lancement | Popup système Android natif « Le Voile demande l'autorisation de configurer un VPN » (consent VpnService) → onboarding obligatoire « VPN permanent » avec deeplink → tunnel connecté |
+| Lancements suivants | App → tunnel reconnecté au pays favori en < 3s. Notification persistante affichée |
+| Changement de pays | Bottom-sheet → tap pays → bouton « Connecter ». Reconnexion < 5s |
+| Coupure réseau | Kill switch OS (« VPN permanent ») bloque tout trafic hors tunnel. Reconnexion automatique. Failover transparent |
+| Fermer l'app (swipe) | Activity détruite, Foreground Service continue, notification reste visible, tunnel actif |
+| Reboot téléphone | Pas d'autostart au boot (limitation Android 10+). Le réglage OS « VPN permanent » reconnecte le dernier VPN actif avant que l'utilisatrice n'ouvre l'app |
+| Battery save agressif (OEM) | Foreground Service exempt — tunnel maintenu. Whitelist battery conseillée pour Xiaomi/Huawei/Oppo (documentation) |
+| Mise à jour F-Droid | Géré par le client F-Droid de l'utilisatrice (notification F-Droid native) |
+| Mise à jour APK direct | Notification UI in-app « Mise à jour vX.Y.Z disponible » + lien GitHub releases. Pas d'auto-update embarqué |
+| Crash service | `START_REDELIVER_INTENT` du Foreground Service relance automatiquement |
 
 ### Critical Success Moments
 
@@ -88,6 +135,8 @@ Le Voile inverse le paradigme des VPN traditionnels : là où les concurrents de
 2. **Vérification sur test-protection.html** — L'utilisateur clique le lien dans l'UI, la page confirme que l'IP est masquée, DNS protégé, WebRTC sécurisé. Moment de confiance prouvée
 3. **Coupure réseau transparente** — L'utilisateur change de Wi-Fi ou perd la connexion. Le Voile bascule silencieusement. L'utilisateur ne remarque rien — succès par absence de friction
 4. **Changement de pays** — L'utilisateur veut apparaître depuis le Royaume-Uni. Clic sur le drapeau, reconnexion rapide, IP britannique confirmée. Seule interaction active du produit
+5. **Onboarding « VPN permanent » Android** (Phase 2 — make-or-break Android) — Au premier lancement Android, Léa doit activer un réglage OS qu'elle ne connaît pas. Si l'onboarding la perd ou paraît cryptique, elle décroche et le kill switch n'est jamais activé → fuite possible. Le succès se mesure : > 95% des utilisateurs Android terminent l'activation au premier lancement. Le bouton « Ouvrir les paramètres » + deeplink direct + retour automatique à l'app après activation sont les leviers clés
+6. **Swipe-close + notification persistante (Phase 2 Android)** — Léa ferme l'app par geste swipe (réflexe Android quotidien). La notification reste, le tunnel reste actif. Si elle remarque l'absence de notification → panique « le VPN est-il toujours actif ? ». La présence permanente de la notification est un contrat de confiance silencieux propre à Android
 
 ### Experience Principles
 
@@ -219,21 +268,21 @@ Le Voile inverse le paradigme des VPN traditionnels : là où les concurrents de
 
 **CSS custom aligné sur plateformeliberte.fr — sans framework UI**
 
-L'UI Wails v3 utilise du HTML/CSS/JS vanilla sans framework frontend ni bibliothèque de composants externe. L'identité visuelle de plateformeliberte.fr constitue le design system de référence.
+L'UI desktop utilise du HTML/CSS/JS vanilla sans framework frontend ni bibliothèque de composants externe, servi par un serveur HTTP local embarqué dans le binaire UI (`webview/webview` + `fyne.io/systray`). L'identité visuelle de plateformeliberte.fr constitue le design system de référence.
 
 ### Rationale for Selection
 
 1. **L'identité visuelle existe déjà** — plateformeliberte.fr définit la palette complète, les typographies, les composants (boutons, cards, badges), les effets (glow, gradients). Un framework UI ajouterait une couche d'abstraction à défaire
 2. **Surface UI minimale** — Le Voile a ~3 vues : fenêtre principale (statut + sélecteur pays), état transitoire (reconnexion), notification de mise à jour. Pas besoin de 200 composants
 3. **Cohérence cross-produit garantie** — Réutiliser les mêmes variables CSS et classes que le site assure une identité visuelle identique entre le site et le client desktop
-4. **Performance optimale** — Zéro dépendance frontend. Wails + WebView2 + vanilla = empreinte minimale. Pas de bundle JS lourd pour une UI de 3 écrans
+4. **Performance optimale** — Zéro dépendance frontend. `webview/webview` + WebView2 (Windows) / WebKitGTK (Linux) + vanilla = empreinte minimale. Pas de bundle JS lourd pour une UI de 3 écrans
 5. **Développeur unique** — Pas de courbe d'apprentissage framework. Le CSS du site est la documentation du design system
 
 ### Implementation Approach
 
-- **Moteur de rendu :** Wails v3 + WebView2 (Windows), WebKit (Linux/macOS)
+- **Moteur de rendu :** `webview/webview` + WebView2 (Windows), WebKitGTK (Linux), WebKit (macOS Phase 3). Sur Android (Phase 2) : Android System WebView via `androidx.webkit`
 - **Frontend :** HTML/CSS/JS vanilla — pas de framework, pas de bundler
-- **Communication Go ↔ UI :** Bindings Wails v3 directs (appels Go depuis JS, pas d'IPC inter-processus)
+- **Communication Go ↔ UI :** Serveur HTTP local embarqué dans le binaire UI (`127.0.0.1:{port}` dynamique), API REST JSON, polling 2s. IPC service ↔ UI via named pipes (Windows) / Unix sockets (Linux). Sur Android (Phase 2) : JS Bridge `@JavascriptInterface` direct (in-process)
 - **CSS :** Variables CSS (custom properties) extraites de plateformeliberte.fr pour les tokens de design
 - **Assets :** Fonts embarquées (Bebas Neue, Rajdhani, Inter), icônes SVG inline
 
@@ -326,7 +375,7 @@ L'innovation est dans ce qui est **absent** : pas de login, pas de choix de prot
 ### Experience Mechanics
 
 **1. Circuit de preuve (premier lancement) :**
-- Le binaire est lancé → UAC acceptée → la fenêtre Wails v3 s'ouvre automatiquement → l'icône tray apparaît (V vert)
+- Le binaire UI est lancé → UAC acceptée → la fenêtre webview s'ouvre automatiquement → l'icône tray (`fyne.io/systray`) apparaît (V vert)
 - La fenêtre affiche : statut vert "Connecté", drapeau du pays (ex: Allemagne), relais actif (de-01), IP visible (ex: 85.214.xxx.xxx)
 - Un lien "Tester ma protection" ouvre test-protection.html dans le navigateur par défaut
 - La page confirme indépendamment : IP masquée, DNS protégé, WebRTC sécurisé
@@ -403,11 +452,11 @@ L'innovation est dans ce qui est **absent** : pas de login, pas de choix de prot
 | Message transitoire | 14px | Rajdhani | 500 | 1.3 |
 | Lien / action | 14px | Rajdhani | 600 | 1.3 |
 
-**Polices embarquées** — Toutes les fonts sont bundlées dans le binaire Wails (pas de CDN, pas de dépendance réseau).
+**Polices embarquées** — Toutes les fonts sont bundlées dans le binaire UI desktop (via `//go:embed`) et dans `android/app/src/main/assets/fonts/` côté Android (pas de CDN, pas de dépendance réseau).
 
 ### Spacing & Layout Foundation
 
-**Fenêtre Wails — dimensions compactes :**
+**Fenêtre desktop — dimensions compactes (`webview/webview`) :**
 - Taille : ~400 x 500px (compact, style widget)
 - Non redimensionnable — contenu fixe, pas de scroll
 - Centrée à l'ouverture, position mémorisée ensuite
@@ -447,7 +496,7 @@ L'innovation est dans ce qui est **absent** : pas de login, pas de choix de prot
 
 ### Design Directions Explored
 
-6 directions de layout explorées pour la fenêtre Wails v3 (420×540px) :
+6 directions de layout explorées pour la fenêtre desktop `webview/webview` (420×540px) :
 - A — Centré Héroïque (anneau de statut central)
 - B — Dashboard Compact (cards d'info structurées)
 - C — Minimaliste Radical (grand drapeau, pills pays)
@@ -510,11 +559,128 @@ Showcase interactif : `planning-artifacts/ux-design-directions.html`
 
 ### Implementation Approach
 
-- Fenêtre Wails v3 frameless avec titlebar HTML custom (drag region sur la zone titre)
+- Fenêtre `webview/webview` frameless avec titlebar HTML custom (drag region sur la zone titre)
 - Sidebar et panel principal en CSS flexbox
 - 3 vues pour le panel droit : statut pays (défaut), paramètres, modal quitter (overlay)
-- Icônes tray : 3 fichiers .ico pré-générés (V vert, V orange, V rouge) switchés via Go systray
-- Préférences persistées en JSON local : pays favori, "ne plus montrer" modal, état WebRTC
+- Icônes tray : 3 fichiers .ico pré-générés (V vert, V orange, V rouge) switchés via `fyne.io/systray`
+- Préférences persistées en TOML local (`%AppData%/LeVoile/` Windows / `~/.config/levoile/` Linux) : pays favori, "ne plus montrer" modal, état WebRTC
+
+### Direction Android — Mobile Vertical (Phase 2)
+
+L'écran Android est différent par nature : tactile, vertical, plein écran, pas de tray, pas de fenêtre flottante, pas de souris. La direction desktop (Split Sidebar) est inadaptée. Une direction Android propre est définie ici, sans tentative de mutualisation des composants UI (cohérent ADR-08 — isolation OS maximale).
+
+**Layout vertical empilé — pleine page :**
+
+```
+┌──────────────────────────────────┐
+│  ☰  LE VOILE              ⓘ ⋮   │  ← AppBar Material (titre + menu)
+├──────────────────────────────────┤
+│                                   │
+│         🟢 CONNECTÉ              │  ← Status group (dot + texte)
+│                                   │
+│            🇩🇪                   │  ← Drapeau XL (centré, 96dp)
+│         ALLEMAGNE                │
+│                                   │
+│      IP : 5.x.x.x                │
+│      Relais : de-01 · 28ms       │
+│                                   │
+│  ┌──────────────────────────┐   │
+│  │   CHANGER DE PAYS    ▼   │   │  ← Pill cliquable → bottom-sheet
+│  └──────────────────────────┘   │
+│                                   │
+│  ┌──────────────────────────┐   │
+│  │     DÉCONNECTER          │   │  ← Bouton primaire (full-width 48dp)
+│  └──────────────────────────┘   │
+│                                   │
+│  Tester ma protection ↗         │  ← Lien externe Chrome
+│                                   │
+└──────────────────────────────────┘
+       Notification persistante :
+       🛡️ Le Voile · Connecté
+       Allemagne · 5.x.x.x [Déconnecter]
+```
+
+**Composition top → bottom :**
+
+1. **AppBar Material** (top, 56dp) — Logo Le Voile + titre « LE VOILE ». Menu burger (☰) à gauche : pays favori + paramètres (WebRTC indicatif, info légale, à propos). Icône ⓘ : ouvre la cloche notifications. Icône ⋮ : actions secondaires (jamais « Quitter » — pattern Android natif)
+2. **Status group** (centré) — Dot animé + texte statut grande taille (« CONNECTÉ » / « RECONNEXION… » / « DÉCONNECTÉ »)
+3. **Drapeau XL** (96dp, centré) — Drapeau du pays connecté, atténué pendant les transitions (opacity 0.6)
+4. **Identité connexion** — Nom du pays (Bebas Neue 32sp), IP visible, ID relais + latence
+5. **Pill « Changer de pays »** — Bouton secondaire pleine largeur ouvrant un **bottom-sheet** Material (slide depuis le bas) listant les 4 pays avec drapeaux. Le pays actif est marqué d'un check, les autres sont tappables. Pas de sidebar (concept inadapté au mobile vertical)
+6. **Bouton primaire** — « DÉCONNECTER » (rouge sobre, hauteur 48dp, full-width minus 32dp marges) quand connecté. « CONNECTER » (vert) quand déconnecté ou pays différent sélectionné
+7. **Lien externe** — « Tester ma protection ↗ » — ouvre Chrome / navigateur par défaut Android via `Intent.ACTION_VIEW`
+
+**Onboarding au premier lancement (overlay full-screen séquentiel) :**
+
+```
+Écran 1 — Bienvenue (3s skippable)
+┌────────────────────────────────┐
+│         🛡️                     │
+│   Le Voile vous protège        │
+│   sans configuration.          │
+│                                │
+│   [ Continuer → ]              │
+└────────────────────────────────┘
+
+Écran 2 — Consent VpnService (popup système Android natif)
+"Le Voile demande l'autorisation de configurer un VPN"
+[Annuler]  [OK]   ← dialog OS, pas custom
+
+Écran 3 — Activation « VPN permanent » (full-screen + deeplink)
+┌────────────────────────────────┐
+│   ⚠️  Une dernière étape        │
+│                                │
+│   Pour une protection           │
+│   maximale, activez             │
+│   « VPN permanent + bloquer     │
+│   connexions sans VPN » dans    │
+│   les paramètres système.       │
+│                                │
+│   Sans cela, Le Voile peut      │
+│   être contourné par des apps   │
+│   qui démarrent avant lui.      │
+│                                │
+│   ┌─────────────────────────┐  │
+│   │  OUVRIR LES PARAMÈTRES  │  │  ← deeplink Settings.ACTION_VPN_SETTINGS
+│   └─────────────────────────┘  │
+│                                │
+│   Continuer sans (déconseillé) │  ← lien discret, gris
+└────────────────────────────────┘
+```
+
+L'écran 3 est **non-skippable par défaut** — l'utilisatrice doit cliquer « Ouvrir les paramètres » ou « Continuer sans ». En cas de « Continuer sans » → bandeau rouge persistant non-dismissable dans la home affichant « ⚠️ Kill switch inactif — Activer ». Au retour de l'app après deeplink, détection automatique via heuristique `Settings.Global` : si activé → bandeau disparaît + tunnel se connecte. Si fragile/non vérifiable → bandeau persiste mais avec libellé adouci.
+
+**États visuels documentés :**
+
+| État | AppBar | Status | Drapeau | IP | Pill pays | Bouton primaire | Notification |
+|---|---|---|---|---|---|---|---|
+| Connecté | Normal | Vert + « CONNECTÉ » | Plein | Visible | Disponible | « DÉCONNECTER » | « Le Voile · Connecté · DE · 5.x.x.x » |
+| Reconnexion | Normal | Orange pulse + « RECONNEXION… » | opacity 0.6 | « — » | Disabled | Caché | « Le Voile · Reconnexion… » |
+| Déconnecté | Normal | Rouge + « DÉCONNECTÉ » | Grisé | « — » | Disponible | « CONNECTER » | « Le Voile · Déconnecté » |
+| Pays différent sélectionné | Normal | Inchangé du pays courant | Drapeau du nouveau pays | « — » | Affiche le nouveau pays | « CONNECTER » (vert) | Inchangée |
+| Onboarding kill switch en attente | Normal + bandeau rouge bas | Vert/orange selon connexion | Affiché | Affiché si connecté | Disponible | Disponible | « Le Voile · ⚠️ Kill switch inactif » |
+| Erreur (aucun relais) | Normal | Rouge + « AUCUN RELAIS DISPONIBLE » | Grisé | « — » | Disponible (sélection seule, pas de connexion) | Caché | « Le Voile · Aucun relais · Vérifiez internet » |
+| Autre VPN actif | Normal | Rouge + « AUTRE VPN ACTIF » | Grisé | « — » | Disabled | Caché | « Le Voile · Autre VPN détecté · Désactivez-le » |
+
+### Direction Android — Design Rationale
+
+1. **Layout vertical empilé** — Pattern natif Android (Material Design). Lecture top → bottom. Une seule action principale visible à la fois. Adapté pouce dominant (zone d'atteinte)
+2. **AppBar plutôt que titlebar custom** — On respecte le système Android (status bar + navigation bar gérées par l'OS). Pas de frameless. Le drag est inutile sur tactile
+3. **Bottom-sheet pour les pays** — Pattern Material standard, naturel sur mobile, libère l'espace principal pour le contenu de statut. Évite le menu déroulant traditionnel (peu Android)
+4. **Pas de bouton « Quitter » UI** — Pattern Android : `back` ou `home` met l'app en background, le Foreground Service continue. Pour vraiment arrêter le tunnel, l'utilisatrice utilise l'action « Déconnecter » de la notification persistante OU Réglages Android → Apps → Le Voile → Forcer l'arrêt. Cohérent avec le guideline « ne pas implémenter sa propre gestion de cycle de vie »
+5. **Onboarding kill switch obligatoire** — FR-AND-3 + ADR-10. Sans cette étape, le kill switch n'existe pas → fuite possible. L'écran 3 est le moment le plus sensible UX du produit Android entier — il doit être pédagogique, court, visuel, avec un seul CTA primaire
+6. **Notification persistante = source de vérité visuelle** — L'utilisatrice ferme l'app 99% du temps. La notification dans la barre de statut est son seul point de contact quotidien — elle doit toujours afficher un statut clair (« Connecté · Allemagne · 5.x.x.x ») et l'action « Déconnecter » accessible en un tap
+
+### Direction Android — Implementation Approach
+
+- **Hôte UI** : `MainActivity` (Activity unique, `singleTop`) avec `WebView` plein écran. Pas de Fragments multiples — la WebView gère tous les écrans en interne via le frontend partagé
+- **WebView** : `androidx.webkit:webkit`, `WebViewAssetLoader` servant les assets via `https://appassets.androidplatform.net/assets/...` (virtual host HTTPS-like, plus sécurisé que `file://`)
+- **JS Bridge** : `webView.addJavascriptInterface(LeVoileBridge(this), "LeVoile")` — frontend appelle `window.LeVoile.connect()`, `window.LeVoile.getStatus()`, `window.LeVoile.openVpnSettings()`, etc. Toutes les méthodes retournent String (JSON) ou primitives Boolean/Int
+- **Frontend partagé desktop** : assets HTML/CSS/JS copiés depuis `frontend/` vers `android/app/src/main/assets/` au build via `android/scripts/sync-frontend.sh`. Adaptation responsive en CSS pur via media queries (`@media (max-width: 600px) and (orientation: portrait)`) — pas de duplication de fichiers HTML/JS, mais composants UI desktop (titlebar, sidebar, modal quitter) **désactivés** sur mobile via classe CSS `body.platform-android` et JS bridge réutilisé pour activer les comportements mobile (bottom-sheet, AppBar)
+- **Notification Foreground Service** : channel `levoile_vpn_status` (importance LOW), `NotificationCompat.Builder` avec `setOngoing(true)`, `setSmallIcon(R.drawable.ic_levoile_status)`, action « Déconnecter » via `PendingIntent.getService(... FLAG_IMMUTABLE)` vers `LeVoileVpnService.ACTION_DISCONNECT`
+- **Onboarding** : `OnboardingActivity` séparée (3 écrans Compose ou XML simple) lancée si `SharedPreferences.getBoolean("onboarding_completed", false)` est false. À la fin → `MainActivity` + démarrage tunnel
+- **Préférences** : `SharedPreferences` Android dans `getFilesDir()` (scoped storage natif AndroidX) — pays favori, onboarding completed, préférences UI. Format : Android natif (pas de TOML — convention écosystème AndroidX, cohérent FR-AND-10)
+- **Polling status** : `setInterval(window.LeVoile.getStatus, 2000)` côté JS, identique au polling 2s desktop. WebView pause naturellement par le système quand l'Activity est en background (`onPause`) — pas d'impact perf
 
 ## User Journey Flows
 
@@ -526,9 +692,9 @@ Showcase interactif : `planning-artifacts/ux-design-directions.html`
 flowchart TD
     A[Télécharge .exe depuis plateformeliberte.fr] --> B[Lance le binaire portable]
     B --> C[UAC : élévation admin]
-    C --> D[Mono-processus démarre :<br>tunnel + tray + proxy + extension navigateur]
+    C --> D[Service SCM démarre + UI lancée :<br>tunnel + tray fyne.io/systray + capture L3]
     D --> F[Tunnel QUIC/HTTPS → relais par défaut]
-    F --> G[Fenêtre Wails v3 s'ouvre automatiquement]
+    F --> G[Fenêtre webview s'ouvre automatiquement]
     G --> H{Connexion réussie ?}
     H -->|Oui| I[Panel principal :<br>V vert, drapeau, IP visible, relais]
     H -->|Non| J[V orange : Reconnexion en cours...]
@@ -554,7 +720,7 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    A[Clic gauche sur icône tray V vert] --> B[Fenêtre Wails s'ouvre]
+    A[Clic gauche sur icône tray V vert] --> B[Fenêtre webview s'ouvre]
     B --> C[Sidebar : pays listés<br>Favori en tête, puis alphabétique]
     C --> D[Clic sur 'Allemagne' dans la sidebar]
     D --> E[Panel : drapeau 🇩🇪 ALLEMAGNE<br>Bouton vert 'Connecter']
@@ -656,15 +822,201 @@ flowchart TD
 - Avertissement redémarrage navigateur en orange
 - Pas de badge texte — le toggle vert/gris suffit
 
+### J9 — Théo active IPv6 hors tunnel (PRD parcours #7, FR8d)
+
+**Contexte PRD :** Théo, développeur réseau dual-stack IPv4/IPv6, a installé Le Voile et constate que `test-ipv6.com` est bloqué (IPv6 droppé par défaut). Il préfère IPv6 en clair plutôt que bloqué.
+
+```mermaid
+flowchart TD
+    A[Théo ouvre la fenêtre Le Voile] --> B[Clic 'Paramètres' dans sidebar]
+    B --> C[Panel C6 affiché : groupe WebRTC visible]
+    C --> D[Clic 'Paramètres avancés ▾']
+    D --> E[Section Avancé dépliée :<br>toggle 'Autoriser IPv6 hors tunnel' OFF<br>+ description rouge]
+    E --> F[Clic toggle IPv6]
+    F --> G[Modale C20 d'avertissement s'affiche :<br>'Activer IPv6 hors tunnel ?'<br>texte rouge explicite]
+    G --> H{Choix Théo}
+    H -->|Annuler / Esc| I[Modale fermée<br>toggle reste OFF]
+    H -->|Activer quand même| J[Config TOML écrite :<br>allow_ipv6_leak = true]
+    J --> K[Service applique nouvelle règle<br>nftables/WFP : autorise IPv6 sortant]
+    K --> L[Toggle passe ON, vert<br>+ bandeau info gris discret :<br>'IPv6 actif hors tunnel']
+    L --> M[Théo vérifie test-ipv6.com :<br>IPv6 publique visible<br>IPv4 toujours masqué relais]
+    M --> N[Setting persisté en config TOML<br>au prochain démarrage : reste actif]
+```
+
+**Points UX clés :**
+- **3 niveaux de friction** avant activation : section repliée par défaut → toggle dans Avancé → modale d'avertissement bloquante. L'utilisateur occasionnel ne tombe pas dessus par hasard
+- La case « Ne plus me demander » dans la modale C20 est **par toggle** (pas globale) — désactiver IPv6 puis le réactiver représente un risque sécurité, donc l'utilisateur doit re-consentir explicitement la première fois
+- L'état activé est visible discrètement (bandeau gris info, pas alerte rouge) — c'est un choix conscient de l'utilisateur, pas un mode dégradé temporaire
+- **Pas de modale au désactivation** — repasser le toggle OFF restaure la sécurité, action positive non bloquante
+
+### J10 — Camille active mode dégradé en gare (PRD parcours #8, FR16b)
+
+**Contexte PRD :** Camille en mobilité, Wi-Fi public peu stable, Le Voile n'arrive pas à joindre un relais pendant 2 minutes. Kill switch actif → pas d'internet. Elle doit envoyer un email urgent.
+
+```mermaid
+flowchart TD
+    A[Camille : 'Pas d'internet depuis 2 min'] --> B[Clic droit icône tray Le Voile]
+    B --> C[Menu contextuel s'affiche]
+    C --> D[Option 'Mode dégradé' visible<br>+ icône ⚠ orange]
+    D --> E[Clic 'Mode dégradé']
+    E --> F[Modale C20 s'affiche :<br>'Activer le mode dégradé ?'<br>texte rouge explicite]
+    F --> G{Choix Camille}
+    G -->|Annuler / Esc| H[Modale fermée<br>kill switch reste actif]
+    G -->|Activer quand même| I[Config TOML écrite :<br>killswitch_off = true]
+    I --> J[Service désactive nftables/WFP rules<br>internet en clair accessible]
+    J --> K[Bandeau C18 rouge apparaît<br>en haut de la fenêtre webview<br>+ icône tray bascule rouge ⚠]
+    K --> L[Camille envoie son email<br>via webmail employeur]
+    L --> M[Tunnel se rétablit auto en arrière-plan<br>3 minutes plus tard]
+    M --> N[Service ré-arme kill switch firewall<br>+ écrit killswitch_off = false]
+    N --> O[Bandeau C18 disparaît avec slide-up<br>+ icône tray repasse verte]
+    O --> P[Camille n'a rien fait —<br>protection rétablie automatiquement]
+```
+
+**Points UX clés :**
+- **Indicateur visuel impossible à manquer** : le bandeau C18 rouge full-width + icône tray rouge ⚠ garantissent que Camille ne peut pas oublier qu'elle est exposée (rappel feedback memory `feedback_no_reset_endpoints` : sécurité primordiale)
+- **Réactivation automatique** : dès qu'un tunnel passe, le service ré-arme le kill switch — Camille n'a pas à se rappeler de remettre la protection. Pattern « fail-safe by default »
+- **Trigger possible aussi via CLI** `levoile-ctl killswitch off` — pour utilisateurs avancés ou scripts (mais soumis à modale C20 si lancé depuis UI ; CLI court-circuite la modale par convention CLI = utilisateur sait ce qu'il fait, mais journalise systématiquement)
+- **Pas d'auto-désactivation par timer** — uniquement par succès tunnel. Si Camille ferme l'app pendant le mode dégradé, l'état persiste au redémarrage du service jusqu'à connexion réussie
+
+### J11 — Service Le Voile non démarré (FR13c)
+
+**Contexte :** Camille relance son PC après une mise à jour Windows. L'UI Le Voile démarre via autostart, mais le service `levoile-service` est arrêté (admin a stoppé le service, ou crash post-update).
+
+```mermaid
+flowchart TD
+    A[Camille ouvre la fenêtre Le Voile<br>via clic icône tray] --> B[UI tente connexion IPC<br>vers \\.\pipe\levoile]
+    B --> C{IPC répond < 5s ?}
+    C -->|Oui| D[Panel principal normal s'affiche]
+    C -->|Non — service down| E[Composant C19 'Service Down Screen' affiché]
+    E --> F[Camille voit :<br>titre 'Service Le Voile non démarré'<br>+ commande shell selon OS]
+    F --> G[Bouton 'Copier la commande']
+    G --> H[Camille copie<br>'sc start levoile-service']
+    H --> I[Camille ouvre PowerShell admin]
+    I --> J[Colle + exécute la commande]
+    J --> K[Service démarre]
+    K --> L[Retry IPC auto toutes les 5s détecte connexion]
+    L --> M[C19 disparaît<br>panel principal apparaît<br>tunnel se reconnecte]
+    M --> N[Camille protégée]
+```
+
+**Points UX clés :**
+- **Aucun reset / restart endpoint dans l'UI** — l'UI ne propose PAS de bouton « Démarrer le service » (cohérent feedback memory `feedback_no_reset_endpoints` : recovery hors-bande uniquement, pas de path UI/IPC qui élève les privilèges du service)
+- **Commande shell prête à copier** — réduit la friction pour utilisateur novice qui ne sait pas écrire la commande, sans pour autant donner à l'UI le pouvoir de démarrer le service (séparation privileges)
+- **OS-aware** : le composant C19 détecte Windows/Linux et affiche la commande appropriée — pas de "Service is down, contact admin" générique inutilisable
+- **Retry IPC silencieux toutes les 5s** : dès que le service redémarre (manuellement ou via systemd `Restart=on-failure` / SCM auto-restart), l'UI bascule automatiquement vers le panel normal — pas besoin de fermer/rouvrir la fenêtre
+- **Lien dépannage** vers documentation externe pour les cas non-triviaux (service refuse de démarrer, capabilities cassées, etc.)
+
+### J6 — Premier lancement Android avec onboarding « VPN permanent » (Phase 2)
+
+**Contexte PRD (parcours Léa #9) :** Léa installe Le Voile via F-Droid sur son Pixel 7. C'est son premier lancement.
+
+```mermaid
+flowchart TD
+    A[Lance l'app depuis le launcher] --> B[OnboardingActivity affiche écran 1 : Bienvenue]
+    B --> C[Tap 'Continuer →']
+    C --> D[Popup système Android natif :<br>'Le Voile demande l'autorisation<br>de configurer un VPN']
+    D --> E{Consent VpnService}
+    E -->|Annuler| F[App quitte gracieusement<br>Message : 'Le consentement VPN<br>est requis pour fonctionner']
+    E -->|OK| G[Détection VPN concurrent via VpnService.prepare]
+    G --> H{Autre VPN actif ?}
+    H -->|Oui| I[Écran erreur :<br>'Une autre application VPN est active.<br>Désactivez-la pour utiliser Le Voile.']
+    I --> J[Bouton 'Réessayer' → retour étape G]
+    H -->|Non| K[Écran 3 : Activation 'VPN permanent']
+    K --> L{Choix utilisatrice}
+    L -->|Ouvrir les paramètres| M[Deeplink Settings.ACTION_VPN_SETTINGS]
+    M --> N[Léa active 'VPN permanent' + 'Bloquer connexions sans VPN'<br>dans Settings Android]
+    N --> O[Retour app via back ou auto-detect]
+    O --> P{Heuristique Settings.Global<br>détecte activation ?}
+    P -->|Oui| Q[Bandeau confirmation 1s :<br>'Kill switch activé ✓']
+    P -->|Non vérifiable / non actif| R[Bandeau orange persistant :<br>'Kill switch non vérifié — réessayer']
+    L -->|Continuer sans déconseillé| S[Bandeau rouge persistant :<br>'⚠️ Kill switch inactif — Activer']
+    Q --> T[Marque onboarding_completed = true]
+    R --> T
+    S --> T
+    T --> U[MainActivity + WebView]
+    U --> V[Démarrage VpnService → tunnel actif]
+    V --> W[Notification persistante apparaît :<br>'Le Voile · Connecté · Allemagne · 5.x.x.x']
+    W --> X[FIN : Léa voit la home avec drapeau allemand]
+```
+
+**Points UX clés :**
+- L'écran 3 est le moment le plus sensible de tout l'onboarding Android — un seul CTA primaire « Ouvrir les paramètres », deeplink direct
+- Le « Continuer sans » est intentionnellement discret (lien gris, pas un bouton) — l'utilisatrice doit faire un choix conscient
+- La détection au retour de Settings utilise `MainActivity.onResume()` + heuristique `Settings.Global` (fragile, fallback documenté)
+- Le bandeau persistant utilise 3 niveaux : vert disparaissant (1s, succès), orange persistant (non vérifiable, réessayer), rouge persistant (refus explicite, plus tard)
+- L'onboarding ne se rejoue pas — `onboarding_completed=true` est persisté dans SharedPreferences. Pour re-déclencher : Réglages → Apps → Le Voile → Effacer données
+
+### J7 — Swipe-close de l'app Android (Phase 2)
+
+**Contexte :** Léa a fini de vérifier son IP. Réflexe Android quotidien : balayer pour fermer l'app.
+
+```mermaid
+flowchart TD
+    A[Léa balaye l'app dans la vue récents] --> B[MainActivity.onDestroy appelé]
+    B --> C[WebView libérée]
+    C --> D{LeVoileVpnService actif ?}
+    D -->|Oui — tunnel en cours| E[Foreground Service continue<br>indépendamment de l'Activity]
+    E --> F[Notification persistante reste visible<br>dans la barre de statut Android]
+    F --> G[Tunnel reste actif<br>Tout le trafic continue de transiter]
+    G --> H[Léa utilise Chrome, WhatsApp, Insta…<br>protégée en arrière-plan]
+    H --> I[Clic notif 'Le Voile · Connecté'<br>OU lance l'app via launcher]
+    I --> J[MainActivity recréée<br>WebView reload <br>Polling status reprend]
+    J --> K[Statut affiché en < 1s :<br>'Connecté — Allemagne · 5.x.x.x']
+    D -->|Non — tunnel arrêté| L[Service stoppé, notification disparue]
+    L --> M[Au prochain lancement,<br>tunnel se reconnecte automatiquement]
+```
+
+**Points UX clés :**
+- **Le swipe-close n'arrête JAMAIS le tunnel.** C'est la règle fondamentale Android : seules les actions explicites (« Déconnecter » dans la notif, ou Forcer l'arrêt système) coupent la protection
+- La notification persistante est le **contrat de confiance** : tant qu'elle est visible, le tunnel est actif. Si elle disparaît sans action explicite → bug à investiguer (battery save OEM agressif, OOM kill rare)
+- La WebView est libérée — au retour, l'état est re-récupéré via `window.LeVoile.getStatus()` au premier polling. Pas de cache d'état JS persisté
+
+### J8 — Mise à jour Android (F-Droid vs APK direct, Phase 2)
+
+**Contexte :** Une nouvelle version de Le Voile est publiée (v0.2.0).
+
+```mermaid
+flowchart TD
+    A[Nouvelle version publiée<br>tag git + GitHub release + F-Droid metadata] --> B{Canal d'install Léa}
+    B -->|F-Droid| C[Client F-Droid de Léa détecte<br>la nouvelle version au prochain<br>refresh catalogue]
+    C --> D[Notification F-Droid native :<br>'Le Voile : mise à jour disponible']
+    D --> E[Léa tape la notif F-Droid<br>→ écran F-Droid avec changelog]
+    E --> F[Léa lance l'install via F-Droid<br>PackageManager vérifie signature v2/v3]
+    F --> G[Install OK → app relancée par F-Droid]
+    G --> H[FIN : tunnel reconnecté en < 3s]
+    B -->|APK direct GitHub| I[App Le Voile poll periodiquement<br>https://api.github.com/.../latest]
+    I --> J{Version latest > version installée ?}
+    J -->|Non| K[Rien — silence]
+    J -->|Oui| L[Cloche notification dans AppBar<br>+ message in-app :<br>'Mise à jour v0.2.0 disponible']
+    L --> M[Tap cloche → bottom-sheet :<br>changelog + bouton<br>'Télécharger sur GitHub ↗']
+    M --> N[Tap bouton → Intent.ACTION_VIEW<br>vers github.com/.../releases/tag/v0.2.0]
+    N --> O[Léa télécharge l'APK signé v2/v3<br>via Chrome ou client GitHub]
+    O --> P[Tap APK téléchargé → install Android natif<br>PackageManager vérifie signature]
+    P --> Q{Signature v2/v3 valide ?}
+    Q -->|Non| R[Install refusé par Android<br>Avertissement de sécurité OS]
+    Q -->|Oui| S[Install OK → app relancée]
+    S --> H
+```
+
+**Points UX clés :**
+- **Pas d'auto-update embarqué côté APK direct** (limitation Android non-rooté + posture sécurité — pas d'élévation runtime). L'utilisatrice est toujours dans la boucle
+- **F-Droid gère ses utilisateurs** — silence total côté Le Voile, c'est le client F-Droid qui notifie
+- **Vérification signature systématique** par PackageManager — la promesse zero-tampering est tenue par l'OS, pas par notre code
+- **Pas d'urgence** — pas de notification anxiogène ni de timer. L'utilisatrice met à jour quand elle veut. Si une CVE critique nécessite urgence : message in-app explicite avec contexte (« Sécurité : version recommandée v0.2.1, voir SECURITY.md »)
+
 ### Journey Patterns
 
 | Pattern | Utilisé dans | Description |
 |---|---|---|
-| Transition V vert → orange → vert | J1, J2, J3 | Feedback visuel uniforme pour toute transition de connexion |
-| Action automatique silencieuse | J1, J3 | Le système agit sans demander. L'utilisateur observe, pas décide |
+| Transition V vert → orange → vert | J1, J2, J3 | Feedback visuel uniforme pour toute transition de connexion (desktop) |
+| Action automatique silencieuse | J1, J3, J7 | Le système agit sans demander. L'utilisateur observe, pas décide |
 | Clic = action immédiate | J2, J5 | Un clic sur un pays ou un toggle produit un effet instantané. Pas de confirmation |
-| Fenêtre optionnelle | J3 | Le comportement est identique que la fenêtre soit ouverte ou non |
-| Modal pédagogique unique | J4 | Avertissement une fois, option "ne plus montrer" |
+| Fenêtre optionnelle | J3 | Le comportement est identique que la fenêtre soit ouverte ou non (desktop) |
+| Modal pédagogique unique | J4 | Avertissement une fois, option "ne plus montrer" (desktop uniquement) |
+| Onboarding obligatoire au premier lancement | J6 | 3 écrans séquentiels Android, dernière étape non-skippable (kill switch). Ne se rejoue jamais |
+| Notification persistante = source de vérité | J7 | Tant qu'elle est visible, le tunnel est actif. Aucun moyen UI de la masquer |
+| Mise à jour utilisateur-pull (Android) | J8 | Pas d'auto-update — l'utilisatrice valide explicitement chaque install |
+| Bandeau d'alerte persistant (kill switch) | J6 | Rouge non-dismissable si « VPN permanent » non activé sur Android |
 
 ### Flow Optimization Principles
 
@@ -745,10 +1097,17 @@ Pas de design system externe. Tous les composants sont custom, construits en HTM
 
 #### C6 — Settings Panel
 
-**Purpose :** Panel paramètres avec toggle WebRTC
-**Anatomy :** Titre "PARAMÈTRES" (Bebas Neue) | groupe WebRTC (label + description + avertissement + toggle) | lien tester
-**States :** Affiché quand onglet paramètres sélectionné dans la sidebar
-**Accessibilité :** Toggle avec role="switch", aria-checked, aria-label
+**Purpose :** Panel paramètres avec toggle WebRTC + section "Avancé" repliable hébergeant les toggles à risque (IPv6 hors tunnel FR8d, Mode dégradé kill switch FR16b)
+**Anatomy :**
+- Titre « PARAMÈTRES » (Bebas Neue 24px)
+- Section principale : groupe WebRTC (label + description + toggle C7) + lien tester (C10)
+- Bouton-section repliable « Paramètres avancés ▾ » (Rajdhani 14px, opacity 0.7) — replié par défaut
+- Section avancée dépliée :
+  - Groupe IPv6 (FR8d) : label « Autoriser IPv6 hors tunnel » + description « L'IPv6 sortira en clair, votre IP réelle sera exposée sur les services IPv6 » + toggle C7 (off par défaut). Tap toggle → modale C20 avant activation
+  - Groupe Mode dégradé (FR16b) : label « Mode dégradé (kill switch désactivé) » + description « Pour usage temporaire en captive portal ou réseau bloquant. Réactivation auto à la prochaine connexion tunnel réussie » + toggle C7 (off par défaut). Tap toggle → modale C20 avant activation
+**States :** Affiché quand onglet paramètres sélectionné dans la sidebar. Section avancée dépliable/repliable (état persisté en mémoire UI uniquement, pas en config)
+**Visibilité conditionnelle des toggles avancés :** toujours visibles (pas cachés derrière flag dev) — l'utilisateur doit pouvoir les trouver, mais le coût psychologique du « Paramètres avancés ▾ » filtre l'usage occasionnel
+**Accessibilité :** Toggles avec `role="switch"`, `aria-checked`, `aria-label` explicite (« Autoriser IPv6 hors tunnel : désactivé »). Section repliable annoncée TalkBack/NVDA via `aria-expanded`. Modale C20 = `aria-modal="true"` avec focus trap
 
 #### C7 — Toggle Switch
 
@@ -781,8 +1140,11 @@ Pas de design system externe. Tous les composants sont custom, construits en HTM
 - Connecté : vert (#4ade80), glow vert
 - Reconnexion : orange (#fb923c), glow orange, animation pulse 1.5s
 - Déconnecté : rouge (#ff3c3c), glow rouge
+- **Mode dégradé actif (FR16b)** : rouge (#d42b2b) avec halo rouge atténué — distinct du « déconnecté » par le contexte (tunnel actif mais kill switch off). Couplé à C18 Bandeau permanent dans la fenêtre webview
 
-**Accessibilité :** Toujours accompagné de texte — ne sert pas seul
+**Variation icône tray Windows/Linux :** l'icône systray Le Voile reflète le state dot — vert (connecté), orange (reconnexion), rouge déconnecté, **rouge plein avec ⚠ overlay (mode dégradé)** pour distinguer visuellement de l'état déconnecté pur
+
+**Accessibilité :** Toujours accompagné de texte — ne sert pas seul. État mode dégradé annoncé TalkBack/NVDA via `aria-label` explicite : « Mode dégradé actif — protection désactivée »
 
 #### C10 — Action Link
 
@@ -825,26 +1187,190 @@ Pas de design system externe. Tous les composants sont custom, construits en HTM
 
 **Accessibilité :** aria-label "Se connecter à [pays]"
 
+#### C18 — Bandeau Mode Dégradé Desktop (FR16b)
+
+**Purpose :** Bandeau persistant rouge dans la fenêtre webview tant que le mode dégradé est actif (kill switch firewall désactivé) — équivalent fonctionnel desktop du composant C17 Android
+**Position :** Haut du panel principal, sous la titlebar C1, full-width, hauteur 36px
+**Anatomy :** Icône ⚠️ (16px) + texte « Mode dégradé actif — protection désactivée » (Rajdhani 13px 600, blanc) + lien « Réactiver › » (Rajdhani 13px 700, souligné)
+**States :**
+- Affiché : fond rouge atténué (#d42b2b à 90% opacité), animation slide-down 200ms à l'apparition
+- Non-dismissable par geste ou bouton de fermeture — seule action : tap « Réactiver › » → tente immédiatement une nouvelle connexion tunnel ; si succès, kill switch réactivé + bandeau disparaît avec slide-up 200ms
+- Persiste tant que `[tunnel] killswitch_off = true` dans la config TOML
+
+**Couplage runtime :**
+- Activation : par menu tray « Mode dégradé » ou commande CLI `levoile-ctl killswitch off` (FR16b) → modale C20 d'avertissement → confirmation → bandeau apparaît + icône tray bascule rouge ⚠
+- Désactivation automatique : à la prochaine connexion tunnel réussie, le service ré-arme le kill switch firewall et le bandeau disparaît automatiquement (FR16b)
+- Désactivation manuelle : via tap « Réactiver › » du bandeau, ou menu tray « Mode dégradé » re-coché, ou `levoile-ctl killswitch on`
+
+**Accessibilité :** `role="alert"`, `aria-live="assertive"` (annoncé immédiatement à l'apparition par NVDA/Orca/TalkBack). Bouton « Réactiver » focusable au Tab, activable Espace/Entrée
+
+#### C19 — Service Down Screen (FR13c)
+
+**Purpose :** Écran fixe affiché en plein panel quand l'UI ne peut pas joindre l'IPC du service Le Voile (service stoppé, crash, container sans systemd)
+**Position :** Remplace le panel principal entièrement (titlebar C1 conservée)
+**Anatomy :**
+- Icône statut « offline » centrée (32px, gris #8a9bb8)
+- Titre « Service Le Voile non démarré » (Bebas Neue 24px, blanc)
+- Bloc texte explicatif (Inter 14px, max-width 360px) selon OS détecté :
+  - **Linux :** « Le service Le Voile n'est pas démarré. Ouvrez un terminal et lancez : » + bloc-code monospace `sudo systemctl start levoile.service`
+  - **Windows :** « Le service Le Voile n'est pas démarré. Ouvrez Services.msc et démarrez "Le Voile Service", ou utilisez : » + bloc-code monospace `sc start levoile-service` + note « (en admin) »
+- Bloc-code : fond ardoise (#162a4a), bordure (#1a6fc4 1px), padding 12px, font-family `'JetBrains Mono', Consolas, monospace`, taille 13px, sélectionnable (`user-select: text`) pour faciliter le copier-coller
+- Bouton secondaire « Copier la commande » (Rajdhani 13px 600, fond transparent, bordure bleue) → copie dans le presse-papier via `navigator.clipboard.writeText`
+- Indicateur de retry en bas : « Reconnexion à venir… ⟳ » (Inter 12px, opacity 0.5) avec animation rotation discrète. Mis à jour à chaque tentative IPC (toutes les 5s, conformément FR13c)
+- Lien d'aide (C10 Action Link) « Documentation dépannage ↗ » → ouvre URL doc plateformeliberte.fr/docs/troubleshoot dans navigateur
+
+**States :**
+- Affiché : pendant que `ipcClient.Connect()` retourne erreur depuis `> 5s` au démarrage UI ou pendant la vie de la session
+- Disparu : dès que la première réponse IPC valide arrive (event `ipc:connected`) → re-render du panel principal sans recharger la fenêtre
+
+**Détection OS :** côté Go avant injection dans le HTML via template, ou côté JS via `window.LeVoile.platform()` (méthode IPC ou fallback `navigator.userAgent`)
+
+**Accessibilité :** Titre `<h1>` annoncé en premier, bloc-code marqué `<pre><code>` avec `role="region"` et `aria-label="Commande de démarrage du service"`, bouton « Copier la commande » avec `aria-label` complet et confirmation via `aria-live="polite"` après copie
+
+#### C20 — Modale Avertissement Paramètres Avancés (FR8d, FR16b)
+
+**Purpose :** Modale d'avertissement bloquante affichée avant d'activer un toggle à risque dans C6 (IPv6 hors tunnel ou Mode dégradé)
+**Anatomy :** Variante de C8 Quit Modal — overlay sombre 85% + blur 4px + modal card 380px max
+- Icône warning ⚠️ centrée (32px, orange #fb923c)
+- Titre dynamique selon toggle : « Activer IPv6 hors tunnel ? » ou « Activer le mode dégradé ? »
+- Texte explicatif rouge clair (Inter 14px) :
+  - **IPv6 hors tunnel :** « L'IPv6 ne sera PAS protégé par Le Voile et exposera votre IP réelle sur les services IPv6. Votre IPv4 reste masqué par le relais. Ce paramètre est destiné aux utilisateurs avancés ayant validé qu'aucune information sensible ne fuit via IPv6. »
+  - **Mode dégradé :** « Le kill switch firewall sera désactivé. Votre trafic ne sera pas protégé. Un bandeau rouge restera affiché tant que le mode est actif. La protection sera réactivée automatiquement à la prochaine connexion tunnel réussie. »
+- Checkbox « Ne plus me demander pour ce paramètre » (Inter 13px, persistée par toggle, pas globalement)
+- Boutons en pied de modale (alignés à droite) :
+  - « Annuler » (Rajdhani 14px 600, fond transparent, focus initial) — ferme la modale, toggle reste désactivé
+  - « Activer quand même » (Rajdhani 14px 700, fond rouge atténué #d42b2b) — confirme, applique le toggle, persiste config
+
+**States :**
+- Affiché : à chaque tap sur un toggle avancé sauf si « Ne plus me demander » coché précédemment pour ce toggle
+- Esc ou clic overlay : équivalent « Annuler »
+- Animation : fade-in overlay 150ms + scale-in card 200ms
+
+**Conséquence post-confirmation :**
+- IPv6 toggle ON → écrit `[tunnel] allow_ipv6_leak = true` dans config TOML, applique nouvelle règle nftables/WFP, journalise (sans data utilisateur — NFR22a)
+- Mode dégradé ON → écrit `[tunnel] killswitch_off = true`, désactive nftables ruleset `inet levoile` ou WFP filters, journalise, **affiche immédiatement le bandeau C18**, bascule icône tray rouge ⚠
+
+**Accessibilité :** `role="dialog"`, `aria-modal="true"`, focus trap dans la modale, focus initial sur « Annuler » (action sûre par défaut, conforme bonnes pratiques modales destructrices). Esc = annuler. Texte explicatif en `<p role="alert">` annoncé immédiatement par lecteurs d'écran
+
+### Composants Android (Phase 2)
+
+Composants spécifiques Android, en plus des composants C1-C12 desktop. Pas de mutualisation des classes CSS desktop ↔ Android : les composants desktop sont désactivés sur mobile via `body.platform-android` et le markup Android utilise des classes dédiées (`.android-appbar`, `.android-bottomsheet`, etc.).
+
+#### C13 — AppBar Android
+
+**Purpose :** Barre supérieure Material remplaçant la titlebar desktop
+**Anatomy :** Burger menu (☰, 24dp) | titre « LE VOILE » (Bebas Neue 20sp) | espace flexible | cloche notifications (ⓘ) | menu overflow (⋮)
+**Hauteur :** 56dp (standard Material)
+**States :**
+- Connecté : fond navy (#0b1526), titre blanc, statut implicite (pas de coloration AppBar)
+- Pas de coloration sur transitions — l'état est porté par le Status Group du panel principal
+
+**Interaction :** Burger ouvre un drawer latéral (paramètres, à propos, info légale, paramètres système Android). Cloche affiche les notifications in-app (mises à jour, alertes). Menu overflow : actions secondaires (jamais « Quitter » — pattern Android natif)
+**Accessibilité :** `role="banner"`, focusable au TalkBack séquentiel, taille minimum 48dp pour les zones tappables
+
+#### C14 — Country Selector Bottom-Sheet
+
+**Purpose :** Sélection de pays en bottom-sheet Material (slide depuis le bas)
+**Trigger :** Pill « CHANGER DE PAYS ▼ » dans le panel principal
+**Anatomy :** Bottom-sheet 60% hauteur écran, drag handle au top, titre « PAYS » | liste verticale 4 pays : drapeau (40dp) + nom + indicateur favori + check si actif
+**States :**
+- Pays actif : check vert à droite, fond légèrement teinté
+- Pays inactif : tappable, fond transparent
+- Pays favori : étoile jaune avant le nom
+- Animation : slide-up 250ms ease-out, slide-down au dismiss
+
+**Interaction :** Tap sur un pays inactif → bottom-sheet se ferme + panel principal affiche le drapeau du nouveau pays + bouton « CONNECTER ». Tap pays actif = ferme sans action. Tap fond ou drag-down = annule
+**Accessibilité :** `role="dialog"`, focus trap pendant ouverture, retour Android = dismiss, annonce TalkBack « Sélection de pays, [n] pays disponibles »
+
+#### C15 — Onboarding Kill Switch Screen
+
+**Purpose :** Écran 3 de l'onboarding obligatoire — activation « VPN permanent »
+**Anatomy :**
+- Icône warning (⚠️ 64dp, orange)
+- Titre « Une dernière étape » (Bebas Neue 28sp)
+- Texte explicatif (3 lignes max, Inter 16sp, max-width 320dp pour lisibilité)
+- Sous-texte conséquence (2 lignes, Inter 14sp, opacity 0.7)
+- Bouton primaire pleine largeur (Rajdhani 600 16sp, hauteur 48dp) : « OUVRIR LES PARAMÈTRES »
+- Lien discret (Inter 13sp, opacity 0.5, underline) : « Continuer sans (déconseillé) »
+
+**States :**
+- Affichage initial : pas de retour (back désactivé jusqu'à interaction)
+- Retour de Settings (onResume) : détection automatique heuristique → écran transitoire « Vérification… » (1s) puis MainActivity
+- Heuristique détecte « non vérifiable » : affiche option supplémentaire « Réessayer » + « J'ai vérifié manuellement »
+
+**Interaction :** Bouton primaire → `Intent(Settings.ACTION_VPN_SETTINGS)`. Lien discret → bottom-sheet de confirmation (« Continuer sans le kill switch ? Vous pourrez l'activer plus tard. ») + bandeau rouge persistant. Back Android désactivé sur cet écran (sécurité UX)
+**Accessibilité :** `aria-live="polite"` sur le statut, focus initial sur le bouton primaire, contraste warning ≥ 4.5:1
+
+#### C16 — Foreground Service Notification
+
+**Purpose :** Notification persistante représentant l'état du tunnel — équivalent fonctionnel du tray desktop
+**Channel :** `levoile_vpn_status` (importance LOW, silencieux, pas de heads-up)
+**Anatomy :**
+- Icône système (mono-couleur blanc/transparent, vector drawable `ic_levoile_status`)
+- Titre : « Le Voile · [État] » (ex. « Le Voile · Connecté »)
+- Texte : « [Pays] · [IP] » (ex. « Allemagne · 5.x.x.x »)
+- Action : « DÉCONNECTER » (bouton notification action, PendingIntent FLAG_IMMUTABLE)
+
+**States :**
+- Connecté : icône statique, texte « Connecté · [Pays] · [IP] »
+- Reconnexion : icône légèrement animée (alternance opacity), texte « Reconnexion… »
+- Déconnecté : icône grisée, texte « Déconnecté » — la notification reste si le service tourne mais le tunnel est tombé
+- Kill switch inactif : texte « ⚠️ Kill switch inactif · Activer » (tap → MainActivity → onboarding kill switch)
+- Erreur : « Aucun relais · Vérifiez votre connexion »
+
+**Interaction :**
+- Tap sur le corps de la notification → ouvre `MainActivity` (PendingIntent ouvre l'app)
+- Tap action « DÉCONNECTER » → `LeVoileVpnService.ACTION_DISCONNECT` → tunnel coupé, notification mise à jour (« Déconnecté »), service stoppé après 5s d'inactivité
+
+**Contraintes :** `setOngoing(true)` → non-dismissable par swipe. `setSmallIcon` mono-couleur (Android exige). Pas de son (`setSilent(true)`), pas de vibration. Mise à jour via `notify(NOTIF_ID, builder.build())` à chaque transition d'état
+**Accessibilité :** `setContentDescription` complet pour TalkBack, action accessible au focus séquentiel
+
+#### C17 — Bandeau d'alerte kill switch (Android)
+
+**Purpose :** Bandeau persistant rouge si « VPN permanent » non activé sur Android
+**Position :** Haut du panel principal, sous AppBar, full-width, hauteur 40dp
+**Anatomy :** Icône ⚠️ + texte « Kill switch inactif — Activer » + chevron ›
+**States :**
+- Affiché : fond rouge atténué (#d42b2b à 90%), texte blanc Rajdhani 14sp 600
+- Non-dismissable par geste — seule action : tap → relance le flow C15
+
+**Interaction :** Tap → ouvre directement l'écran C15 d'onboarding kill switch (sans rejouer écrans 1-2)
+**Visible quand :** heuristique `Settings.Global.always_on_vpn_app` ne correspond pas au package Le Voile, OU détection « non vérifiable »
+**Accessibilité :** `aria-live="assertive"`, annoncé immédiatement par TalkBack à l'apparition
+
 ### Component Implementation Strategy
 
-- **Fichier unique :** Tous les composants dans un seul CSS (~300 lignes estimées) + un seul JS (~200 lignes)
-- **Pas de bundler :** HTML/CSS/JS servis directement par Wails embed
-- **Tokens CSS :** Variables :root partagées entre tous les composants (couleurs, spacing, typos)
-- **Communication Go ↔ JS :** Wails bindings pour le statut, les événements, les préférences
+**Desktop (Windows + Linux) :**
+- Fichier unique : tous les composants C1-C12 + C18-C20 (extensions FR8d/FR16b/FR13c) dans un seul CSS (~360 lignes) + un seul JS (~240 lignes)
+- Pas de bundler : HTML/CSS/JS servis directement par le serveur HTTP local du binaire UI (`internal/ui/embed.go` via `//go:embed`)
+- Tokens CSS : variables `:root` partagées entre tous les composants (couleurs, spacing, typos)
+- Communication Go ↔ JS : serveur HTTP local (`127.0.0.1:{port}`) avec API REST JSON, polling 2s
+- C19 Service Down Screen : rendu quand `ipcClient.Connect()` échoue ; détection OS via template Go côté backend ou méthode UI bridge `window.LeVoile.platform()`
+
+**Android (Phase 2) :**
+- Mêmes assets HTML/CSS/JS que desktop, copiés via `android/scripts/sync-frontend.sh` au build
+- Composants C13-C17 ajoutés via classes CSS dédiées `.android-*` activées par `body.platform-android` (set au boot par le frontend après détection JS bridge)
+- Composants desktop (C1 Titlebar, C2 Sidebar, C3 Country Item, C4 Star Favorite, C8 Quit Modal) **désactivés** sur mobile via `body.platform-android .desktop-only { display: none }`
+- Communication frontend ↔ natif : JS Bridge `@JavascriptInterface` (`window.LeVoile.connect()` etc.) — pas de serveur HTTP local
+- Notification (C16) : composant natif Android (NotificationCompat.Builder), pas HTML
 
 ### Implementation Roadmap
 
 **Phase 1 — MVP Core (bloquant) :**
-- C1 Titlebar, C2 Sidebar, C3 Country Item, C5 Status Panel, C9 Status Dot
-- Raison : le flow J1 (premier lancement) et J2 (changement pays) en dépendent
+- C1 Titlebar, C2 Sidebar, C3 Country Item, C5 Status Panel, C9 Status Dot, **C19 Service Down Screen**
+- Raison : le flow J1 (premier lancement) et J2 (changement pays) en dépendent. C19 livré dès le MVP car le pire écran possible est une fenêtre vide quand le service crashe au boot — bloquant pour la confiance utilisateur (J11)
 
 **Phase 2 — Interactions complètes :**
-- C4 Star Favorite, C7 Toggle Switch, C8 Quit Modal, C10 Action Link, C12 Connect Button
-- Raison : J4 (quitter vs minimiser), flow de connexion explicite, confort d'usage
+- C4 Star Favorite, C7 Toggle Switch, C8 Quit Modal, C10 Action Link, C12 Connect Button, **C18 Bandeau Mode Dégradé**, **C20 Modale Avertissement Avancé**
+- Raison : J4 (quitter vs minimiser), flow de connexion explicite, confort d'usage. C18+C20 livrés ici car ils accompagnent FR16b (Story Epic 5.9) qui est dans la même vague d'interactions runtime
 
 **Phase 3 — Paramètres & Notifications :**
-- C6 Settings Panel (avec toggle WebRTC), C11 Notification Bell
-- Raison : J5 (toggle WebRTC), notifications mise à jour, peut être livré après le MVP core
+- C6 Settings Panel (WebRTC + section avancée IPv6 FR8d + Mode dégradé FR16b), C11 Notification Bell
+- Raison : J5 (toggle WebRTC), J9 (IPv6 hors tunnel), J10 (mode dégradé via menu tray), notifications mise à jour. Peut être livré après le MVP core mais avant le release Linux complet (Story Epic 2.9 FR8d et Story Epic 5.9 FR16b dépendent du panel C6 enrichi)
+
+**Phase 2 Android — Composants mobiles :**
+- C13 AppBar Android, C14 Country Selector Bottom-Sheet, C15 Onboarding Kill Switch Screen, C16 Foreground Service Notification, C17 Bandeau alerte kill switch
+- Raison : J6 (premier lancement onboarding), J7 (swipe-close + notification), J8 (mise à jour). Tous bloquants pour le MVP Android — l'onboarding kill switch (C15) et la notification persistante (C16) sont les deux points UX critiques sans lesquels le produit Android n'a pas d'identité ni de promesse de protection vérifiable
 
 ## UX Consistency Patterns
 
@@ -947,7 +1473,7 @@ Pas de design system externe. Tous les composants sont custom, construits en HTM
 
 ### Text & Language Patterns
 
-**Langue :** Français uniquement (public cible francophone)
+**Langue :** Français uniquement (public cible francophone). **Phase 2 Android :** strings.xml `values/` (en) + `values-fr/` (fr) — fr par défaut, en disponible si l'OS est en anglais
 **Ton :** Informatif, calme, non-technique
 **Règles :**
 - Pas de points d'exclamation (sauf erreur critique)
@@ -960,41 +1486,123 @@ Pas de design system externe. Tous les composants sont custom, construits en HTM
 - "Reconnexion en cours..." (pas "QUIC handshake failed, retrying...")
 - "Aucun relais disponible. Vérifiez votre connexion internet." (pas "Error: all relays unreachable, timeout 3000ms")
 
+### Android Specifics — Patterns dédiés (Phase 2)
+
+Patterns propres à Android, qui n'existent pas (ou diffèrent) du desktop. Aucune mutualisation avec le desktop — ces patterns sont indépendants.
+
+**Architecture UI :**
+- Pas de fenêtre, pas de tray, pas de titlebar custom — l'écran entier est une WebView dans `MainActivity`. L'AppBar Material remplace la titlebar
+- Pas de modal quitter (concept inadapté Android — l'utilisateur sort par back/home, le service continue)
+- Pas de bouton « Quitter » UI — la déconnexion explicite passe uniquement par l'action de la notification persistante
+
+**Cycle de vie & navigation :**
+- **Back Android = mettre en background** sur l'écran principal (équivalent home). Sur les écrans secondaires (onboarding, paramètres in-app, bottom-sheet) = retour à l'écran précédent
+- **Home Android = mettre en background** systématiquement
+- **Swipe-close (vue récents) = détruire l'Activity** mais le Foreground Service continue. Notification persistante reste
+- **Configuration changes (rotation, clavier)** : `MainActivity` déclare `android:configChanges="orientation|screenSize|smallestScreenSize|keyboardHidden|navigation"` — pas de recréation, l'état WebView est préservé
+
+**Permissions runtime :**
+- **`POST_NOTIFICATIONS`** (Android 13+) — demandée juste-à-temps au moment de démarrer le Foreground Service (pas au boot de l'app). Si refusée → service tourne mais notification masquée → bandeau orange in-app « Notification désactivée — réactivez-la pour voir l'état du tunnel »
+- **Pas de permission Battery Optimization exemption** demandée par défaut (Android 12+ n'en a plus besoin pour les FGS VPN). Documentée comme conseil pour OEMs agressifs (Xiaomi, Huawei, Oppo) via le drawer paramètres
+
+**Lifecycle Foreground Service :**
+- **Notification ≤ 5s après `startForegroundService()`** (sinon ANR) — la notification est construite avant tout appel I/O
+- **`START_REDELIVER_INTENT`** sur le service → si le système tue le process, redémarre avec le dernier intent. Au redémarrage, le service reconnecte automatiquement le tunnel (pays favori)
+- **`onRevoke()`** appelé si l'utilisateur révoque le consent VpnService dans Settings → service stop propre, notification mise à jour « Le Voile · Consentement révoqué — réactivez le VPN »
+- **`onDestroy()`** : nettoie threads pompe paquets, ferme fd VpnService, restore proxy système, cleanup coroutines scope
+
+**Frontière JS Bridge :**
+- Toutes les méthodes `@JavascriptInterface` retournent String (JSON) ou primitives — pas de types complexes (gomobile + JS Bridge gèrent mal)
+- Sérialisation max 4 Ko par message (cohérent FR-AND-5)
+- Méthodes exposées : `connect()`, `disconnect()`, `getStatus()`, `selectCountry(iso)`, `getRegistry()`, `checkLeak()`, `openVpnSettings()`, `openBatteryOptimizationSettings()`, `isAlwaysOnEnabled()`, `getPreferences()`, `setPreference(key, value)`, `quit()`
+- Polling : `setInterval(window.LeVoile.getStatus, 2000)` côté JS — pause naturelle du WebView en background, pas d'optimisation manuelle nécessaire
+
+**Distribution & mise à jour :**
+- **F-Droid** : aucune notification in-app, le client F-Droid de l'utilisatrice gère tout
+- **APK direct** : check periodique GitHub releases au boot + 1x/jour, cloche notification dans AppBar si nouvelle version, pas d'auto-install
+- **Vérification signature** systématique par PackageManager — l'OS rejette toute install non signée v2/v3 par master key Ed25519
+
+**Anti-patterns Android à éviter absolument :**
+- Simuler un kill switch app-level (reconnect-loop, drop sockets) — refusé par ADR-10. Le seul kill switch valide est le réglage OS « VPN permanent »
+- Forcer Battery Optimization exemption avant le premier Connect (UX agressive — laisser optionnel)
+- Toaster ou snackbar à chaque transition d'état (silence par défaut — la notification dans la barre de statut suffit)
+- Demander permissions sensibles non requises (`READ_EXTERNAL_STORAGE`, `ACCESS_FINE_LOCATION`, `READ_PHONE_STATE`)
+- Crash reporters externes (Firebase Crashlytics, Sentry, Bugsnag) — refusé par ADR-15
+- Hardcoder les textes utilisateur — toujours via `R.string.*` (strings.xml fr + en)
+- Ouvrir une activité distincte pour chaque écran (over-engineering) — la WebView gère la navigation interne
+- Recréer l'Activity sur rotation — déclarer `configChanges` pour préserver l'état
+
 ## Responsive Design & Accessibility
 
 ### Responsive Strategy
 
-**Le Voile n'est pas responsive au sens classique.** La fenêtre Wails est fixe (420×540px), non redimensionnable, frameless. Il n'y a pas de version mobile ni tablette.
+Le Voile a **deux stratégies responsives parallèles**, isolées par OS (cohérent ADR-08) :
 
-**Adaptation cross-plateforme :**
+**Desktop (Windows + Linux) — fenêtre fixe :**
+- Fenêtre `webview/webview` 420×540px non redimensionnable, frameless
+- Pas de breakpoints, un seul layout (Direction F — Split Sidebar)
+- Adaptation DPI scaling uniquement (Windows 100%/125%/150%/200%)
+
+**Android (Phase 2) — fully responsive vertical :**
+- WebView plein écran, taille variable selon le device (typique 360×640dp à 420×900dp portrait)
+- Layout vertical empilé (Direction Android — Mobile Vertical), media queries portrait/paysage
+- Cibles tactiles ≥ 48dp (Material guidelines)
+- Pas de version dédiée tablette (la WebView responsive couvre tablettes Android standard via fluid layout)
+- Hors scope : iOS, Android TV, Wear OS, Android Auto
+
+**Adaptation par moteur de rendu :**
 
 | Plateforme | Moteur WebView | Particularités |
 |---|---|---|
-| Windows 10/11 | WebView2 (Chromium) | Référence de développement. Rendu pixel-perfect |
-| Linux | WebKitGTK | Vérifier le rendu des fonts (Bebas Neue, Rajdhani, Inter). Fonts embarquées obligatoires |
-| macOS | WebKit (Safari) | Vérifier le rendu des animations CSS. Tester les coins arrondis frameless |
+| Windows 10/11 | WebView2 (Chromium) | Référence de développement desktop. Rendu pixel-perfect. WebView2 Runtime requis (présent par défaut Windows 11) |
+| Linux | WebKitGTK | Vérifier le rendu des fonts (Bebas Neue, Rajdhani, Inter). Fonts embarquées obligatoires. Dépendance déclarée dans paquets natifs |
+| Android (Phase 2) | Android System WebView (Chromium) | Géré par `androidx.webkit`, `WebViewAssetLoader` sert les assets via `https://appassets.androidplatform.net/assets/...`. Mise à jour autonome par Play Services côté utilisateur |
+| macOS (Phase 3) | WebKit (Safari) | Vérifier le rendu des animations CSS. Tester les coins arrondis frameless. Différé |
 
 **Points d'attention cross-plateforme :**
-- Fonts embarquées dans le binaire (pas de CDN) → rendu identique partout
-- Tester le DPI scaling (125%, 150%, 200%) sur Windows — les dimensions CSS doivent rester cohérentes
-- Le system tray se comporte différemment sur chaque OS : tester clic gauche/droit, tooltip, icônes .ico vs .png
+- Fonts embarquées dans le binaire desktop / dans `android/app/src/main/assets/fonts/` côté Android (pas de CDN) → rendu identique partout
+- Tester le DPI scaling Windows (125%, 150%, 200%) — les dimensions CSS doivent rester cohérentes
+- Le system tray (desktop) se comporte différemment sur chaque OS : tester clic gauche/droit, tooltip, icônes .ico vs .png. Sur Android : la notification persistante est l'équivalent fonctionnel
+- Tester le rendu Android sur émulateur API 29 + 33 + 34 (NFR-AND-10) ainsi que device physique Pixel 6+
 
 ### Breakpoint Strategy
 
-**Pas de breakpoints.** Fenêtre fixe. Un seul layout. Pas de media queries.
+**Desktop : pas de breakpoints.** Fenêtre fixe 420×540px. Un seul layout.
 
-La seule adaptation nécessaire est le **DPI scaling** :
-- Utiliser des unités `px` pour la fenêtre (taille fixe) mais `rem` pour les éléments internes
-- Le WebView hérite du scaling OS — vérifier que 420×540px reste lisible à 200% DPI
-- Si nécessaire : ajuster la taille fenêtre proportionnellement au DPI
+**Android : breakpoints CSS ciblés :**
+
+```css
+/* Détection plateforme — appliquée par le frontend au boot via JS bridge */
+body.platform-android { ... }
+
+/* Phone portrait (référence) — 320dp à 480dp largeur */
+@media (max-width: 600px) and (orientation: portrait) {
+  body.platform-android .desktop-only { display: none; }
+  body.platform-android .android-only { display: block; }
+  body.platform-android .country-selector-pill { display: block; }
+  body.platform-android .country-sidebar { display: none; }
+}
+
+/* Phone paysage / tablette compacte — 600dp à 840dp */
+@media (min-width: 601px) and (max-width: 840px) {
+  body.platform-android { /* layout adapté plus large, panneau central centré max-width 480dp */ }
+}
+
+/* Tablette standard — 841dp+ */
+@media (min-width: 841px) {
+  body.platform-android { /* layout 2 colonnes optionnel, drapeau XL plus grand */ }
+}
+```
+
+Pas de support spécifique tablette dédié — le layout s'adapte fluide. Pas de breakpoint > 1024dp (concept inutile sur Android grand écran qui est rare et déjà couvert).
 
 ### Accessibility Strategy
 
-**Niveau cible : WCAG AA**
+**Niveau cible : WCAG AA + RGAA niveau AA** (exigence légale produits français)
 
 L'app est minimale, ce qui facilite l'accessibilité. Pas de formulaires complexes, pas de tableaux de données, pas de contenu dynamique lourd.
 
-**Checklist accessibilité Le Voile :**
+**Checklist accessibilité Le Voile — Desktop (Windows + Linux) :**
 
 | Critère | Implémentation | Statut design |
 |---|---|---|
@@ -1004,36 +1612,88 @@ L'app est minimale, ce qui facilite l'accessibilité. Pas de formulaires complex
 | Taille cibles cliquables (44×44px) | Sidebar items, boutons, toggle, titlebar buttons | Conçu |
 | Navigation clavier | Tab entre les éléments, Espace/Entrée pour activer | À implémenter |
 | Focus visible | Outline bleu glow sur focus clavier | Conçu |
-| Lecteur d'écran | aria-live sur statut, aria-labels sur tous les boutons | À implémenter |
+| Lecteur d'écran | aria-live sur statut, aria-labels sur tous les boutons (NVDA Windows / Orca Linux) | À implémenter |
 | Focus trap modal | Tab reste dans le modal quitter quand ouvert | À implémenter |
 | Skip content | Non nécessaire (pas de navigation longue) | N/A |
 
-**Navigation clavier complète :**
+**Checklist accessibilité Le Voile — Android (Phase 2) :**
+
+| Critère | Implémentation | Statut design |
+|---|---|---|
+| Contraste texte (4.5:1 min) | Mêmes tokens couleurs desktop, validés cross-OS | Conçu |
+| **Cibles tactiles ≥ 48dp** (Material guidelines) | Boutons primaire/secondaire 48dp hauteur, AppBar items 48dp, country items bottom-sheet 56dp | Conçu |
+| **TalkBack** (lecteur d'écran Android) | aria-labels FR + en sur tous les contrôles, `setContentDescription` sur les natifs (notification, AppBar) | À implémenter |
+| **Focus order TalkBack séquentiel** sans piège | Top → bottom : AppBar burger → titre → cloche → menu overflow → status → drapeau → IP → relais → pill pays → bouton primaire → lien externe | Conçu |
+| Couleur non-exclusive | Statut texte + dot + icône — jamais couleur seule | Conçu |
+| Bottom-sheet accessible | `role="dialog"`, focus trap, retour Android = dismiss | Conçu |
+| Notification accessible | `setContentDescription` complet, action lisible « Bouton, Déconnecter » | À implémenter |
+| Onboarding accessible | Boutons primaires focus initial, lecteur d'écran annonce les écrans dans l'ordre | À implémenter |
+| Bandeau alerte kill switch | `aria-live="assertive"` annoncé immédiatement par TalkBack | Conçu |
+| Taille police réglable | Système Android (réglage utilisateur OS) — la WebView respecte automatiquement | À tester |
+| Mode contraste élevé | Système Android — vérifier que les couleurs s'adaptent (ne pas hardcoder en `!important`) | À tester |
+
+**Navigation clavier complète (desktop) :**
 - Tab : parcourt titlebar buttons → sidebar items → panel actions
 - Flèches haut/bas : navigue dans la sidebar
 - Entrée/Espace : active l'élément focusé
 - Esc : ferme le modal / retour
+
+**Navigation TalkBack séquentielle (Android) :**
+- Swipe droite/gauche : élément suivant/précédent dans l'ordre du DOM
+- Double-tap : active l'élément focusé
+- Geste personnalisé Android : retour, accueil, applications récentes
+- Annonces vocales en français (langue OS) avec textes courts et précis
 
 ### Testing Strategy
 
 **Tests visuels cross-plateforme :**
 - Windows 10 + Windows 11 : WebView2, DPI 100%/125%/150%/200%
 - Ubuntu (dernier LTS) : WebKitGTK
-- macOS (dernière version) : WebKit
+- Fedora : WebKitGTK
+- Alpine : WebKitGTK
+- macOS (Phase 3) : WebKit
+
+**Tests visuels Android (Phase 2) :**
+- Émulateur API 29 (Android 10), API 33 (Android 13), API 34 (Android 14) — couverture matrice NFR-AND-10
+- Device physique Pixel 6+ (cible perf NFR-AND-2)
+- Orientations : portrait (référence) + paysage
+- Tailles : phone (360×640dp), phablet (412×892dp), tablette compacte (600×960dp)
+- DPI : mdpi, hdpi, xhdpi, xxhdpi, xxxhdpi (assets icônes en multi-densité)
+- Modes système : light/dark (Material You), contraste élevé, taille police agrandie
 
 **Tests accessibilité :**
-- Outil automatisé : axe-core intégré en dev (vérification WCAG AA)
-- Navigation clavier manuelle : vérifier que chaque action est atteignable sans souris
-- Lecteur d'écran : NVDA (Windows), Orca (Linux), VoiceOver (macOS)
+- Outil automatisé : axe-core intégré en dev (vérification WCAG AA) — desktop + WebView Android
+- Navigation clavier manuelle (desktop) : vérifier que chaque action est atteignable sans souris
+- Lecteur d'écran : NVDA (Windows), Orca (Linux), VoiceOver (macOS Phase 3), **TalkBack (Android Phase 2)**
 - Simulation daltonisme : vérifier que vert/orange/rouge restent distinguables en protanopie et deutéranopie
 
+**Tests Android complémentaires (Phase 2) :**
+- Tests instrumentés Espresso + AndroidX Test sur la matrice émulateur — flow connect/disconnect, onboarding, bottom-sheet, notification action « Déconnecter »
+- Tests intégration TalkBack : navigation séquentielle complète sans piège, focus order cohérent
+- Tests performance : démarrage VpnService → tunnel actif < 3s sur Pixel 6+, RAM < 60 MB en fonctionnement normal
+- Tests battery : Foreground Service survit en battery save (Android natif + simulation OEM agressif Xiaomi/Huawei via flags)
+- Tests reproductibilité build F-Droid : 2 builds successifs depuis le même tag git → hash SHA256 identique
+- Audit permissions APK : `apkanalyzer manifest permissions` ne révèle aucune permission dangereuse
+
 **Tests terrain :**
-- Tests avec les amis d'Akerimus (mentionnés dans le PRD) sur leurs machines réelles
+- Tests avec les amis d'Akerimus (mentionnés dans le PRD) sur leurs machines réelles desktop + leurs téléphones Android personnels Phase 2
 
 ### Implementation Guidelines
 
-- **HTML sémantique :** `<nav>` pour la sidebar, `<main>` pour le panel, `<button>` pour les actions (pas de `<div onclick>`)
-- **ARIA :** aria-current="page" sur le pays actif, aria-live="polite" sur le statut, aria-modal="true" sur le modal
-- **Focus :** outline personnalisé (glow bleu #2a8dff), jamais `outline: none` sans alternative
-- **Fonts :** Toutes embarquées via @font-face, pas de dépendance réseau
-- **DPI :** Tester à chaque commit sur au moins 2 niveaux DPI (100% et 150%)
+**Desktop (HTML/CSS/JS desktop) :**
+- HTML sémantique : `<nav>` pour la sidebar, `<main>` pour le panel, `<button>` pour les actions (pas de `<div onclick>`)
+- ARIA : aria-current="page" sur le pays actif, aria-live="polite" sur le statut, aria-modal="true" sur le modal
+- Focus : outline personnalisé (glow bleu #2a8dff), jamais `outline: none` sans alternative
+- Fonts : toutes embarquées via @font-face, pas de dépendance réseau
+- DPI : tester à chaque commit sur au moins 2 niveaux DPI (100% et 150%)
+
+**Android (HTML/CSS/JS partagé desktop + composants natifs) :**
+- HTML sémantique identique desktop, classes additionnelles `.android-*` pour les composants C13-C17
+- ARIA cohérent desktop, mais tester systématiquement avec TalkBack (les `aria-live` peuvent être interprétés différemment)
+- Focus : pas de focus clavier visible nécessaire (tactile par défaut), mais focus TalkBack géré via DOM order — éviter `tabindex` arbitraires
+- Fonts : copiées via `sync-frontend.sh` dans `android/app/src/main/assets/fonts/` (Bebas Neue, Rajdhani, Inter en woff2)
+- Strings utilisateurs : **jamais de hardcode** — passer par `R.string.*` côté Kotlin pour les composants natifs (notification, onboarding, AppBar). Côté HTML, utiliser un dictionnaire JS chargé selon `navigator.language`
+- Permissions runtime : demandées juste-à-temps, jamais au boot
+- Notifications : channel `levoile_vpn_status` créé dans `LeVoileApplication.onCreate()`, importance LOW
+- Foreground Service : `startForeground()` appelé < 5s après `onStartCommand()` sans exception
+- JS Bridge : toutes les méthodes `@JavascriptInterface` retournent String/Boolean/Int — pas de types complexes

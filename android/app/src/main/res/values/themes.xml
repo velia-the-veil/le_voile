@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Charte plateformeliberte.fr — dark-only par design.
+     Theme.AppCompat.DayNight.NoActionBar (vs NoActionBar light-only) garantit que
+     les widgets standards (AlertDialog, Toast, ...) héritent d'une variante sombre
+     en dark-mode système. android:isLightTheme=false force le dark indépendamment
+     du réglage système. -->
+<resources>
+    <style name="Theme.LeVoile" parent="Theme.AppCompat.DayNight.NoActionBar">
+        <item name="colorPrimary">@color/primary_blue</item>
+        <item name="colorPrimaryDark">@color/primary_blue_dark</item>
+        <item name="colorAccent">@color/accent_blue</item>
+        <item name="android:windowBackground">@color/bg_dark</item>
+        <item name="android:statusBarColor">@color/bg_dark</item>
+        <item name="android:isLightTheme">false</item>
+        <item name="android:windowLightStatusBar">false</item>
+    </style>
+</resources>

@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Charte plateformeliberte.fr — architecture.md l. 277-285.
+     UnusedResources ignoré : ces couleurs sont réservées pour Stories 9.3+/10.x/11.x. -->
+<resources xmlns:tools="http://schemas.android.com/tools" tools:ignore="UnusedResources">
+    <color name="bg_dark">#0b1526</color>
+    <color name="bg_dark_alt">#0e1e38</color>
+    <color name="primary_blue">#1a6fc4</color>
+    <color name="primary_blue_dark">#0d4a8a</color>
+    <color name="accent_blue">#2a8dff</color>
+    <color name="alert_red">#d42b2b</color>
+    <color name="status_connected">#4ade80</color>
+    <color name="status_connecting">#fb923c</color>
+    <color name="status_risk">#ff3c3c</color>
+    <color name="text_primary">#f0f4ff</color>
+    <color name="text_secondary">#8a9bb8</color>
+</resources>

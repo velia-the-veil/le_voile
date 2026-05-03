@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Le Voile</string>
+
+    <!-- Story 9.4 : conserve. -->
+    <string name="vpn_session_name">Le Voile</string>
+
+    <!-- Story 9.6 : Notification persistante MVP — version FR explicite.
+         Story 9.1 a livre le FR comme defaut ; values-fr/ duplique
+         les memes cles pour resister a une refonte i18n future
+         (Story 11.x livrera l'EN par defaut, le FR restera ici). -->
+    <string name="notif_channel_status_name">Statut Le Voile</string>
+    <string name="notif_channel_status_desc">Indique l\'état du tunnel VPN. Cette notification est nécessaire pour maintenir la protection en arrière-plan.</string>
+    <string name="notif_title_prefix">Le Voile</string>
+    <string name="vpn_status_connected">Connecté</string>
+    <string name="vpn_status_reconnecting">Reconnexion…</string>
+    <string name="vpn_status_disconnected">Déconnecté</string>
+    <string name="vpn_status_error">Erreur</string>
+    <string name="notif_action_disconnect">Déconnecter</string>
+    <string name="notif_content_description_disconnect">Couper le tunnel Le Voile et revenir à votre connexion réseau habituelle</string>
+
+    <!-- Fix L-4 (code-review post-9.5) : voir values/strings.xml pour le contexte. -->
+    <string name="vpn_consent_denied_message">Le Voile a besoin de votre consentement pour activer le tunnel.</string>
+</resources>
