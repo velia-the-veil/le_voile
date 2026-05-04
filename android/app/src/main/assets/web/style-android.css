@@ -24,6 +24,15 @@ body.platform-android .quit-modal {
 body.platform-android .android-only {
   display: revert;
 }
+/* L'attribut HTML `hidden` doit avoir priorité sur `display: revert` :
+ * sans cette règle, le UA stylesheet `[hidden] { display: none }` est
+ * vaincu par `revert` (qui ramène à `block`), et les backdrops invisibles
+ * (drawer, bottomsheet) capturent les taps malgré opacity:0. Bug observé
+ * sur Android 16 / Nothing OS — le bouton CONNECTER ne réagissait à
+ * aucun tap car couvert par #android-country-sheet-backdrop. */
+body.platform-android .android-only[hidden] {
+  display: none;
+}
 
 /* === Layout vertical pleine largeur (téléphone portrait < 600dp) === */
 @media (max-width: 600px) {

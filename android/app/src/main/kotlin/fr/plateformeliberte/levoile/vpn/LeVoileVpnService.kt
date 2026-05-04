@@ -189,16 +189,24 @@ class LeVoileVpnService : VpnService() {
         // (cleanupSync notifie ensuite DISCONNECTED, qui devient un no-op visuel
         // puisque deja affiche).
         val action = intent?.action
-        val initialState = when (action) {
-            ACTION_CONNECT -> VpnState.CONNECTED
-            else -> VpnState.DISCONNECTED
-        }
+        // Always-On VPN : Android lance le service via SERVICE_INTERFACE
+        // ("android.net.VpnService") quand l'utilisatrice a active "VPN
+        // permanent" dans Settings. Le manifest declare deja le filtre
+        // <action android:name="android.net.VpnService"/> sur ce Service ;
+        // ne pas traiter l'action ici brisait le contrat -> Android refusait
+        // d'enregistrer le pinning -> kill switch inconfigurable (FR-AND-2).
+        // Coherent avec le contrat framework Android : un Always-On start
+        // equivaut a une demande de connexion, EXTRA_COUNTRY absent
+        // (intent systeme) -> fallback ConfigStore.preferredCountry.
+        val isConnectStart = action == ACTION_CONNECT || action == VpnService.SERVICE_INTERFACE
+
+        val initialState = if (isConnectStart) VpnState.CONNECTED else VpnState.DISCONNECTED
         // Story 11.7 — récupère le pays depuis l'Intent EXTRA_COUNTRY (transmis
         // par MainActivity.startVpnService Story 9.5). Fallback : ConfigStore
-        // preferredCountry (Story 11.8) si EXTRA_COUNTRY absent.
-        if (action == ACTION_CONNECT) {
-            // Smart-cast : action != null implique intent != null (action vient de intent?.action).
-            val extraCountry = intent.getStringExtra(VpnConstants.EXTRA_COUNTRY)
+        // preferredCountry (Story 11.8) si EXTRA_COUNTRY absent (cas Always-On
+        // ou ACTION_CONNECT sans extra).
+        if (isConnectStart) {
+            val extraCountry = intent?.getStringExtra(VpnConstants.EXTRA_COUNTRY)
             currentCountry = extraCountry ?: try {
                 fr.plateformeliberte.levoile.config.ConfigStore(applicationContext)
                     .load().preferredCountry
@@ -214,9 +222,14 @@ class LeVoileVpnService : VpnService() {
             notificationHelper.build(initialState, currentCountry, currentIp, currentKillStatus)
         )
         Log.i(TAG, "onStartCommand action=$action startId=$startId")
-        when (action) {
-            ACTION_CONNECT -> connectInternal()
-            ACTION_DISCONNECT -> disconnectInternal()
+        when {
+            isConnectStart -> {
+                if (action == VpnService.SERVICE_INTERFACE) {
+                    Log.i(TAG, "onStartCommand: demarrage Always-On VPN (intent systeme) -> connectInternal()")
+                }
+                connectInternal()
+            }
+            action == ACTION_DISCONNECT -> disconnectInternal()
             else -> {
                 Log.w(TAG, "onStartCommand action inconnue ou null — cleanup + stopSelf")
                 // On a startForeground'e juste au-dessus (defensif) ; il faut donc
@@ -252,8 +265,44 @@ class LeVoileVpnService : VpnService() {
         } catch (t: Throwable) {
             Log.w(TAG, "stopForeground in onDestroy error (ignored)", t)
         }
+        // Reset des etats Always-On capturees — sans Service vivant ces valeurs
+        // ne sont plus credibles pour [KillSwitchDetector].
+        lastKnownAlwaysOn = false
+        lastKnownLockdown = false
         instance = null
         super.onDestroy()
+    }
+
+    /**
+     * Capture l'etat Always-On + Lockdown via l'API publique officielle
+     * Android (`VpnService.isAlwaysOn()` / `isLockdownEnabled()` — API 29+,
+     * minSdk Le Voile = 29). Source de verite officielle — remplace
+     * l'heuristique `Settings.Global` qui a ete restreinte aux apps tierces
+     * sur Android 16+.
+     *
+     * `isAlwaysOn()` retourne `true` uniquement quand le Service tourne dans
+     * un contexte Always-On (utilisatrice a coche "VPN permanent" dans
+     * Settings -> VPN). Sur un demarrage classique via `ACTION_CONNECT`
+     * depuis l'UI, `isAlwaysOn()` retourne `false` -> kill switch correctement
+     * marque comme `Inactive`.
+     *
+     * Appele apres [Builder.establish] reussi (la doc Android precise que
+     * `isAlwaysOn` retourne `false` jusqu'a ce que `establish()` reussisse)
+     * ET re-appele explicitement par [fr.plateformeliberte.levoile.kill.KillSwitchDetector.refresh]
+     * a chaque verification — necessaire car l'utilisatrice peut basculer
+     * le toggle "Bloquer les connexions sans VPN" dans Settings sans que
+     * le Service redemarre, laissant la capture statique stale.
+     */
+    internal fun captureAlwaysOnState() {
+        try {
+            lastKnownAlwaysOn = isAlwaysOn
+            lastKnownLockdown = isLockdownEnabled
+            Log.i(TAG, "captureAlwaysOnState: isAlwaysOn=$lastKnownAlwaysOn isLockdownEnabled=$lastKnownLockdown")
+        } catch (t: Throwable) {
+            // Defense en profondeur : meme si l'API est documentee API 29+,
+            // une OEM pourrait theoriquement throw. Ne PAS bloquer le service.
+            Log.w(TAG, "captureAlwaysOnState error (ignored)", t)
+        }
     }
 
     // ---------- Connect / Disconnect ----------
@@ -317,6 +366,14 @@ class LeVoileVpnService : VpnService() {
             return
         }
         vpnInterface = pfd
+
+        // Source de verite officielle Always-On (API 29+) : la doc Android
+        // [VpnService.isAlwaysOn] precise que isAlwaysOn() / isLockdownEnabled()
+        // retournent `false` jusqu'a ce que [Builder.establish] reussisse.
+        // Capture donc IMPERATIVEMENT apres l'attribution `vpnInterface = pfd`.
+        // Necessaire car Android 16+ a retire l'acces aux apps tierces a
+        // Settings.{Global,Secure}.always_on_vpn_*. Lu par [KillSwitchDetector].
+        captureAlwaysOnState()
 
         // Fix M-5 (code-review post-9.4) : on flag avant d'appeler onTunnelStarted
         // pour que disconnectInternal sache si le contrat lifecycle a ete declenche.
@@ -628,6 +685,31 @@ class LeVoileVpnService : VpnService() {
          */
         @Volatile
         internal var instance: LeVoileVpnService? = null
+            private set
+
+        /**
+         * Etat Always-On capture par [captureAlwaysOnState] via l'API publique
+         * officielle [android.net.VpnService.isAlwaysOn] (API 29+).
+         *
+         * Lu par [fr.plateformeliberte.levoile.kill.KillSwitchDetector] —
+         * remplace l'heuristique `Settings.Global` qui a ete restreinte
+         * aux apps tierces sur Android 16+.
+         *
+         * Reset a `false` dans [onDestroy] : si [instance] == null, ces
+         * valeurs sont stales (un consommateur doit toujours verifier
+         * `instance != null` avant de les lire).
+         */
+        @Volatile
+        internal var lastKnownAlwaysOn: Boolean = false
+            private set
+
+        /**
+         * Etat Lockdown capture par [captureAlwaysOnState] via l'API publique
+         * officielle [android.net.VpnService.isLockdownEnabled] (API 29+).
+         * Voir [lastKnownAlwaysOn] pour le contrat.
+         */
+        @Volatile
+        internal var lastKnownLockdown: Boolean = false
             private set
     }
 }

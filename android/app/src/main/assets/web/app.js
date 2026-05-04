@@ -98,10 +98,29 @@
   }
 })();
 
+/* Helper séquencement : la classe `platform-android` est ajoutée par
+ * MainActivity.onPageFinished côté Kotlin, ce qui se produit APRÈS
+ * l'exécution synchrone de ce script. Les IIFE plateformes-spécifiques
+ * doivent donc différer leur logique jusqu'à ce que la classe soit posée.
+ * Sinon le check `classList.contains('platform-android')` early-return
+ * et les listeners ne sont jamais attachés. */
+function whenPlatformAndroid(callback) {
+  if (document.body.classList.contains('platform-android')) {
+    callback();
+    return;
+  }
+  var observer = new MutationObserver(function () {
+    if (document.body.classList.contains('platform-android')) {
+      observer.disconnect();
+      callback();
+    }
+  });
+  observer.observe(document.body, { attributes: true, attributeFilter: ['class'] });
+}
+
 /* ====== Story 10.2 — Bandeau C17 kill switch ====== */
-(function () {
+whenPlatformAndroid(function () {
   'use strict';
-  if (!document.body.classList.contains('platform-android')) return;
   if (typeof window.LeVoile === 'undefined' ||
       typeof window.LeVoile.getKillSwitchStatus !== 'function') return;
 
@@ -127,12 +146,11 @@
   banner.addEventListener('click', function () {
     try { window.LeVoile.openKillSwitchTarget(); } catch (e) {}
   });
-})();
+});
 
 /* ====== Story 11.3 — AppBar + Drawer handlers ====== */
-(function () {
+whenPlatformAndroid(function () {
   'use strict';
-  if (!document.body.classList.contains('platform-android')) return;
 
   var burger = document.querySelector('.android-appbar__burger');
   var drawer = document.getElementById('android-drawer');
@@ -175,12 +193,11 @@
       closeDrawer();
     });
   }
-})();
+});
 
 /* ====== Story 11.4 — Country Selector Bottom-Sheet handlers ====== */
-(function () {
+whenPlatformAndroid(function () {
   'use strict';
-  if (!document.body.classList.contains('platform-android')) return;
 
   var pill = document.getElementById('android-country-pill');
   var sheet = document.getElementById('android-country-sheet');
@@ -301,4 +318,4 @@
   window.addEventListener('popstate', function () {
     if (sheet.getAttribute('aria-hidden') === 'false') closeSheet();
   });
-})();
+});

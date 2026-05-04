@@ -69,6 +69,37 @@ class KillSwitchDetector internal constructor(
      * est le retour au premier plan.
      */
     fun refresh() {
+        // Phase 1 — source de verite officielle via l'API publique
+        // [android.net.VpnService.isAlwaysOn] / [isLockdownEnabled] (API 29+),
+        // capturee par [LeVoileVpnService.captureAlwaysOnState] dans
+        // `onStartCommand`. Cette source est preferee a l'heuristique
+        // `Settings.Global` qui :
+        //   - retourne `null` sur Android 16+ (cle migree vers Settings.Secure)
+        //   - leve SecurityException quand l'app tente Settings.Secure
+        //     (privilege READ_SECURE_SETTINGS retire pour les apps tierces)
+        // L'API VpnService est immune a ces deux problemes — c'est le contrat
+        // officiel Android pour qu'un VPN connaisse son propre etat.
+        val svc = fr.plateformeliberte.levoile.vpn.LeVoileVpnService.instance
+        if (svc != null) {
+            // Force une recapture fraiche : l'utilisatrice peut avoir bascule
+            // le toggle "Bloquer les connexions sans VPN" dans Settings sans
+            // que le Service redemarre — la capture statique serait stale.
+            // L'appel a `isAlwaysOn` / `isLockdownEnabled` est < 1 ms.
+            svc.captureAlwaysOnState()
+            val active = fr.plateformeliberte.levoile.vpn.LeVoileVpnService.lastKnownAlwaysOn &&
+                fr.plateformeliberte.levoile.vpn.LeVoileVpnService.lastKnownLockdown
+            _status.postValue(if (active) KillSwitchStatus.Active else KillSwitchStatus.Inactive)
+            return
+        }
+
+        // Phase 2 — Service jamais demarre dans cette session : fallback
+        // heuristique Settings.Global. Fonctionne sur Android <= 15 (cle
+        // presente dans Global) ; sur Android 16+ avant premier demarrage
+        // du Service, retournera Inactive ou Unverifiable. En pratique
+        // l'utilisatrice n'a qu'a attendre quelques secondes : Android boot
+        // automatiquement le Service via Always-On des que la regle est
+        // active (observe en logs : `act=android.net.VpnService` arrive 1-2 s
+        // apres le toggle).
         val pinnedApp: String? = try {
             reader.getString(KEY_ALWAYS_ON_VPN_APP)
         } catch (t: Throwable) {

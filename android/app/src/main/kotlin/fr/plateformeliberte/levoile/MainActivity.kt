@@ -260,10 +260,33 @@ class MainActivity : AppCompatActivity() {
             override fun shouldInterceptRequest(
                 view: WebView,
                 request: WebResourceRequest
-            ): WebResourceResponse? = assetLoader.shouldInterceptRequest(request.url)
+            ): WebResourceResponse? {
+                val resp = assetLoader.shouldInterceptRequest(request.url)
+                if (BuildConfig.DEBUG) {
+                    Log.i(TAG, "shouldInterceptRequest url=${request.url} matched=${resp != null}")
+                }
+                return resp
+            }
+
+            override fun onReceivedError(
+                view: WebView,
+                request: WebResourceRequest,
+                error: android.webkit.WebResourceError
+            ) {
+                if (BuildConfig.DEBUG) {
+                    Log.w(TAG, "onReceivedError url=${request.url} code=${error.errorCode} desc=${error.description}")
+                }
+                super.onReceivedError(view, request, error)
+            }
+
+            override fun onPageStarted(view: WebView, url: String, favicon: android.graphics.Bitmap?) {
+                super.onPageStarted(view, url, favicon)
+                if (BuildConfig.DEBUG) Log.i(TAG, "onPageStarted url=$url")
+            }
 
             override fun onPageFinished(view: WebView, url: String) {
                 super.onPageFinished(view, url)
+                if (BuildConfig.DEBUG) Log.i(TAG, "onPageFinished url=$url")
                 // AC #3 (Story 9.3) : marqueur responsive injecté APRÈS chargement DOM.
                 // Si Story 11.1 a besoin que la classe soit là AVANT certaines instanciations
                 // de composants C13-C17, elle utilisera un MutationObserver côté JS.

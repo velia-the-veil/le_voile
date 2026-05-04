@@ -25,6 +25,12 @@ internal interface SettingsReader {
  * Implémentation par défaut consommée par [KillSwitchDetector] en runtime.
  * Lit `Settings.Global.*` via le `ContentResolver` de l'app — opération
  * synchrone très rapide (< 1 ms typique sur AOSP).
+ *
+ * Heuristique `Settings.Global` exclusive : sur Android 16+, la clé a été
+ * migrée vers `Settings.Secure` ET l'accès aux apps tierces a été retiré
+ * (SecurityException). Le fallback `Secure` n'est donc pas utile —
+ * Android 16+ utilise une autre source de vérité dans [KillSwitchDetector]
+ * (API publique `VpnService.isAlwaysOn()` capturée par `LeVoileVpnService`).
  */
 internal class ContentResolverSettingsReader(
     private val resolver: ContentResolver,
