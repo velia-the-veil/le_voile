@@ -16,9 +16,14 @@ import fr.plateformeliberte.levoile.vpn.VpnConstants.ACTION_CONNECT
 import fr.plateformeliberte.levoile.vpn.VpnConstants.ACTION_DISCONNECT
 import fr.plateformeliberte.levoile.vpn.VpnConstants.MAX_IP_PACKET
 import fr.plateformeliberte.levoile.vpn.VpnConstants.NOTIF_ID
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.ClosedReceiveChannelException
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import java.io.FileInputStream
 import java.io.FileOutputStream
@@ -84,12 +89,33 @@ class LeVoileVpnService : VpnService() {
     private var vpnInterface: ParcelFileDescriptor? = null
     @Volatile
     private var outPumpThread: Thread? = null
+    /**
+     * Pump-in : coroutine drainant `packetSink` (Channel) vers `fos.write`.
+     * Refactor perf : remplace l'ancien `Thread + runBlocking(receive)` qui
+     * allouait un EventLoop par paquet et plafonnait le throughput à
+     * ~12 KB/s sur Android 16 / Nothing OS. Le `for (pkt in channel)` est
+     * un suspending consume natif Kotlin, zéro allocation par paquet.
+     */
     @Volatile
-    private var inPumpThread: Thread? = null
+    private var inPumpJob: Job? = null
     @Volatile
     private var tunnelStartedFired: Boolean = false
 
+    /**
+     * Scope coroutine du Service pour le pump-in. Lifecycle = Service
+     * lui-même : créé au top-level (no allocation OS, juste un Job),
+     * cancelé dans onDestroy. SupervisorJob pour qu'un échec d'enfant
+     * (ex. IOException sur fos.write) ne fasse pas tomber le scope.
+     */
+    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
     private val running = AtomicBoolean(false)
+
+    /**
+     * Compteur des paquets WebRTC droppés par le filtre anti-leak (cf.
+     * [isWebRtcStunPacket]). Exposé pour log debug + futures stats.
+     */
+    private val droppedWebRtcCount = java.util.concurrent.atomic.AtomicLong(0)
 
     /**
      * Story 11.7-bis : Channel<ByteArray> remplace ConcurrentLinkedQueue
@@ -269,6 +295,13 @@ class LeVoileVpnService : VpnService() {
         // ne sont plus credibles pour [KillSwitchDetector].
         lastKnownAlwaysOn = false
         lastKnownLockdown = false
+        // Tue toutes les coroutines residuelles (pump-in notamment).
+        // SupervisorJob garantit que cancel() propage à tous les enfants.
+        try {
+            serviceScope.cancel()
+        } catch (t: Throwable) {
+            Log.w(TAG, "serviceScope.cancel error (ignored)", t)
+        }
         instance = null
         super.onDestroy()
     }
@@ -456,9 +489,9 @@ class LeVoileVpnService : VpnService() {
         val wasActive = vpnInterface != null || tunnelStartedFired
         running.set(false)
         outPumpThread?.interrupt()
-        inPumpThread?.interrupt()
+        inPumpJob?.cancel()
         outPumpThread = null
-        inPumpThread = null
+        inPumpJob = null
         // Story 11.7-bis : fermer le Channel proprement — le inPumpThread
         // levera ClosedReceiveChannelException et break out de sa boucle.
         try { packetSink.close() } catch (_: Throwable) {}
@@ -547,6 +580,18 @@ class LeVoileVpnService : VpnService() {
                         break
                     }
                     if (n <= 0) break
+                    // Filtre WebRTC : drop les paquets STUN/TURN AVANT toute
+                    // transformation downstream. Sans ça, le navigateur peut
+                    // exposer l'IP du relais via WebRTC ICE candidates — vrai
+                    // leak meme via VPN. Coût parsing ~30 bytes/packet, zéro
+                    // allocation. Cf. [isWebRtcStunPacket].
+                    if (isWebRtcStunPacket(buf, n)) {
+                        val total = droppedWebRtcCount.incrementAndGet()
+                        if (total % 100L == 0L) {
+                            Log.i(TAG, "WebRTC STUN/TURN packets droppés: $total")
+                        }
+                        continue
+                    }
                     try {
                         packetRelay.onOutboundPacket(buf, n)
                     } catch (t: Throwable) {
@@ -562,28 +607,18 @@ class LeVoileVpnService : VpnService() {
             start()
         }
 
-        inPumpThread = Thread({
+        // Refactor perf : pump-in est une coroutine au lieu d'un Thread +
+        // runBlocking. Le pattern précédent allouait un EventLoop par paquet
+        // (un `runBlocking(Dispatchers.IO) { receive() }` à chaque tour de
+        // boucle) ce qui plafonnait le throughput à ~12 KB/s sur Android 16 /
+        // Nothing OS (mesuré 2026-05-04 vs baseline Wi-Fi 28 MB/s, facteur
+        // 2300x). Le `for (pkt in channel)` consume natif Kotlin a zéro
+        // allocation par paquet — un seul EventLoop pour la durée de vie de
+        // la coroutine. Le pump-out reste en Thread car `fis.read` est un
+        // appel Java I/O blocking sans équivalent suspending.
+        inPumpJob = serviceScope.launch {
             try {
-                while (running.get()) {
-                    // Story 11.7-bis : Channel<ByteArray>.receive() blocking via
-                    // runBlocking. Si le Channel est fermé (cleanupSync OR
-                    // packetSink renouvelé sur reconnect), ClosedReceiveChannelException
-                    // est levée — on break proprement.
-                    //
-                    // Code-review post-11.7-bis (H-3) : Dispatchers.IO explicite
-                    // pour éviter d'allouer un EventLoop par paquet. Un refactor
-                    // full-coroutine (scope.launch + for(pkt in channel)) reste
-                    // un follow-up Phase 2 pour éliminer le coût runBlocking
-                    // résiduel à haut throughput (8000 paquets/s à 100 Mbps).
-                    val pkt = try {
-                        runBlocking(Dispatchers.IO) { packetSink.receive() }
-                    } catch (e: ClosedReceiveChannelException) {
-                        Log.d(TAG, "in-pump ferme via ClosedReceiveChannelException (close attendu)")
-                        break
-                    } catch (e: InterruptedException) {
-                        Thread.currentThread().interrupt()
-                        break
-                    }
+                for (pkt in packetSink) {
                     try {
                         fos.write(pkt)
                     } catch (e: IOException) {
@@ -591,13 +626,71 @@ class LeVoileVpnService : VpnService() {
                         break
                     }
                 }
-            } finally {
-                running.set(false)
+            } catch (e: ClosedReceiveChannelException) {
+                Log.d(TAG, "in-pump ferme via ClosedReceiveChannelException (close attendu)")
             }
-        }, "vpn-in-pump").apply {
-            isDaemon = true
-            start()
         }
+    }
+
+    /**
+     * Filtre anti-leak WebRTC : détecte les paquets STUN/TURN dans le pump-out
+     * et signale qu'ils doivent être droppés. Sans ce filtre, les ICE candidates
+     * de WebRTC reçoivent une réponse du serveur STUN (port 3478/19302/etc.) qui
+     * révèle l'IP NAT — et même via VPN, c'est l'IP du relais qui est exposée
+     * (Mullvad/IVPN/ProtonVPN bloquent au même niveau).
+     *
+     * Détection en 2 passes :
+     *  1. Magic cookie STUN `0x2112A442` à offset 4 du payload UDP (RFC 5389) —
+     *     universel, indépendant du port. C'est la signature canonique.
+     *  2. Ports STUN/TURN bien connus (3478 STUN, 5349 STUNS, 19302 Google STUN).
+     *     Fallback pour les paquets STUN classique-RFC3489 sans magic cookie ou
+     *     pour le trafic TURN data sur les ports standards.
+     *
+     * Performance : parse ~30 bytes/packet, zéro allocation. À 8000 paquets/s
+     * négligeable (~ 240 KB inspectés/s).
+     *
+     * Couvre IPv4 et IPv6. Retourne `false` si le paquet n'est pas UDP, ou si
+     * le header est incomplet (defense en profondeur).
+     */
+    private fun isWebRtcStunPacket(buf: ByteArray, length: Int): Boolean {
+        if (length < 28) return false // min IPv4 (20) + UDP (8)
+
+        val version = (buf[0].toInt() shr 4) and 0x0F
+        val protocol: Int
+        val ipHeaderLength: Int
+        when (version) {
+            4 -> {
+                ipHeaderLength = (buf[0].toInt() and 0x0F) * 4
+                if (ipHeaderLength < 20 || length < ipHeaderLength + 8) return false
+                protocol = buf[9].toInt() and 0xFF
+            }
+            6 -> {
+                if (length < 48) return false // IPv6 (40) + UDP (8)
+                ipHeaderLength = 40
+                protocol = buf[6].toInt() and 0xFF
+            }
+            else -> return false
+        }
+
+        if (protocol != 17) return false // UDP only
+
+        // Dest port (UDP header bytes [2..3])
+        val dpOff = ipHeaderLength + 2
+        val destPort = ((buf[dpOff].toInt() and 0xFF) shl 8) or
+            (buf[dpOff + 1].toInt() and 0xFF)
+
+        // Ports STUN/TURN bien connus
+        if (destPort == 3478 || destPort == 5349 || destPort == 19302) return true
+
+        // STUN magic cookie : payload UDP commence à ipHeaderLength + 8.
+        // Le magic est à offset 4 du STUN message, soit (ipHeaderLength + 8 + 4).
+        val mcOff = ipHeaderLength + 12
+        if (length < mcOff + 4) return false
+        val magic = ((buf[mcOff].toInt() and 0xFF) shl 24) or
+            ((buf[mcOff + 1].toInt() and 0xFF) shl 16) or
+            ((buf[mcOff + 2].toInt() and 0xFF) shl 8) or
+            (buf[mcOff + 3].toInt() and 0xFF)
+        return magic == 0x2112A442.toInt()
     }
 
     /**
