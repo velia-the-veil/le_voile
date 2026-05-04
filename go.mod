@@ -5,7 +5,7 @@ go 1.26
 toolchain go1.26.2
 
 require (
-	fyne.io/systray v1.12.0
+	fyne.io/systray v1.12.1
 	github.com/BurntSushi/toml v1.5.0
 	github.com/Microsoft/go-winio v0.6.2
 	github.com/kardianos/service v1.2.4
