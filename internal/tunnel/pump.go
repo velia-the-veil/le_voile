@@ -120,7 +120,12 @@ func runPumpLoops(ctx context.Context, outbound <-chan []byte, inbound PacketWri
 		// Closing the writer signals EOF to the relay reader; the response
 		// stream will then close cleanly.
 		defer txOut.Close()
-		hdr := make([]byte, pumpFrameHeaderSize)
+		// Frame buffer reusable — concat header + payload en un seul Write
+		// pour diviser le nombre de syscalls/I/O ops par 2 (perf : à
+		// 8000 paquets/s, 16000 Writes/s → 8000 Writes/s). Capacité
+		// allouée à pumpMaxFrameSize+pumpFrameHeaderSize, slice réinitialisé
+		// à chaque paquet pour éviter de re-allouer.
+		frame := make([]byte, 0, pumpFrameHeaderSize+pumpMaxFrameSize)
 		for {
 			select {
 			case <-pumpCtx.Done():
@@ -137,16 +142,13 @@ func runPumpLoops(ctx context.Context, outbound <-chan []byte, inbound PacketWri
 					// Defensive: should never happen with a properly configured MTU.
 					continue
 				}
-				binary.BigEndian.PutUint16(hdr, uint16(n))
-				if _, werr := txOut.Write(hdr); werr != nil {
+				// Concat header + payload : 1 seul Write au lieu de 2.
+				frame = frame[:pumpFrameHeaderSize+n]
+				binary.BigEndian.PutUint16(frame[:pumpFrameHeaderSize], uint16(n))
+				copy(frame[pumpFrameHeaderSize:], pkt)
+				if _, werr := txOut.Write(frame); werr != nil {
 					if pumpCtx.Err() == nil {
-						setErr(fmt.Errorf("tunnel: pump: write hdr: %w", werr))
-					}
-					return
-				}
-				if _, werr := txOut.Write(pkt); werr != nil {
-					if pumpCtx.Err() == nil {
-						setErr(fmt.Errorf("tunnel: pump: write payload: %w", werr))
+						setErr(fmt.Errorf("tunnel: pump: write frame: %w", werr))
 					}
 					return
 				}

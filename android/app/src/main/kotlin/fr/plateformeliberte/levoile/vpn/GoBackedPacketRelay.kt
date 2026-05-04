@@ -68,10 +68,17 @@ class GoBackedPacketRelay(
      */
     private val inboundSink: Channel<ByteArray>,
     /**
-     * Capacité du Channel outbound interne (Kotlin → Go). 256 paquets ≈ 360 KB
+     * Capacité du Channel outbound interne (Kotlin → Go). 2048 paquets ≈ 2.9 MB
      * max in-flight (MTU 1420). Drop silencieux au-delà.
+     *
+     * Bumped 256 -> 2048 après mesure 2026-05-04 : le drainOutboundLoop
+     * (Mutex + JNI per packet via GoCoreAdapter.writePacket) ne suit pas le
+     * débit du pump-out sous charge → 1000 drops/30s observés sur Cloudflare
+     * speed test → retransmissions QUIC → throughput effondré 37 KB/s. Le
+     * vrai fix est de batcher les writes côté Kotlin↔Go (Phase 2), mais
+     * augmenter la capacité absorbe les bursts en attendant.
      */
-    private val outboundCapacity: Int = 256,
+    private val outboundCapacity: Int = 2048,
     /**
      * Code-review post-Epic 11 (M4) + Story 11.7-bis : callback de transition
      * d'état tunnel enrichi. Reçoit aussi l'IP visible et le pays effectif

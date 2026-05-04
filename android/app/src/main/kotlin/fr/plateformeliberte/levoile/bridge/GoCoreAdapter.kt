@@ -118,10 +118,14 @@ object GoCoreAdapter {
      * (cf. M-1 code-review Story 9.7).
      */
     suspend fun writePacket(packet: ByteArray): Result<Unit> = mutex.withLock {
-        withContext(Dispatchers.IO) {
-            runCatching { Protocol.writePacket(packet) }
-                .recoverCatching { throw LeVoileCoreException("writePacket failed: ${it.message}", it) }
-        }
+        // Pas de withContext(Dispatchers.IO) ici : le seul caller hot-path
+        // est [GoBackedPacketRelay.drainOutboundLoop] lancé via
+        // `scope.launch { ... }` avec scope = CoroutineScope(Dispatchers.IO).
+        // Donc on est déjà sur IO. Le re-dispatch coûte un nouveau Job +
+        // cancellation check + suspension à 5000 paquets/s = overhead
+        // significatif sans bénéfice (le current dispatcher est déjà IO).
+        runCatching { Protocol.writePacket(packet) }
+            .recoverCatching { throw LeVoileCoreException("writePacket failed: ${it.message}", it) }
     }
 
     /**
