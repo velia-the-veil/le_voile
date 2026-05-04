@@ -1,0 +1,406 @@
+# Story 12.2 — Squelette workflow release Android Le Voile.
+#
+# Déclenché sur push d'un tag `v*` ou via workflow_dispatch manuel.
+# Orchestre la chaîne complète de release : gating CI → signature APK →
+# vérification reproductibilité → matrice instrumentée → publication.
+#
+# **Pour Story 12.2** : seul le squelette + 4 jobs placeholders qui font
+# explicitement `exit 1` sont livrés. Stories 12.3 / 12.4 / 12.6 viendront
+# remplir les jobs `sign-apk`, `reproducibility-check`, `instrumented-tests`,
+# et `publish-release` est livré en gating final post-12.6.
+#
+# Les `exit 1` placeholder sont volontaires : ils empêchent un tag `v*` de
+# produire une release publique tant que l'ensemble Stories 12.3-12.6 n'est
+# pas livré. C'est un garde-fou explicite, retiré story par story.
+#
+# Pourquoi un workflow séparé de `android-audit.yml` (cf. Story 12.2 Dev Notes) :
+#   1. Triggers différents (`tags: ['v*']` vs `pull_request` + `push: main`)
+#      → mélanger casserait `concurrency.group`.
+#   2. Permissions différentes (`contents: write` pour `gh release create`).
+#   3. Lisibilité release (chaîne longue : sign → repro → matrix → publish).
+name: Android · Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch: {}
+
+permissions:
+  contents: write          # release tagging + gh release create
+  pull-requests: read
+
+concurrency:
+  group: android-release-${{ github.ref }}
+  cancel-in-progress: false   # ne JAMAIS annuler une release en cours
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Gating pré-release : duplique les 4 jobs Android · CI (lint, unit-tests,
+  # permission-audit, proguard-syntax) localement à ce workflow. Décision MVP
+  # Story 12.2 : duplication > extraction reusable workflow (`workflow_call`)
+  # car AGP `setup-gradle` cache key est plus prévisible avec une déclaration
+  # complète. Refactor extraction → Phase 2 si besoin.
+  # ---------------------------------------------------------------------------
+  ci:
+    name: Gating CI Android (lint + tests + audits)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '17' }
+      - uses: gradle/actions/setup-gradle@v3
+      - uses: actions/setup-go@v5
+        with: { go-version: '1.22.x' }
+      - uses: android-actions/setup-android@v3
+        with:
+          cmdline-tools-version: '11076708'
+
+      - name: Install gomobile
+        run: |
+          go install golang.org/x/mobile/cmd/gomobile@latest
+          go install golang.org/x/mobile/cmd/gobind@latest
+          gomobile init
+
+      - name: Build .aar gomobile
+        working-directory: android
+        run: bash scripts/build-aar.sh
+
+      - name: Sync frontend assets
+        working-directory: android
+        run: bash scripts/sync-frontend.sh
+
+      - name: Audit télémétrie + lint + tests + assembleDebug (apkDirect)
+        working-directory: android
+        # Story 12.5 — productFlavors apkDirect/fdroid. testDebugUnitTest
+        # lifecycle task execute les 2 flavors automatiquement.
+        run: |
+          ./gradlew :app:auditTelemetryDependencies :levoile-core:auditTelemetryDependencies --no-daemon --stacktrace
+          ./gradlew :app:lintApkDirectDebug :levoile-core:lint --no-daemon --stacktrace
+          ./gradlew :app:testDebugUnitTest :levoile-core:testDebugUnitTest --no-daemon --stacktrace
+          ./gradlew :app:assembleApkDirectDebug --no-daemon --stacktrace
+
+      - name: Audit permissions APK apkDirect debug
+        working-directory: android
+        run: |
+          APK="app/build/outputs/apk/apkDirect/debug/app-apkDirect-debug.apk"
+          # Pas de heredoc indenté (espaces de prefix cassent le diff contre
+          # apkanalyzer). Cf. fix Story 12.2 Review (2026-05-03).
+          EXPECTED_SORTED=$(printf '%s\n' \
+            'android.permission.FOREGROUND_SERVICE' \
+            'android.permission.FOREGROUND_SERVICE_DATA_SYNC' \
+            'android.permission.FOREGROUND_SERVICE_SPECIAL_USE' \
+            'android.permission.INTERNET' \
+            'android.permission.POST_NOTIFICATIONS' \
+            'fr.plateformeliberte.levoile.debug.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION' \
+            | sort -u)
+          ACTUAL=$(apkanalyzer manifest permissions "$APK" | sort -u)
+          if ! diff <(echo "$EXPECTED_SORTED") <(echo "$ACTUAL"); then
+            echo "::error::Permissions APK ne matchent pas la whitelist NFR-AND-7."
+            echo "Attendu :"
+            echo "$EXPECTED_SORTED"
+            echo "Obtenu :"
+            echo "$ACTUAL"
+            exit 1
+          fi
+
+      - name: ProGuard syntax check via assembleApkDirectRelease
+        working-directory: android
+        # Fallback debug-signed quand env vars LEVOILE_KEYSTORE_* absentes
+        # (job ci, pas le job sign-apk).
+        run: ./gradlew :app:assembleApkDirectRelease -x lint -x test --no-daemon --stacktrace
+
+  # ---------------------------------------------------------------------------
+  # Story 12.3 — signature APK release par master key Le Voile.
+  # Décode `secrets.LEVOILE_KEYSTORE_BASE64` dans `$RUNNER_TEMP/`, build l'APK
+  # release signé v2 + v3, vérifie via `apksigner verify` puis upload l'APK
+  # signé + `apk-signature-info.txt` en artifact (90 jours retention).
+  # ---------------------------------------------------------------------------
+  sign-apk:
+    name: Signature APK v2/v3 (Story 12.3)
+    needs: ci
+    runs-on: ubuntu-22.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '17' }
+      - uses: gradle/actions/setup-gradle@v3
+      - uses: actions/setup-go@v5
+        with: { go-version: '1.22.x' }
+      - uses: android-actions/setup-android@v3
+        with:
+          cmdline-tools-version: '11076708'
+
+      - name: Install gomobile
+        run: |
+          go install golang.org/x/mobile/cmd/gomobile@latest
+          go install golang.org/x/mobile/cmd/gobind@latest
+          gomobile init
+
+      - name: Build .aar gomobile
+        working-directory: android
+        run: bash scripts/build-aar.sh
+
+      - name: Sync frontend assets
+        working-directory: android
+        run: bash scripts/sync-frontend.sh
+
+      - name: Decode keystore
+        id: decode-keystore
+        env:
+          LEVOILE_KEYSTORE_BASE64: ${{ secrets.LEVOILE_KEYSTORE_BASE64 }}
+        run: |
+          set +x   # ne JAMAIS afficher les commandes ci-dessous
+          KEYSTORE_PATH="$RUNNER_TEMP/levoile-release.jks"
+          if [ -z "${LEVOILE_KEYSTORE_BASE64:-}" ]; then
+            echo "::error::Secret LEVOILE_KEYSTORE_BASE64 absent — provisionner via Story 12.3 Task 8."
+            exit 1
+          fi
+          echo "$LEVOILE_KEYSTORE_BASE64" | base64 -d > "$KEYSTORE_PATH"
+          if [ ! -s "$KEYSTORE_PATH" ]; then
+            echo "::error::Keystore décodé vide — secret LEVOILE_KEYSTORE_BASE64 invalide ?"
+            exit 1
+          fi
+          # Mask le path complet dans les logs futurs (defensive : un autre step
+          # pourrait l'afficher accidentellement).
+          echo "::add-mask::$KEYSTORE_PATH"
+          echo "keystore_path=$KEYSTORE_PATH" >> "$GITHUB_OUTPUT"
+
+      - name: Assemble apkDirect release (signed)
+        working-directory: android
+        env:
+          LEVOILE_KEYSTORE_PATH: ${{ steps.decode-keystore.outputs.keystore_path }}
+          LEVOILE_KEYSTORE_PASSWORD: ${{ secrets.LEVOILE_KEYSTORE_PASSWORD }}
+          LEVOILE_KEY_ALIAS: ${{ secrets.LEVOILE_KEY_ALIAS }}
+          LEVOILE_KEY_PASSWORD: ${{ secrets.LEVOILE_KEY_PASSWORD }}
+        # Story 12.5 — flavor apkDirect uniquement (le canal GitHub direct).
+        # F-Droid signe son propre APK via sa cle (pas notre master key) avec
+        # `assembleFdroidRelease` cote F-Droid build server.
+        run: ./gradlew :app:assembleApkDirectRelease --no-daemon --stacktrace
+
+      - name: Verify APK signature
+        working-directory: android
+        run: |
+          APK="app/build/outputs/apk/apkDirect/release/app-apkDirect-release.apk"
+          if [ ! -f "$APK" ]; then
+            echo "::error::APK release introuvable : $APK"
+            ls -la app/build/outputs/apk/release/ || true
+            exit 1
+          fi
+          apksigner verify --verbose --print-certs --min-sdk-version 29 "$APK" \
+            | tee apk-signature-info.txt
+          # Asserts NFR-AND-5 + Story 12.3 AC #1.
+          # Format apksigner réel : "Verifies (APK Signature Scheme vN): true|false"
+          # (vérifié vs apksigner build-tools 34.0.0 — fix Code Review 2026-05-03).
+          grep -E "^Verifies \(APK Signature Scheme v2\): true$" apk-signature-info.txt \
+            || { echo "::error::v2 signing absent"; exit 1; }
+          grep -E "^Verifies \(APK Signature Scheme v3\): true$" apk-signature-info.txt \
+            || { echo "::error::v3 signing absent"; exit 1; }
+          # v1 doit etre desactive (minSdk 29 — pas besoin du JAR signing legacy).
+          if grep -qE "^Verifies \(APK Signature Scheme v1\): true$" apk-signature-info.txt; then
+            echo "::error::v1 signing présent — devrait être désactivé sur minSdk 29+"
+            exit 1
+          fi
+
+      - name: Cleanup keystore
+        if: always()
+        run: |
+          rm -f "$RUNNER_TEMP/levoile-release.jks"
+
+      - name: Upload signed APK + signature info
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-apkDirect-release-signed
+          path: |
+            android/app/build/outputs/apk/apkDirect/release/app-apkDirect-release.apk
+            android/apk-signature-info.txt
+          retention-days: 90
+          if-no-files-found: error
+
+  # ---------------------------------------------------------------------------
+  # Story 12.4 — vérification reproductibilité APK byte-à-byte.
+  # 2 builds successifs depuis le même commit doivent produire un
+  # `apk-content-archive.zip` (extraction ZIP triée + re-zip déterministe sans
+  # META-INF signature) avec un SHA256 identique. La signature elle-même n'est
+  # pas reproductible (nonces) — on compare le contenu pré-signature.
+  # ---------------------------------------------------------------------------
+  reproducibility-check:
+    name: Vérification reproductibilité APK (Story 12.4)
+    needs: ci
+    runs-on: ubuntu-22.04
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '17.0.11' }
+      - uses: gradle/actions/setup-gradle@v3
+      - uses: actions/setup-go@v5
+        with: { go-version: '1.22.x' }
+      - uses: android-actions/setup-android@v3
+        with:
+          cmdline-tools-version: '11076708'
+          ndk-version: 25.2.9519653
+
+      - name: Install gomobile (pinned)
+        run: |
+          go install golang.org/x/mobile/cmd/gomobile@latest
+          go install golang.org/x/mobile/cmd/gobind@latest
+          gomobile init
+
+      - name: Build #1
+        working-directory: android
+        env:
+          LEVOILE_FLAVOR: apkDirect   # canal GitHub direct (signe Story 12.3) ; F-Droid build sa propre repro.
+        run: |
+          bash scripts/build-apk-release.sh
+          cp app/build/outputs/apk/apkDirect/release/*.apk.sha256 ../sha-build1.txt
+          cp apk-content-archive.zip.sha256 ../content-sha-build1.txt
+
+      - name: Cleanup absolu pour Build #2
+        working-directory: android
+        run: |
+          ./gradlew clean --no-daemon
+          rm -rf app/build/ levoile-core/build/
+          rm -rf "$HOME/.gradle/caches/build-cache-"*
+          rm -f apk-content-archive.zip apk-content-archive.zip.sha256
+          # NB : le .aar gomobile (app/libs/levoile-core.aar) est conservé —
+          # il a été produit par build-apk-release.sh et doit être lui-même
+          # reproductible. Si gomobile fait dériver, voir Story 12.4 Dev Notes
+          # → patch dans scripts/build-aar.sh (`-trimpath -ldflags=-buildid=`).
+
+      - name: Build #2
+        working-directory: android
+        env:
+          LEVOILE_FLAVOR: apkDirect
+        run: |
+          # Skip gomobile rebuild pour gagner du temps (le .aar est déjà
+          # produit par Build #1 et préservé).
+          SKIP_GOMOBILE_VERIFY=1 bash scripts/build-apk-release.sh
+          cp app/build/outputs/apk/apkDirect/release/*.apk.sha256 ../sha-build2.txt
+          cp apk-content-archive.zip.sha256 ../content-sha-build2.txt
+
+      - name: Compare hashes
+        run: |
+          echo "=== Build #1 SHA256 ==="
+          cat sha-build1.txt content-sha-build1.txt
+          echo "=== Build #2 SHA256 ==="
+          cat sha-build2.txt content-sha-build2.txt
+          # APK SHA256 = wrapping (compression, alignment). Content = pré-sig.
+          # Content identique avec APK différent = dérive du wrapping uniquement.
+          if ! diff -q sha-build1.txt sha-build2.txt >/dev/null; then
+            echo "::warning::APK SHA256 diffère entre Build #1 et #2 — dérive du wrapping (acceptable si content stable)"
+          fi
+          if ! diff -q content-sha-build1.txt content-sha-build2.txt >/dev/null; then
+            echo "::error::Content SHA256 diffère — dérive de reproductibilité du contenu APK"
+            echo "Phase 2 : invoquer diffoscope pour rapport HTML."
+            exit 1
+          fi
+          echo "✓ Build reproductible (content-archive SHA256 identique)"
+
+      - name: Upload reproducibility report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: reproducibility-report
+          path: |
+            sha-build1.txt
+            sha-build2.txt
+            content-sha-build1.txt
+            content-sha-build2.txt
+          retention-days: 90
+          if-no-files-found: warn
+
+  # ---------------------------------------------------------------------------
+  # Story 12.6 — matrice instrumentée API 29/33/34 (gating release tag).
+  # 8 scenarios + VpnConflictDetectionTest sur emulateur, executes en parallele.
+  # `apkDirect` flavor (pas `fdroid`) car UpdateNotificationFlowTest a besoin
+  # du worker actif (Story 12.5 court-circuite sur fdroid).
+  # ---------------------------------------------------------------------------
+  instrumented-tests:
+    name: Instrumented matrix API ${{ matrix.api-level }} (Story 12.6)
+    needs: ci
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false       # ne pas annuler les autres API si l'une fail
+      matrix:
+        api-level: [29, 33, 34]
+        target: [default]    # google_apis si Google services requis (pas notre cas)
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '17' }
+      - uses: gradle/actions/setup-gradle@v3
+      - uses: actions/setup-go@v5
+        with: { go-version: '1.22.x' }
+      - uses: android-actions/setup-android@v3
+        with:
+          cmdline-tools-version: '11076708'
+
+      # KVM pour HW acceleration emulateur Linux.
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Install gomobile
+        run: |
+          go install golang.org/x/mobile/cmd/gomobile@latest
+          go install golang.org/x/mobile/cmd/gobind@latest
+          gomobile init
+
+      - name: Build .aar gomobile (full — required by androidTest)
+        working-directory: android
+        run: bash scripts/build-aar.sh
+
+      - name: Sync frontend assets
+        working-directory: android
+        run: bash scripts/sync-frontend.sh
+
+      - name: Run instrumented tests on API ${{ matrix.api-level }}
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: ${{ matrix.api-level }}
+          target: ${{ matrix.target }}
+          arch: x86_64
+          profile: pixel_5
+          force-avd-creation: false
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          disable-animations: true
+          working-directory: android
+          script: ./gradlew :app:connectedApkDirectDebugAndroidTest --no-daemon --stacktrace
+
+      - name: Upload Logcat artifact (sur failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: logcat-api-${{ matrix.api-level }}
+          path: android/app/build/outputs/connected_android_test_additional_output/
+          if-no-files-found: warn
+
+      - name: Upload test report (toujours)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: instrumented-test-report-api-${{ matrix.api-level }}
+          path: android/app/build/reports/androidTests/connected/
+          if-no-files-found: warn
+
+  # ---------------------------------------------------------------------------
+  # Publication release (placeholder — orchestre les 3 précédents).
+  # ---------------------------------------------------------------------------
+  publish-release:
+    name: Publish GitHub release
+    needs: [sign-apk, reproducibility-check, instrumented-tests]
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - name: TODO Phase 12 finale
+        run: |
+          echo "TODO — gh release create + upload signed APK + SHA256 + Ed25519"
+          echo "signature de l'APK + apk-signature-info.txt + repro report."
+          echo "À ouvrir post-12.3/12.4/12.6 livrées."
+          exit 1

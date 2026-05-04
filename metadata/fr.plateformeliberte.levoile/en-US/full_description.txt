@@ -1,0 +1,12 @@
+Le Voile is a free VPN designed for everyday users who simply want their connection to leave no trace. The whole stack is published under GPL-3.0-or-later and audited as zero tracking, zero telemetry, zero analytics, zero crash reporter.
+
+Key properties:
+
+* Open source (GPL-3.0-or-later) — every line, including the Go core shared with the desktop client and the relay binaries, is reviewable on GitHub.
+* No tracking, no telemetry, no analytics. A Gradle CI audit blocks any pull request that would introduce Firebase, Sentry, Bugsnag, Crashlytics, Mixpanel, Adjust, Branch or Amplitude (ADR-15).
+* OS-delegated kill switch through the Android system "Always-on VPN + Lockdown" toggle — no third-party firewall, no ambiguous behaviour. The app explicitly guides users to enable it during onboarding.
+* Multi-country relays (Germany, Spain, United Kingdom, United States), each running the same stateless Go relay so a country can be added or replaced without changing the client.
+* Trust chain anchored to a single Ed25519 master key (relay registry, releases, packages). The Android APK distributed through GitHub is signed v2 and v3 with a derived master key; F-Droid signs its own APK with its own key — the two are explicitly different and documented.
+* No Google account required, no Play Services dependency.
+
+Le Voile targets readers, researchers and anyone who would rather not have to trust a VPN provider's privacy policy. Source code, signatures and reproducible-build instructions are published at https://plateformeliberte.fr/le-voile.

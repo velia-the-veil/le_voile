@@ -1,0 +1,8 @@
+# Story 12.3 — refus catégorique de versionner toute clé / keystore.
+# Master key Le Voile vit air-gapped + YubiKey HSM (cf. docs/key-management-android.md).
+# Le keystore est encodé base64 et stocké en GitHub Secret `LEVOILE_KEYSTORE_BASE64`,
+# JAMAIS commité.
+*
+!.gitignore
+!.gitkeep
+!README.md

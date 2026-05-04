@@ -106,6 +106,35 @@ class AuditCITest {
         )
     }
 
+    /**
+     * Story 12.1 — anti-fuite snakeyaml. La dépendance est introduite pour
+     * `FdroidMetadataTest` (parsing du YAML F-Droid en test JVM-only). Elle ne
+     * doit JAMAIS basculer en `implementation` ou `androidTestImplementation`
+     * (~250 KB inutiles dans l'APK release, viole NFR-AND-3 + ADR-08).
+     *
+     * Pattern miroir du test `org json reste scope testImplementation only`.
+     */
+    @Test
+    fun `snakeyaml reste scope testImplementation only NFR-AND-3`() {
+        val appBuildGradle = resolveAppBuildGradle()
+        val content = appBuildGradle.readText()
+        assertTrue(
+            "app/build.gradle.kts doit declarer testImplementation(libs.snakeyaml) — Story 12.1 FdroidMetadataTest",
+            content.contains("testImplementation(libs.snakeyaml)"),
+        )
+        assertTrue(
+            "app/build.gradle.kts NE DOIT PAS contenir implementation(libs.snakeyaml) — " +
+                "violation ADR-08 + NFR-AND-3 (~250 KB inutiles dans l'APK release).",
+            !content.contains("\n    implementation(libs.snakeyaml)") &&
+                !content.contains("\n    api(libs.snakeyaml)"),
+        )
+        assertTrue(
+            "app/build.gradle.kts NE DOIT PAS contenir androidTestImplementation(libs.snakeyaml) — " +
+                "le test FdroidMetadataTest est JVM-only.",
+            !content.contains("androidTestImplementation(libs.snakeyaml)"),
+        )
+    }
+
     private fun resolveAppBuildGradle(): File {
         val candidates = listOf(
             File("build.gradle.kts"),                      // cwd = android/app/

@@ -1,0 +1,12 @@
+Le Voile est un VPN libre pensé pour les utilisateurs et utilisatrices qui veulent simplement que leur connexion ne laisse pas de trace. La totalité du code, y compris le noyau Go partagé avec le client de bureau et les binaires des relais, est publiée sous licence GPL-3.0-or-later et auditée comme étant zéro tracking, zéro télémétrie, zéro analytics, zéro rapporteur de crash.
+
+Caractéristiques clés :
+
+* Code source ouvert (GPL-3.0-or-later) — chaque ligne, du noyau Go aux relais, est lisible sur GitHub.
+* Zéro tracking, zéro télémétrie, zéro analytics. Un audit Gradle exécuté en intégration continue refuse toute pull request qui introduirait Firebase, Sentry, Bugsnag, Crashlytics, Mixpanel, Adjust, Branch ou Amplitude (cf. ADR-15).
+* Kill switch délégué au système d'exploitation via la bascule Android « VPN permanent + Bloquer les connexions sans VPN » — aucun pare-feu tiers, aucun comportement ambigu. L'onboarding explique précisément comment l'activer.
+* Relais multi-pays (Allemagne, Espagne, Royaume-Uni, États-Unis), tous animés par le même binaire Go stateless ; un pays peut être ajouté ou remplacé sans modifier le client.
+* Chaîne de confiance ancrée sur une unique clé maître Ed25519 (registre de relais, releases, paquets). L'APK GitHub direct est signé v2 et v3 avec une clé dérivée de la maître ; F-Droid signe son propre APK avec sa clé F-Droid — les deux signatures sont explicitement distinctes et documentées.
+* Aucun compte Google requis, aucune dépendance aux Google Play Services.
+
+Le Voile vise les lectrices et lecteurs, les chercheurs et chercheuses, et toute personne qui préfère ne pas avoir à faire confiance à la politique de confidentialité d'un fournisseur de VPN. Code source, signatures et procédure de reproductibilité du build sont publiés sur https://plateformeliberte.fr/le-voile.

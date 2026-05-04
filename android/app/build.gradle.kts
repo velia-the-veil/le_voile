@@ -7,6 +7,28 @@ android {
     namespace = "fr.plateformeliberte.levoile"
     compileSdk = 34
 
+    // Story 12.5 — productFlavors `apkDirect` (default) et `fdroid`.
+    //
+    // Permet de différencier le comportement à la build time pour le worker
+    // auto-update :
+    //   - `apkDirect` (default) → AUTO_UPDATE_ENABLED = true. Pipeline GitHub
+    //     release-android.yml invoque `assembleApkDirectRelease`.
+    //   - `fdroid` → AUTO_UPDATE_ENABLED = false. F-Droid build server invoque
+    //     `assembleFdroidRelease` (cf. metadata/fr.plateformeliberte.levoile.yml).
+    //     Cohérent epics.md l. 2188-2192 + ADR-11.
+    flavorDimensions += "distributionChannel"
+
+    productFlavors {
+        create("apkDirect") {
+            dimension = "distributionChannel"
+            buildConfigField("Boolean", "AUTO_UPDATE_ENABLED", "true")
+        }
+        create("fdroid") {
+            dimension = "distributionChannel"
+            buildConfigField("Boolean", "AUTO_UPDATE_ENABLED", "false")
+        }
+    }
+
     defaultConfig {
         applicationId = "fr.plateformeliberte.levoile"
         minSdk = 29
@@ -44,6 +66,38 @@ android {
         includeInBundle = false
     }
 
+    // Story 12.3 — signingConfigs.release.
+    // SECURITY : credentials lus EXCLUSIVEMENT depuis des variables d'environnement.
+    // Aucun string literal de password ici. Voir docs/key-management-android.md
+    // pour la procédure de provisionnement (génération keystore master, encodage base64,
+    // ajout aux secrets GitHub Actions).
+    signingConfigs {
+        create("release") {
+            val keystorePath = System.getenv("LEVOILE_KEYSTORE_PATH")
+            val keystorePassword = System.getenv("LEVOILE_KEYSTORE_PASSWORD")
+            val alias = System.getenv("LEVOILE_KEY_ALIAS")
+            val keyPasswordEnv = System.getenv("LEVOILE_KEY_PASSWORD")
+
+            if (keystorePath != null && keystorePassword != null && alias != null && keyPasswordEnv != null) {
+                storeFile = file(keystorePath)
+                storePassword = keystorePassword
+                keyAlias = alias
+                keyPassword = keyPasswordEnv
+                // APK Signature Scheme v2 + v3 (key rotation).
+                // v1 (JAR signing) désactivé — minSdk 29 (Android 10+) accepte v2 sans v1.
+                // v4 désactivé — non requis (streaming install Android 11+ Play Asset Delivery).
+                // Cf. https://source.android.com/docs/security/features/apksigning/v2
+                enableV1Signing = false
+                enableV2Signing = true
+                enableV3Signing = true
+                enableV4Signing = false
+            }
+            // Si les env vars sont absentes : storeFile reste null, le buildType.release
+            // tombera en fallback debug (cf. ci-dessous) — pratique pour les builds locaux
+            // des devs sans la master key.
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = true
@@ -51,11 +105,21 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
-            // Story 12.3 livrera la signingConfig release réelle (master key Ed25519, v2/v3).
-            // En attendant, on signe en debug et on suffixe explicitement le versionName
-            // pour que personne ne confonde cet APK avec une release valide.
-            signingConfig = signingConfigs.getByName("debug")
-            versionNameSuffix = "-unsigned"
+            // Story 12.3 — signingConfig conditionnel.
+            //  - Si LEVOILE_KEYSTORE_PATH est défini → release signing (master key Le Voile).
+            //  - Sinon → fallback debug + suffix `-unsigned-LOCAL-DEV` pour qu'aucun
+            //    utilisateur ne confonde cet APK avec une release valide.
+            //
+            // Le fallback permet aux devs de faire `./gradlew :app:assembleRelease` localement
+            // pour tester R8/ProGuard sans avoir la master key. Le job CI `sign-apk`
+            // (release-android.yml) provisionne les env vars depuis les secrets GitHub Actions.
+            if (System.getenv("LEVOILE_KEYSTORE_PATH") != null) {
+                signingConfig = signingConfigs.getByName("release")
+                // Pas de versionNameSuffix — c'est l'APK release officiel.
+            } else {
+                signingConfig = signingConfigs.getByName("debug")
+                versionNameSuffix = "-unsigned-LOCAL-DEV"
+            }
         }
         debug {
             isMinifyEnabled = false
@@ -76,11 +140,31 @@ android {
     // (android.util.Log, etc.) sans planter sur "Method ... not mocked".
     // Les méthodes android.* renvoient leurs valeurs par défaut (0, false, null).
     // Choix conscient : évite Robolectric (heavy dep) tant qu'aucun test
-    // n'instancie un vrai Context. Story 12.6 (tests instrumentés Espresso)
-    // couvrira le runtime réel.
+    // n'instancie un vrai Context.
+    //
+    // Story 12.6 — `animationsDisabled = true` désactive les animations Android
+    // sur l'émulateur pour les tests instrumentés. Ceinture+bretelles avec le
+    // flag `disable-animations: true` de l'action emulator-runner — au cas où
+    // un dev exécuterait la matrice localement sans le wrapper CI.
     testOptions {
         unitTests.isReturnDefaultValues = true
+        animationsDisabled = true
     }
+}
+
+// NFR-AND-6 / ADR-11 / Story 12.4 — Build APK reproductible.
+//
+// `dependenciesInfo { ... }` désactivé plus haut (block défini dans `android { }`).
+// Ce hook applique l'antipattern #1 documenté reproducible-builds.org : tous les
+// Zip/Jar/Aar tasks doivent produire des archives déterministes (timestamps fixes,
+// file order stable). Sans ça, deux builds successifs depuis le même tag git
+// produisent des SHA256 différents → F-Droid refuse le badge « Reproducible Build ».
+//
+// Le `tasks.withType<...>()` en racine du fichier (pas dans `android { }`) garantit
+// l'application à TOUTES les archives Gradle (signedAPK, AAB, AAR transitif, etc.).
+tasks.withType<AbstractArchiveTask>().configureEach {
+    isPreserveFileTimestamps = false
+    isReproducibleFileOrder = true
 }
 
 dependencies {
@@ -123,6 +207,11 @@ dependencies {
     // version catalog — cf. gradle/libs.versions.toml).
     implementation(libs.androidx.lifecycle.livedata.ktx)
 
+    // Story 12.5 : WorkManager pour le worker UpdateCheckWorker (check 24h
+    // GitHub releases, canal apkDirect uniquement). Court-circuité au runtime
+    // pour le flavor `fdroid` via BuildConfig.AUTO_UPDATE_ENABLED.
+    implementation(libs.androidx.work.runtime.ktx)
+
     // Tests unitaires JVM-only (Story 9.2 LeVoileCoreSmokeTest, Story 9.7
     // GoCoreAdapterContractTest + GoBackedPacketRelayTest, Story 10.1
     // KillSwitchDetectorTest). N'entrent pas dans l'APK release.
@@ -140,6 +229,15 @@ dependencies {
     // Cohérent ConfigStoreTest + ConfigMigrationTest. Test scope only —
     // n'entre pas dans l'APK release (Android utilise sa propre org.json).
     testImplementation(libs.org.json)
+    // Story 12.1 : snakeyaml pour parser metadata/fr.plateformeliberte.levoile.yml
+    // dans FdroidMetadataTest. Scope testImplementation strict — anti-fuite NFR-AND-3
+    // garantie par AuditCITest (~250 KB jamais embarqués dans l'APK release).
+    testImplementation(libs.snakeyaml)
+    // Story 12.5 : work-testing fournit WorkManagerTestInitHelper pour Story 12.6
+    // instrumented runtime test. Scope testImplementation pour permettre aux
+    // SemVerCompareTest / UpdateCheckerTest de s'exécuter en JVM-only sans
+    // contraintes WorkManager runtime.
+    testImplementation(libs.androidx.work.testing)
 
     // Tests instrumentés — alignés avec testInstrumentationRunner ci-dessus.
     // Permet à connectedAndroidTest de s'exécuter dès la première story qui livrera
@@ -147,4 +245,23 @@ dependencies {
     // n'entrent PAS dans l'APK release (scope androidTestImplementation).
     androidTestImplementation(libs.androidx.test.junit)
     androidTestImplementation(libs.androidx.test.espresso.core)
+
+    // Story 12.6 — matrice instrumentée API 29/33/34 :
+    //   - androidx.test:rules    → ActivityScenarioRule, ServiceTestRule.
+    //   - espresso-intents       → Intents.intended(...) pour vérifier qu'un Intent
+    //                              ACTION_VIEW / ACTION_VPN_SETTINGS a été lancé.
+    //   - espresso-web           → Espresso.onWebView() + DriverAtoms pour interactions
+    //                              avec le WebView Le Voile (Story 11.x JS bridge).
+    //   - uiautomator            → ouverture du shade notif + interaction system UI
+    //                              (com.android.vpndialogs consent, Settings).
+    //
+    // NB : `okhttp-mockwebserver` retire post-Code Review 2026-05-03 — l'impl
+    // runtime UpdateNotificationFlowTest teste UpdateNotificationHelper.post()
+    // directement sans passer par le worker, donc pas de mock HTTP necessaire.
+    // A reintroduire si Phase 2 livre l'injection BuildConfigField GITHUB_API_URL.
+    androidTestImplementation(libs.androidx.test.rules)
+    androidTestImplementation(libs.androidx.test.espresso.intents)
+    androidTestImplementation(libs.androidx.test.espresso.web)
+    androidTestImplementation(libs.androidx.test.uiautomator)
+    androidTestImplementation(libs.androidx.work.testing)
 }

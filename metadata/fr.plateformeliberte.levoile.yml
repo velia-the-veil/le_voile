@@ -1,0 +1,66 @@
+# Recette F-Droid Le Voile (Story 12.1).
+#
+# Convention upstream F-Droid Data : ce fichier vit a la racine du repo cible
+# (exception ADR-08 documentee, identique a .github/workflows/).
+#
+# Reference complete : https://f-droid.org/en/docs/Build_Metadata_Reference/
+#
+# Coordination :
+#   - Story 12.4 garantit la reproductibilite APK byte-a-byte (NFR-AND-6).
+#   - Story 12.3 signe l'APK GitHub direct par la master key Le Voile ; F-Droid
+#     signe son propre APK avec sa cle de build (clefs distinctes intentionnelles,
+#     cf. docs/key-management-android.md).
+#   - Story 12.5 introduit le flavor `fdroid` qui desactive le worker auto-update
+#     (mise a jour geree par F-Droid cote store). La recette `Builds:` ci-dessous
+#     invoque deja `gradle: [fdroid]` (Story 12.5 livree).
+
+Categories:
+  - Security
+  - Internet
+License: GPL-3.0-or-later
+
+AuthorName: Plateforme Liberté
+AuthorWebSite: https://plateformeliberte.fr
+
+WebSite: https://plateformeliberte.fr/le-voile
+SourceCode: https://github.com/velia-the-veil/le_voile
+IssueTracker: https://github.com/velia-the-veil/le_voile/issues
+Translation: https://github.com/velia-the-veil/le_voile/tree/main/metadata
+Changelog: https://github.com/velia-the-veil/le_voile/releases
+
+AutoName: Le Voile
+Summary: VPN libre — zéro tracking, zéro télémétrie
+
+# AntiFeatures: aucune. Le client Le Voile n'embarque ni publicites, ni tracking,
+# ni analytics, ni crash reporter, ni proprietaires (cf. ADR-15 + audit Gradle CI
+# Story 10.4 + audit permissions Story 12.2). F-Droid lint accepte la cle absente.
+
+RepoType: git
+Repo: https://github.com/velia-the-veil/le_voile.git
+
+Builds:
+  - versionName: 0.1.0
+    versionCode: 1
+    commit: v0.1.0
+    subdir: android/app
+    # Story 12.5 — flavor `fdroid` desactive le worker UpdateCheckWorker au
+    # runtime (BuildConfig.AUTO_UPDATE_ENABLED = false) — F-Droid gere les
+    # mises a jour cote store. Le flavor `apkDirect` est utilise pour le canal
+    # GitHub direct (release-android.yml job sign-apk).
+    gradle:
+      - fdroid
+    # `prebuild` rejoue exactement la chaine que la CI / les devs utilisent en local.
+    # F-Droid runner installe Go + gomobile au prealable (cf. docs/fdroid-build-recipe.md).
+    prebuild:
+      - bash android/scripts/build-aar.sh
+      - bash android/scripts/sync-frontend.sh
+    # Story 12.4 — reproductibilite APK garantie via `dependenciesInfo` desactive
+    # (deja en place app/build.gradle.kts) + AbstractArchiveTask hook (livre
+    # par 12.4) + pinnings JDK 17 / Gradle 8.5 / AGP 8.5.0 / NDK r25c.
+    output: app/build/outputs/apk/fdroid/release/app-fdroid-release-unsigned.apk
+
+AutoUpdateMode: None
+UpdateCheckMode: Tags
+UpdateCheckName: Le Voile
+CurrentVersion: 0.1.0
+CurrentVersionCode: 1

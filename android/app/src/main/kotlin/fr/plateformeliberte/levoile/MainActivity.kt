@@ -20,6 +20,7 @@ import fr.plateformeliberte.levoile.conflict.VpnConflictDetector
 import fr.plateformeliberte.levoile.kill.KillSwitchDetector
 import fr.plateformeliberte.levoile.kill.KillSwitchStatus
 import fr.plateformeliberte.levoile.log.LeVoileLog
+import fr.plateformeliberte.levoile.update.UpdateScheduler
 import fr.plateformeliberte.levoile.vpn.LeVoileVpnService
 import fr.plateformeliberte.levoile.vpn.VpnConstants
 
@@ -111,6 +112,12 @@ class MainActivity : AppCompatActivity() {
 
         // Story 11.7 — handler extra openKillSwitchFlow (notification tap → flow C15).
         handleKillSwitchFlowExtra(intent)
+
+        // Story 12.5 — schedule l'UpdateCheckWorker périodique 24h. Idempotent
+        // (`KEEP` policy). Le worker court-circuit lui-même au runtime via
+        // BuildConfig.AUTO_UPDATE_ENABLED — schedulé pour les 2 flavors mais
+        // n'effectue le fetch GitHub que pour `apkDirect`.
+        UpdateScheduler.scheduleIfNeeded(applicationContext)
 
         // M-2 (code-review 9.3) : WebContents debugging activé UNIQUEMENT en debug pour
         // permettre l'inspection via chrome://inspect (cf. README-android.md « Lancement de

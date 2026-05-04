@@ -32,7 +32,56 @@
          story 9-2-script-build-aar-sh-*.md.
 #>
 
+[CmdletBinding()]
+param(
+  # Story 12.2 — produit un .aar stub (manifest + classes.jar vide + R.txt vide)
+  # sans invoquer gomobile. Utilise par les jobs CI lint / permission-audit /
+  # proguard-syntax pour eviter le cold-start NDK ~1.5 GB.
+  [switch] $StubOnly
+)
+
 $ErrorActionPreference = "Stop"
+
+# ---- Mode --stub-only (Story 12.2) ----------------------------------
+if ($StubOnly) {
+  if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
+    Write-Error "git non trouve dans le PATH (requis pour resoudre le repo root)."
+    exit 1
+  }
+  $repoRoot = (& git rev-parse --show-toplevel).Trim()
+  $outputDir = Join-Path $repoRoot "android/app/libs"
+  $output = Join-Path $outputDir "levoile-core.aar"
+  New-Item -ItemType Directory -Path $outputDir -Force | Out-Null
+
+  $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ([System.Guid]::NewGuid().ToString())
+  New-Item -ItemType Directory -Path $tmp -Force | Out-Null
+  try {
+    $manifest = @'
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="fr.plateformeliberte.levoile.core" />
+'@
+    Set-Content -Path (Join-Path $tmp "AndroidManifest.xml") -Value $manifest -Encoding utf8
+    New-Item -ItemType File -Path (Join-Path $tmp "R.txt") -Force | Out-Null
+    # classes.jar = empty ZIP (22-byte EOCD record).
+    [byte[]] $eocd = 0x50, 0x4b, 0x05, 0x06, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+    [System.IO.File]::WriteAllBytes((Join-Path $tmp "classes.jar"), $eocd)
+
+    if (Test-Path $output) { Remove-Item $output -Force }
+    Compress-Archive -Path (Join-Path $tmp "*") -DestinationPath $output -CompressionLevel NoCompression
+
+    $item = Get-Item $output
+    Write-Host "[build-aar -StubOnly] OK"
+    Write-Host "  Artefact : $output"
+    Write-Host "  Taille   : $($item.Length) octets"
+    Write-Host ""
+    Write-Host "ATTENTION : ce .aar ne contient AUCUN code Go. A utiliser uniquement"
+    Write-Host "pour les jobs CI lint / permission-audit / proguard-syntax."
+  } finally {
+    Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue
+  }
+  exit 0
+}
 
 # ---- Resolution variables user-scope (.NET) ----
 function Get-UserEnv($name) {

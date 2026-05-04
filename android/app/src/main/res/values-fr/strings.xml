@@ -67,4 +67,12 @@
     <string name="android_vpn_conflict_title">Conflit VPN détecté</string>
     <string name="android_vpn_conflict_message">Une autre application VPN est active sur cet appareil. Désactivez-la pour utiliser Le Voile.</string>
     <string name="android_vpn_conflict_button_settings">Ouvrir les paramètres VPN</string>
+
+    <!-- Story 12.5 — voir values/strings.xml pour le contexte. -->
+    <string name="update_channel_name">Mises à jour Le Voile</string>
+    <string name="update_channel_description">Notifications de nouvelle version disponible sur GitHub releases.</string>
+    <string name="update_notification_title">Mise à jour %s disponible</string>
+    <string name="update_notification_text">Le Voile · appuyer pour voir sur GitHub</string>
+    <string name="update_notification_text_long">La version %s est disponible sur GitHub releases. Appuyer ci-dessous pour la voir, puis télécharger et installer manuellement.</string>
+    <string name="update_notification_action">Voir sur GitHub</string>
 </resources>

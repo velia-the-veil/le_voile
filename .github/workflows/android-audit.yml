@@ -1,42 +1,54 @@
-# Story 10.4 — Audit télémétrie zéro-tracking pour le client Android Le Voile.
+# Story 10.4 (audit télémétrie zéro-tracking) + Story 12.2 (extension CI Android complet).
 #
-# Bloque toute PR / push sur main qui introduirait une dépendance Gradle
-# de télémétrie / analytics / crash reporter (Firebase, Sentry, Bugsnag,
-# Crashlytics, Mixpanel, Adjust, Branch, Amplitude). Cohérent avec
-# FR-AND-8 (prd.md l. 614-617), NFR-AND-8 (prd.md l. 704), ADR-15
-# (architecture.md l. 2439-2442).
+# Pipeline CI Android — exécuté sur chaque pull_request et push main qui touche
+# `android/**`, `metadata/**`, ou un workflow Android. Bloque le merge si :
+#   - une dépendance télémétrie est introduite (audit-dependencies, Story 10.4) ;
+#   - le code Kotlin ne compile pas ou viole un check lint AGP (lint, 12.2) ;
+#   - un test JVM unitaire échoue (unit-tests, 12.2) ;
+#   - les permissions de l'APK debug s'écartent de la whitelist NFR-AND-7
+#     (permission-audit, 12.2) ;
+#   - les règles ProGuard sont syntaxiquement invalides (proguard-syntax, 12.2).
 #
-# Exception ADR-08 documentée : ce workflow vit sous .github/workflows/
-# par construction GitHub Actions (aucune sub-config possible). Il est
-# 100% Android (jobs Gradle uniquement) — aucune mutualisation cross-OS
-# avec release.yml ou aur-publish.yml. Pattern aligné avec ces 2
-# workflows existants (Story 7.x desktop).
+# Exception ADR-08 documentée : ce workflow vit sous .github/workflows/ par
+# construction GitHub Actions (aucune sub-config possible). Toutes les sous-
+# tâches sont 100% Android (jobs Gradle uniquement), aucune mutualisation
+# cross-OS avec release.yml ou aur-publish.yml (workflows desktop Story 7.x).
 #
-# Le pipeline release Android complet (build APK + signature + F-Droid)
-# est livré Story 12.2 dans un workflow séparé release-android.yml. Les
-# 2 workflows coexistent : audit minimaliste léger sur chaque PR
-# (cette story), pipeline release sur tag git (Story 12.2).
-name: Android · Audit télémétrie
+# Le pipeline release (signature APK + reproductibilité + matrice instrumentée)
+# est livré séparément dans `.github/workflows/release-android.yml` (squelette
+# Story 12.2, signature 12.3, repro 12.4, matrice 12.6) et déclenché sur
+# push tag `v*` uniquement — séparation due aux triggers + permissions
+# différents (cf. Dev Notes Story 12.2).
+name: Android · CI
 
 on:
   pull_request:
     paths:
       - 'android/**'
+      - 'metadata/**'                              # Story 12.1
       - '.github/workflows/android-audit.yml'
+      - '.github/workflows/release-android.yml'    # Story 12.2 — nouveau workflow
   push:
     branches: [main]
     paths:
       - 'android/**'
+      - 'metadata/**'
       - '.github/workflows/android-audit.yml'
+      - '.github/workflows/release-android.yml'
 
 permissions:
   contents: read
+  pull-requests: write   # Story 12.2 — permet à `marocchino/sticky-pull-request-comment` de poster le résumé.
 
 concurrency:
-  group: android-audit-${{ github.ref }}
+  group: android-ci-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
+  # ============================================================================
+  # Story 10.4 (inchangé) — Audit dépendances Gradle (zéro-tracking).
+  # Garder ce job intact (anti-régression cf. AuditCITest).
+  # ============================================================================
   audit-dependencies:
     name: Audit dépendances Gradle (zéro-tracking)
     runs-on: ubuntu-22.04
@@ -68,3 +80,251 @@ jobs:
       - name: Run LogFilteringTest unit test
         working-directory: android
         run: ./gradlew :app:testDebugUnitTest --tests "fr.plateformeliberte.levoile.log.LogFilteringTest" --no-daemon
+
+  # ============================================================================
+  # Story 12.2 — Lint Android (Kotlin compile + AGP lint).
+  # Nécessite le .aar gomobile (GoCoreAdapter.kt importe Auth + Protocol).
+  # ============================================================================
+  lint:
+    name: Lint Android
+    runs-on: ubuntu-22.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '17' }
+      - uses: gradle/actions/setup-gradle@v3
+      - uses: actions/setup-go@v5
+        with: { go-version: '1.22.x' }
+      - uses: android-actions/setup-android@v3
+        with:
+          cmdline-tools-version: '11076708'
+
+      - name: Install gomobile
+        run: |
+          go install golang.org/x/mobile/cmd/gomobile@latest
+          go install golang.org/x/mobile/cmd/gobind@latest
+          gomobile init
+
+      - name: Build .aar gomobile
+        working-directory: android
+        run: bash scripts/build-aar.sh
+
+      - name: Sync frontend assets
+        working-directory: android
+        run: bash scripts/sync-frontend.sh
+
+      - name: Gradle lint
+        working-directory: android
+        run: ./gradlew :app:lint :levoile-core:lint --no-daemon --stacktrace
+
+      - name: Upload lint reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lint-reports
+          path: android/app/build/reports/lint-results-*.html
+          if-no-files-found: warn
+
+  # ============================================================================
+  # Story 12.2 — Tests unitaires JVM (compile + run).
+  # Inclut LeVoileCoreSmokeTest qui résout les classes du .aar par reflection,
+  # donc gomobile + build .aar complet requis.
+  # ============================================================================
+  unit-tests:
+    name: Tests unitaires JVM
+    runs-on: ubuntu-22.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '17' }
+      - uses: gradle/actions/setup-gradle@v3
+      - uses: actions/setup-go@v5
+        with: { go-version: '1.22.x' }
+      - uses: android-actions/setup-android@v3
+        with:
+          cmdline-tools-version: '11076708'
+
+      - name: Install gomobile
+        run: |
+          go install golang.org/x/mobile/cmd/gomobile@latest
+          go install golang.org/x/mobile/cmd/gobind@latest
+          gomobile init
+
+      - name: Build .aar gomobile
+        working-directory: android
+        run: bash scripts/build-aar.sh
+
+      - name: Sync frontend assets
+        working-directory: android
+        run: bash scripts/sync-frontend.sh
+
+      - name: Gradle unit tests
+        working-directory: android
+        run: ./gradlew :app:testDebugUnitTest :levoile-core:testDebugUnitTest --no-daemon --stacktrace
+
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-test-reports
+          path: |
+            android/app/build/reports/tests/testDebugUnitTest/
+            android/levoile-core/build/reports/tests/testDebugUnitTest/
+          if-no-files-found: warn
+
+  # ============================================================================
+  # Story 12.2 — Audit permissions APK (whitelist NFR-AND-7).
+  # Compare la liste des permissions du manifest mergé final (apkanalyzer) à la
+  # whitelist 5 permissions Le Voile + 1 permission AGP-injectée
+  # (DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION — cf. Dev Notes Story 12.2).
+  # ============================================================================
+  permission-audit:
+    name: Audit permissions APK
+    runs-on: ubuntu-22.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '17' }
+      - uses: gradle/actions/setup-gradle@v3
+      - uses: actions/setup-go@v5
+        with: { go-version: '1.22.x' }
+      - uses: android-actions/setup-android@v3
+        with:
+          cmdline-tools-version: '11076708'
+
+      - name: Install gomobile
+        run: |
+          go install golang.org/x/mobile/cmd/gomobile@latest
+          go install golang.org/x/mobile/cmd/gobind@latest
+          gomobile init
+
+      - name: Build .aar gomobile
+        working-directory: android
+        run: bash scripts/build-aar.sh
+
+      - name: Sync frontend assets
+        working-directory: android
+        run: bash scripts/sync-frontend.sh
+
+      - name: Assemble apkDirect debug APK
+        working-directory: android
+        run: ./gradlew :app:assembleApkDirectDebug --no-daemon --stacktrace
+        # Story 12.5 a introduit les flavors `apkDirect` / `fdroid`. On audit
+        # `apkDirect` (canal GitHub direct) — `fdroid` partage les memes
+        # permissions Manifest (le flavor change uniquement BuildConfig).
+
+      - name: Audit permissions
+        working-directory: android
+        run: |
+          APK="app/build/outputs/apk/apkDirect/debug/app-apkDirect-debug.apk"
+          if [ ! -f "$APK" ]; then
+            echo "::error::APK apkDirect debug introuvable : $APK"
+            ls -la app/build/outputs/apk/apkDirect/debug/ || true
+            exit 1
+          fi
+
+          # Whitelist NFR-AND-7 + 1 permission AGP-injectée pour les receivers
+          # internes Android 13+ (DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION).
+          # L'`applicationIdSuffix` debug = `.debug` — la permission AGP est
+          # nommée `<applicationId>.debug.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION`.
+          # NB : printf -v aurait été plus propre, mais YAML scalar strict
+          # impose des lignes courtes — un printf inline avec \n littéraux est
+          # le plus lisible. Pas de heredoc indenté (espaces de prefix
+          # cassent le diff contre apkanalyzer).
+          EXPECTED_SORTED=$(printf '%s\n' \
+            'android.permission.FOREGROUND_SERVICE' \
+            'android.permission.FOREGROUND_SERVICE_DATA_SYNC' \
+            'android.permission.FOREGROUND_SERVICE_SPECIAL_USE' \
+            'android.permission.INTERNET' \
+            'android.permission.POST_NOTIFICATIONS' \
+            'fr.plateformeliberte.levoile.debug.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION' \
+            | sort -u)
+
+          ACTUAL=$(apkanalyzer manifest permissions "$APK" | sort -u)
+
+          if ! diff <(echo "$EXPECTED_SORTED") <(echo "$ACTUAL"); then
+            echo "::error::Permissions APK ne matchent pas la whitelist NFR-AND-7."
+            echo "Attendu :"
+            echo "$EXPECTED_SORTED"
+            echo "Obtenu :"
+            echo "$ACTUAL"
+            exit 1
+          fi
+          echo "✓ Permissions APK conformes NFR-AND-7"
+
+  # ============================================================================
+  # Story 12.2 — ProGuard/R8 syntax check.
+  # `assembleRelease` invoque R8 qui parse `app/proguard-rules.pro` — un fichier
+  # invalide casse le build. Pas besoin de signature (debug-signed via fallback
+  # Story 12.3 `signingConfig = debug` + suffix `-unsigned`).
+  # ============================================================================
+  proguard-syntax:
+    name: ProGuard rules syntax check
+    runs-on: ubuntu-22.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '17' }
+      - uses: gradle/actions/setup-gradle@v3
+      - uses: actions/setup-go@v5
+        with: { go-version: '1.22.x' }
+      - uses: android-actions/setup-android@v3
+        with:
+          cmdline-tools-version: '11076708'
+
+      - name: Install gomobile
+        run: |
+          go install golang.org/x/mobile/cmd/gomobile@latest
+          go install golang.org/x/mobile/cmd/gobind@latest
+          gomobile init
+
+      - name: Build .aar gomobile
+        working-directory: android
+        run: bash scripts/build-aar.sh
+
+      - name: Sync frontend assets
+        working-directory: android
+        run: bash scripts/sync-frontend.sh
+
+      - name: Assemble apkDirect release (valide proguard-rules.pro)
+        working-directory: android
+        # On exclut lint + tests pour ne pas dupliquer (les autres jobs).
+        # Story 12.3 : sans env vars LEVOILE_KEYSTORE_*, fallback debug-signed +
+        # versionNameSuffix `-unsigned-LOCAL-DEV` — explicite anti-confusion.
+        # Story 12.5 : flavor `apkDirect` choisi pour le check syntax — `fdroid`
+        # partage le meme proguard-rules.pro (verifie via assembleApkDirectRelease seul).
+        run: ./gradlew :app:assembleApkDirectRelease -x lint -x test --no-daemon --stacktrace
+
+  # ============================================================================
+  # Story 12.2 — Résumé PR (commentaire automatique, sticky).
+  # `if: always()` pour poster le résumé même quand un job a échoué.
+  # `pull-requests: write` permission requise (cf. permissions: ci-dessus).
+  # Sur PR fork, GITHUB_TOKEN est read-only → l'action skip silencieusement,
+  # les utilisateurs externes voient les statuts via le UI Actions classique.
+  # ============================================================================
+  ci-summary:
+    name: CI · Résumé PR
+    needs: [audit-dependencies, lint, unit-tests, permission-audit, proguard-syntax]
+    if: always() && github.event_name == 'pull_request'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 5
+    steps:
+      - uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          header: android-ci-summary
+          message: |
+            ## Android · CI
+
+            | Job | Statut |
+            |---|---|
+            | Audit dépendances (10.4) | ${{ needs.audit-dependencies.result }} |
+            | Lint (12.2) | ${{ needs.lint.result }} |
+            | Tests unitaires (12.2) | ${{ needs.unit-tests.result }} |
+            | Audit permissions (12.2) | ${{ needs.permission-audit.result }} |
+            | ProGuard syntaxe (12.2) | ${{ needs.proguard-syntax.result }} |
+
+            Run ID : [${{ github.run_id }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})

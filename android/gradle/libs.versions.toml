@@ -48,6 +48,29 @@ androidx-test-espresso = "3.6.1"
 # JVM-only de ConfigStore (load/save/parse JSONObject). ~70 KB, scope test only.
 org-json = "20240303"
 
+# Story 12.1 : snakeyaml parse le YAML F-Droid (metadata/fr.plateformeliberte.levoile.yml)
+# pour FdroidMetadataTest.kt — anti-régression cohérence versionCode YAML / build.gradle.kts
+# + champs minimums F-Droid lint. Scope `testImplementation` strict (cf. AuditCITest M5),
+# anti-fuite NFR-AND-3 garantie par le test `snakeyaml reste scope testImplementation only`.
+snakeyaml = "2.2"
+
+# Story 12.5 : WorkManager pour le check version 24h periodique (canal apkDirect uniquement,
+# court-circuite sur flavor fdroid via BuildConfig.AUTO_UPDATE_ENABLED). 2.9.0 stable au 2026-05.
+# work-testing fournit WorkManagerTestInitHelper pour Story 12.6 instrumented test runtime.
+androidx-work = "2.9.0"
+
+# Story 12.6 : matrice tests instrumentes API 29/33/34. UiAutomator pour cross-process notif
+# shade + system Settings. Espresso-intents pour assertions sur Intents lances.
+# Espresso-web pour interactions WebView (Story 11.x JS bridge).
+#
+# NB : MockWebServer retire post-Code Review 2026-05-03 — UpdateNotificationFlowTest
+# teste UpdateNotificationHelper.post() directement sans aller jusqu'au worker.
+# A re-introduire si Phase 2 livre l'injection BuildConfigField("String", "GITHUB_API_URL", ...).
+androidx-test-uiautomator = "2.3.0"
+androidx-test-rules = "1.5.0"
+androidx-test-espresso-intents-version = "3.6.1"
+androidx-test-espresso-web-version = "3.6.1"
+
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "androidx-core-ktx" }
 androidx-appcompat = { group = "androidx.appcompat", name = "appcompat", version.ref = "androidx-appcompat" }
@@ -60,6 +83,13 @@ mockito-core = { group = "org.mockito", name = "mockito-core", version.ref = "mo
 androidx-test-junit = { group = "androidx.test.ext", name = "junit", version.ref = "androidx-test-junit" }
 androidx-test-espresso-core = { group = "androidx.test.espresso", name = "espresso-core", version.ref = "androidx-test-espresso" }
 org-json = { group = "org.json", name = "json", version.ref = "org-json" }
+snakeyaml = { group = "org.yaml", name = "snakeyaml", version.ref = "snakeyaml" }
+androidx-work-runtime-ktx = { group = "androidx.work", name = "work-runtime-ktx", version.ref = "androidx-work" }
+androidx-work-testing = { group = "androidx.work", name = "work-testing", version.ref = "androidx-work" }
+androidx-test-uiautomator = { group = "androidx.test.uiautomator", name = "uiautomator", version.ref = "androidx-test-uiautomator" }
+androidx-test-rules = { group = "androidx.test", name = "rules", version.ref = "androidx-test-rules" }
+androidx-test-espresso-intents = { group = "androidx.test.espresso", name = "espresso-intents", version.ref = "androidx-test-espresso-intents-version" }
+androidx-test-espresso-web = { group = "androidx.test.espresso", name = "espresso-web", version.ref = "androidx-test-espresso-web-version" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

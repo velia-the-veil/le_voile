@@ -31,6 +31,57 @@
 
 set -euo pipefail
 
+# ---- Mode --stub-only (Story 12.2) ----------------------------------
+#
+# Story 12.2 livre 4 jobs CI Android (lint, unit-tests, permission-audit,
+# proguard-syntax) qui ont besoin que `app/libs/levoile-core.aar` existe pour
+# que Gradle resolve `implementation(files("libs/levoile-core.aar"))`. Mais
+# faire tourner gomobile en CI ajoute ~10 min de cold-start (telechargement
+# NDK ~1.5 GB) sans valeur fonctionnelle pour un job lint ou un audit
+# permissions (qui n'a pas besoin du code Go reel).
+#
+# `--stub-only` produit un .aar minimal : ZIP contenant AndroidManifest.xml +
+# classes.jar vide + R.txt vide. Gradle accepte ce format, les classes Go ne
+# sont pas accessibles a l'execution (mais en lint/permission-audit elles ne
+# sont pas non plus invoquees).
+#
+# Pour les jobs CI qui ont besoin du vrai .aar (release, instrumented tests
+# Story 12.6, reproductibilite Story 12.4), invoquer ce script SANS
+# --stub-only — il appellera gomobile bind comme avant.
+if [ "${1:-}" = "--stub-only" ]; then
+  shift
+  REPO_ROOT="$(git rev-parse --show-toplevel)"
+  OUTPUT_DIR="${REPO_ROOT}/android/app/libs"
+  OUTPUT="${OUTPUT_DIR}/levoile-core.aar"
+  mkdir -p "$OUTPUT_DIR"
+
+  TMP="$(mktemp -d)"
+  trap "rm -rf \"$TMP\"" EXIT
+
+  cat > "$TMP/AndroidManifest.xml" <<'EOF'
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="fr.plateformeliberte.levoile.core" />
+EOF
+  : > "$TMP/R.txt"
+  # classes.jar = empty ZIP (22-byte EOCD record).
+  printf 'PK\005\006\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000' > "$TMP/classes.jar"
+
+  rm -f "$OUTPUT"
+  ( cd "$TMP" && zip -q -X "$OUTPUT" AndroidManifest.xml classes.jar R.txt )
+
+  SIZE="$(stat -c '%s' "$OUTPUT" 2>/dev/null || stat -f '%z' "$OUTPUT" 2>/dev/null || wc -c < "$OUTPUT")"
+  echo "[build-aar --stub-only] OK"
+  echo "  Artefact : $OUTPUT"
+  echo "  Taille   : $SIZE octets"
+  echo
+  echo "ATTENTION : ce .aar ne contient AUCUN code Go. Utilisez-le uniquement"
+  echo "pour les jobs CI qui ne necessitent pas le runtime gomobile (lint,"
+  echo "permission-audit, proguard-syntax). Pour les builds release et tests"
+  echo "instrumentes, relancer ce script SANS --stub-only."
+  exit 0
+fi
+
 # ---- Localisation repo root (script invocable depuis n'importe ou) ----
 if ! command -v git >/dev/null 2>&1; then
   echo "ERROR: git non trouve dans le PATH (requis pour resoudre le repo root)." >&2

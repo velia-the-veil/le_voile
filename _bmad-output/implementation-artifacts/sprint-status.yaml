@@ -171,11 +171,19 @@ development_status:
   # Epic 12: Distribution F-Droid + APK Direct + Auto-Update + Tests Instrumentes
   # Necessite Epics 9-11 livres. Story 12.6 (tests instrumentes) gating obligatoire pour tag release.
   # Reproductibilite APK (Story 12.4) condition F-Droid (cf. ADR-11).
-  epic-12: backlog
-  12-1-metadonnees-f-droid-metadata-com-velia-levoile-yml-versionnees: backlog
-  12-2-pipeline-github-actions-android-lint-tests-audits: backlog
-  12-3-signature-apk-v2-v3-key-rotation-par-master-key-ed25519: backlog
-  12-4-verification-reproductibilite-apk-ci: backlog
-  12-5-workmanager-24h-check-version-notification-ui-mise-a-jour-apk-direct: backlog
-  12-6-tests-instrumentes-espresso-androidx-test-sur-emulateur-api-29-33-34: backlog
+  # 2026-05-03: 6 stories context-engineered en lot (create-story workflow). Sequencing
+  # recommande: 12.1 (metadata, low-coupling) -> 12.2 (CI squelette) -> 12.3 (signature) +
+  # 12.4 (reproductibilite, parallelisable) -> 12.5 (WorkManager auto-update apkDirect) ->
+  # 12.6 (matrix instrumentee, gating release tag).
+  # 2026-05-03 : Code Review Epic 12 livré (auto-fix HIGH/MED/LOW). 12.1-12.5 → done.
+  # 12.6 reste in-progress : 7 scénarios marqués @Ignore (AC #3 non strictement livré
+  # — squelettes structurels avec TODO runtime documentés Phase 2). Voir Story 12.6
+  # Change Log section « Dette Phase 2 ».
+  epic-12: in-progress
+  12-1-metadonnees-f-droid-metadata-com-velia-levoile-yml-versionnees: done
+  12-2-pipeline-github-actions-android-lint-tests-audits: done
+  12-3-signature-apk-v2-v3-key-rotation-par-master-key-ed25519: done
+  12-4-verification-reproductibilite-apk-ci: done
+  12-5-workmanager-24h-check-version-notification-ui-mise-a-jour-apk-direct: done
+  12-6-tests-instrumentes-espresso-androidx-test-sur-emulateur-api-29-33-34: in-progress
   epic-12-retrospective: optional
