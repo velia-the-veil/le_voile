@@ -203,9 +203,13 @@ class GoBackedPacketRelay(
                 // amortie sur N paquets, vs 1 par paquet en pattern initial.
                 drainJob = scope.launch { drainOutboundLoop() }
             }.onFailure { err ->
-                // Connect a échoué — état (sans PII : message déjà redacté
-                // par la facade côté Go via redactErrorForStatus).
+                // Connect a échoué — log la classe (release) et le message
+                // complet en DEBUG uniquement (NFR-AND-9 : zéro PII en release,
+                // mais le message brut côté Go est essentiel au debug local).
                 Log.e(TAG, "GoCoreAdapter.connect failed: ${err.javaClass.simpleName}")
+                if (fr.plateformeliberte.levoile.BuildConfig.DEBUG) {
+                    Log.e(TAG, "GoCoreAdapter.connect debug message: ${err.message}", err)
+                }
                 running.set(false)
                 GoCoreAdapter.setCallbacks(null, null)
             }

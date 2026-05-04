@@ -353,6 +353,17 @@ class LeVoileVpnService : VpnService() {
             .setBlocking(true)
             .setUnderlyingNetworks(null)
 
+        // Exclut notre propre app du tunnel : Android route par defaut le
+        // package du VpnService via la TUN, ce qui aspire le handshake QUIC
+        // du client Go (lui-meme) dans la TUN qui n'a pas encore de session
+        // ouverte -> connection_timeout. addDisallowedApplication exempt
+        // notre app, son traffic sort par l'interface physique normale.
+        try {
+            builder.addDisallowedApplication(packageName)
+        } catch (e: android.content.pm.PackageManager.NameNotFoundException) {
+            Log.w(TAG, "addDisallowedApplication echec (ignored): ${e.message}")
+        }
+
         val pfd = builder.establish()
         if (pfd == null) {
             Log.e(

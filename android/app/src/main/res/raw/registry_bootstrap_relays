@@ -1,63 +1,63 @@
 {
   "version": 1,
-  "master_public_key": "XqFW6FZycAbBZXQNR20koxRACUUuZVZOl7gXtJrlD6k=",
+  "master_public_key": "rjgDdexo2SOeNXhdy0fUKAONXeQGAyN2d3ixCeuXOpk=",
   "relays": [
     {
+      "id": "relay-us-001",
+      "domain": "us-001.levoile.dev",
+      "public_key": "U7mn1cq/FeWokgft0ggNRsdqe773s884szICzjY2C28=",
+      "signature": "GDRDWaK5DP/PSuwUirBQ+nYJQY4GvLQSDGc+Fnah085lOgvQVQH2YL87S3KGflXNwKAaWetLfXPwFFCJFupiAw==",
+      "added": "2026-04-13T17:10:50Z"
+    },
+    {
       "id": "relay-de-001",
-      "domain": "de-001.relay.levoile.dev",
-      "public_key": "iTaVGJFg67OlYE5fObnw9M8c4ogAeNWzg0JVsAUvHi0=",
-      "signature": "jxOisW9vg/Nn2rjZaotV46SAiKmWJcN10u5F0mD4Tg5ctXyBxzps7+G8fl7HsfiM01PbVKP9GwXKjE2eSQCgCA==",
-      "added": "2026-05-03T16:46:00.1888483Z"
+      "domain": "de-001.levoile.dev",
+      "public_key": "7u+4vLWuuOq/TFmlx+O2aYJFZgZoG7ldZawdGzVcw1w=",
+      "signature": "AVcRaIxYhNxBcnA/qAvJ9ZVr0OIfEWwzhIJfbUtlM2dqtvOtllXfmR/r3/3YibHZk6rgjR/e8Gaxu+ewOhLyBw==",
+      "added": "2026-04-13T17:10:50Z"
     },
     {
       "id": "relay-de-002",
-      "domain": "de-002.relay.levoile.dev",
-      "public_key": "AF6S3Uf8+2GvFRPc3yuOPfqa5r021pg6XBX37/gCqO8=",
-      "signature": "v2tlv4GkbBtHTtt36+O1BkHwBPe60t6k2rwTgiXg86B97+Jq+STREsV45nfBT0eXX5OlUvSye7K0nUj0WFvPBQ==",
-      "added": "2026-05-03T16:46:00.1888483Z"
-    },
-    {
-      "id": "relay-es-001",
-      "domain": "es-001.relay.levoile.dev",
-      "public_key": "ZguO85bspdGjf/m53UOSOZkTLN6E9YJuP7omI9BDsPE=",
-      "signature": "S7zEqtNNsjbAJk7tPvoXX/f3GQt6ychcREkKMrr9MUaRgwvdZ0IaKTqOrDIQUXpIEwD6Gp9hTYdnlZu+m1kaAA==",
-      "added": "2026-05-03T16:46:00.1888483Z"
-    },
-    {
-      "id": "relay-es-002",
-      "domain": "es-002.relay.levoile.dev",
-      "public_key": "ifOQE2+kCB2arA+/60xGb5NucxYsrtRqAbiTeFNHdHo=",
-      "signature": "ipqST+E0SVMiW7qJBu5vBdBxhZ9++jdPJx9aPzYPxW4h2O7vSNBwaPys/5AAxPPapsWqqj8dWeEcpmyhoGWlBw==",
-      "added": "2026-05-03T16:46:00.1888483Z"
-    },
-    {
-      "id": "relay-gb-001",
-      "domain": "gb-001.relay.levoile.dev",
-      "public_key": "mhKcKg0X7dKNd9i22c/uOI/WhZP5S9jLLZ9KBWfwAOk=",
-      "signature": "dMVDGoxYRQPCuk5m6BnyC5n16RGe4OdkkXoemvXLiQYmLETNbnPbcBppA4iAwDu11CIpQCadAo1QHK9YRN+1Ag==",
-      "added": "2026-05-03T16:46:00.1888483Z"
-    },
-    {
-      "id": "relay-gb-002",
-      "domain": "gb-002.relay.levoile.dev",
-      "public_key": "TglrKPd+7LTIBfhuDBd2OatRfgRH/hi1bYik5D0b270=",
-      "signature": "/bGhNE6GdX0bovez9nnyu8AzODLydNWNRgXf2NqLyF9r9A0lT4OcoqV/EGRCVpu/5QOEia+QUi85/7MgkMdSBg==",
-      "added": "2026-05-03T16:46:00.1888483Z"
-    },
-    {
-      "id": "relay-us-001",
-      "domain": "us-001.relay.levoile.dev",
-      "public_key": "IUleiw1yFR6Ellxvuhp3+IIrX8EUgCv7SLj2bn/FAeM=",
-      "signature": "8fzSFkNPSBGfT4aHvPo6UjMGwIx1NlzJf0L2lbTaX8+Q5KrHliAaIQi4ZUUTgdWFnskPtImwPc10xROnxEm1Bw==",
-      "added": "2026-05-03T16:46:00.1888483Z"
+      "domain": "de-002.levoile.dev",
+      "public_key": "eeSIjed7IxffwP9ho+zFkP/2ZEUPepaKNL9WYPu3cmI=",
+      "signature": "M8pMM+IplKCMRCLO8BjZ72iCC3VDePFrjr/1ZwvpW+CNHQl9kHl0ABFextLQiiJ+E+Po5fv7ZAABCN1gn3MABg==",
+      "added": "2026-04-13T17:10:50Z"
     },
     {
       "id": "relay-us-002",
-      "domain": "us-002.relay.levoile.dev",
-      "public_key": "aWed+97XY5tv/1CstAutf0/k2eeRKq0zbV9oztOcQck=",
-      "signature": "cVmh3tO8Sn4RsRX3j7tT+lL1RSw3V1JoBfk0hArUdu94ZWM8IMqK4j9fEC4BafFDkCGNxPedmbvjWSqKDFHPBw==",
-      "added": "2026-05-03T16:46:00.1888483Z"
+      "domain": "us-002.levoile.dev",
+      "public_key": "xNjn3oti7TrAqkbfCm/u4Vrqkv26Bu3cstpjmhiBkF8=",
+      "signature": "DviRtyE9VCFr5fnhvPjxtP39iTBkx+kB7z804rU77r5N5YCFStGTOdNXGw/XhgU8jSIt/ZMCVA+aLbrLmotsAw==",
+      "added": "2026-04-13T17:52:11Z"
+    },
+    {
+      "id": "relay-es-001",
+      "domain": "es-001.levoile.dev",
+      "public_key": "NgoP7JqenAdxadf4EAyVjIMcyIvgXqhPwIY8aeOgw3s=",
+      "signature": "JC8+8wIMxlPqB0cH/qiCwJfOJQ1CcubwaFjnItwI03ukyrCrpVCWFbO2qd/PLAHUuJwr+rR4t2IUuGJ80q06AQ==",
+      "added": "2026-04-13T18:32:45Z"
+    },
+    {
+      "id": "relay-gb-001",
+      "domain": "gb-001.levoile.dev",
+      "public_key": "eRD8aNnozbkp3dyvIoYfCA5MJItY8sdWYOIFhuoC/bM=",
+      "signature": "4cvk1wvlUezlDKAS5Kudofg99QtmDLbXs2wa7Qqnc7nxHVOfqfmZkWSRaK7TXSPAjgs2eOIPrUvGhD6DCfiKAA==",
+      "added": "2026-04-13T18:32:45Z"
+    },
+    {
+      "id": "relay-gb-002",
+      "domain": "gb-002.levoile.dev",
+      "public_key": "EdvAdHkZHJZgWxngAR2WF3Aivo4GAk1UJqap2I+OAHA=",
+      "signature": "682QeblEjOvv2+gXBkpokbDHtSk77RbTvHi6mglr/vvKVlNGtjnomHid9Prsaepx+I2WFLv9Zss6L8bUcReqCQ==",
+      "added": "2026-04-13T19:24:58Z"
+    },
+    {
+      "id": "relay-es-002",
+      "domain": "es-002.levoile.dev",
+      "public_key": "YTxM8eImrNi0nSPL9tIB30sslMa89b9471YFtArjXeE=",
+      "signature": "gSuFcOFRtNRqWdt0M28w6NwnIHz+3Vfkcb4CW0OlCNe398UEe+19G0pjjcOYWrxh5br6bJ+ZMRQuvZ21c/dzAA==",
+      "added": "2026-04-13T19:47:35Z"
     }
   ],
-  "updated": "2026-05-03T16:46:00.1888483Z"
+  "updated": "2026-04-13T19:47:35Z"
 }

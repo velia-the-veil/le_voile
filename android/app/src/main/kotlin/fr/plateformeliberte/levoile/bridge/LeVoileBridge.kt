@@ -55,7 +55,16 @@ class LeVoileBridge(
             null -> "Unverifiable"
         }
         val state = if (instance != null) "connected" else "disconnected"
-        return """{"state":"$state","platform":"android","version":"$VERSION","killSwitchStatus":"$killStatus"}"""
+        // Expose preferredCountry pour que le JS puisse synchroniser son etat
+        // UI (drapeau pill + checkmark bottomsheet) avec le ConfigStore. Sans
+        // ca, l'UI hardcode "DE" en initial et derive de l'etat reel quand
+        // l'utilisatrice a deja selectionne un autre pays.
+        val preferredCountry = try {
+            fr.plateformeliberte.levoile.config.ConfigStore(context).load().preferredCountry
+        } catch (_: Throwable) {
+            "DE"
+        }
+        return """{"state":"$state","platform":"android","version":"$VERSION","killSwitchStatus":"$killStatus","preferredCountry":"$preferredCountry"}"""
     }
 
     /**

@@ -208,7 +208,25 @@ whenPlatformAndroid(function () {
   // CountryDisplay (Story 11.7). Toute extension nécessite mise à jour des 3.
   var FLAGS = { DE: '🇩🇪', ES: '🇪🇸', GB: '🇬🇧', US: '🇺🇸' };
 
+  // Hydrate currentIso depuis le bridge (ConfigStore.preferredCountry) plutôt
+  // que hardcoder 'DE'. Sans ça, l'UI affiche systématiquement le drapeau DE
+  // au démarrage même quand le ConfigStore contient un autre pays — le tunnel
+  // sort par le pays réel mais le pill et le checkmark bottomsheet mentent.
   var currentIso = 'DE';
+  try {
+    if (window.LeVoile && typeof window.LeVoile.getStatus === 'function') {
+      var raw = window.LeVoile.getStatus();
+      var parsed = JSON.parse(raw);
+      if (parsed && FLAGS[parsed.preferredCountry]) {
+        currentIso = parsed.preferredCountry;
+      }
+    }
+  } catch (e) { /* fallback DE */ }
+  // Sync immédiate du drapeau pill avec currentIso résolu.
+  var initialPillFlag = pill.querySelector('.android-country-pill__flag');
+  if (initialPillFlag && FLAGS[currentIso]) {
+    initialPillFlag.textContent = FLAGS[currentIso];
+  }
 
   function refreshActiveItem() {
     var items = sheet.querySelectorAll('.android-bottomsheet__item');
