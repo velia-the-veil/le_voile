@@ -118,6 +118,15 @@ class LeVoileVpnService : VpnService() {
     private val droppedWebRtcCount = java.util.concurrent.atomic.AtomicLong(0)
 
     /**
+     * Compteur des paquets IPv6 fast-failed par [Ipv6BlackholeFilter]
+     * (audit fix R-T6-bis 2026-05-05). Chaque incrément correspond à un
+     * paquet v6 sortant intercepté + une réponse ICMPv6 admin-prohibited
+     * réinjectée dans la TUN. Permet un suivi runtime de l'efficacité du
+     * fast-fail Happy Eyeballs.
+     */
+    private val droppedV6Count = java.util.concurrent.atomic.AtomicLong(0)
+
+    /**
      * Story 11.7-bis : Channel<ByteArray> remplace ConcurrentLinkedQueue
      * pour permettre back-pressure bornée + interruption propre via close().
      * Capacité 256 paquets ≈ 360 KB max in-flight (cohérent
@@ -368,21 +377,55 @@ class LeVoileVpnService : VpnService() {
             // retournent silencieusement null sur establish() si l'ordre est inverse.
             .addAddress("10.6.6.2", 32)
             .addRoute("0.0.0.0", 0)
-            // Fix M-7 (code-review post-9.4) : addRoute("::", 0) sans addAddress
-            // IPv6 correspondant signifie qu'aucun paquet IPv6 n'atteindra la TUN
-            // (le kernel n'a pas de source v6 sur l'interface). C'est INTENTIONNEL
-            // — comportement « v6 hors tunnel » equivalent NFR9-IPv6-out-of-tunnel
-            // desktop : les paquets v6 utilisateur sortent par l'interface
-            // physique normale (pas leak car le routing system v4 par defaut va
-            // dans le tunnel).
+            // Audit fix R-T6 / Android-§2 (2026-05-04) — IPv6 BLACKHOLE.
             //
-            // Pour activer IPv6 dans le tunnel (Phase 2) : ajouter
-            // `.addAddress("fd00:6:6::2", 64)` (ULA Le Voile) AVANT cette route.
-            // Necessitera coordination avec internal/tunnel pour que le pump
-            // accepte les paquets v6 + relais qui resolvent dual-stack.
+            // Avant ce fix : pas d'address IPv6 sur la TUN + route ::/0 →
+            // le kernel ignorait la route faute de source v6 → tout le
+            // trafic IPv6 utilisateur sortait par l'interface physique
+            // (Cloudflare, Telegram, GitHub, YouTube en Happy Eyeballs).
+            // C'était une fuite d'IP réelle SYSTÉMATIQUE sur tout réseau
+            // dual-stack, contradiction directe avec la promesse anti-
+            // censure du projet.
+            //
+            // Maintenant : on pose une address ULA fd00:6:6::2/64 ;
+            // combinée à addRoute("::", 0), le kernel pousse tous les
+            // paquets v6 dans la TUN. Côté relais, le NAT est v4-only —
+            // les paquets v6 sont encapsulés QUIC, arrivent au relais, et
+            // y sont droppés silencieusement. Effet net : zéro fuite v6,
+            // au prix d'inaccessibilité des sites IPv6-only tant que le
+            // tunnel est actif. Le pump Go transporte les bytes
+            // opaquement (cf. internal/tunnel/pump.go) donc aucune
+            // modification serveur n'est requise pour activer le
+            // blackhole.
+            //
+            // Pour activer IPv6 BOUT-EN-BOUT (Phase 2 ultérieure) :
+            // déployer dual-stack côté relais + adapter le NAT.
+            .addAddress("fd00:6:6::2", 64)
             .addRoute("::", 0)
             .addDnsServer("10.6.6.1")
-            .setMtu(1420)
+            // Audit fix R-T7 (2026-05-05) — MTU 1280 (IPv6 minimum RFC 8200).
+            //
+            // Avant : 1420 — calibré pour QUIC over IPv4 sur réseau filaire.
+            // Symptôme observé sur 4G LTE Free Mobile (2026-05-05) :
+            //  - SYN/ACK + premières petites réponses passent (Netflix login,
+            //    Facebook accueil chargent)
+            //  - Transferts data plus volumineux (vidéo Netflix segments,
+            //    Facebook GraphQL, bundles JS) timeout silencieusement
+            //  - Chrome affiche `DNS_PROBE_STARTED` / `ERR_NETWORK_CHANGED`
+            //
+            // Cause : path MTU réel sur LTE cellulaire est souvent < 1420
+            // (1380 sur Free Mobile observé), et les routeurs cellulaires
+            // droppent les ICMP Frag-Needed → PMTU Discovery cassé → black-
+            // hole silencieux. Notre tunnel QUIC ajoute ~58 bytes overhead
+            // (IP outer + UDP outer + QUIC short header + TLS), donc
+            // tunnel MTU 1420 → wire size 1478 → > path MTU réel → drop.
+            //
+            // Fix : 1280 = minimum IPv6 RFC 8200, garanti universel sur
+            // tout réseau IPv4/IPv6 conforme. Production VPNs (WireGuard,
+            // Mullvad, IVPN) utilisent cette valeur depuis des années.
+            // Coût débit théorique : -~10% efficiency (overhead headers
+            // proportionnellement plus grand), invisible vs débit absolu.
+            .setMtu(1280)
             .setBlocking(true)
             .setUnderlyingNetworks(null)
 
@@ -589,6 +632,27 @@ class LeVoileVpnService : VpnService() {
                         val total = droppedWebRtcCount.incrementAndGet()
                         if (total % 100L == 0L) {
                             Log.i(TAG, "WebRTC STUN/TURN packets droppés: $total")
+                        }
+                        continue
+                    }
+                    // Audit fix R-T6-bis (2026-05-05) — IPv6 fast-fail Happy Eyeballs.
+                    // Les paquets v6 sortants ne doivent JAMAIS atteindre le relais
+                    // (NAT v4-only -> drop silencieux -> Chrome attend 250 ms ->
+                    // ERR_NETWORK_CHANGED sur sites multi-CDN). On fabrique une
+                    // réponse ICMPv6 Destination Unreachable (admin prohibited) et
+                    // on la réinjecte dans la TUN via packetSink. Chrome bascule
+                    // v4 instantanément. Cf. [Ipv6BlackholeFilter].
+                    if (Ipv6BlackholeFilter.isIPv6Packet(buf, n)) {
+                        val response = Ipv6BlackholeFilter.buildIcmpv6AdminProhibited(buf, n)
+                        if (response != null) {
+                            // trySend non-bloquant : sink saturé (capacity 256)
+                            // -> ICMPv6 dropé, fallback timeout 250 ms (= comportement
+                            // pre-fix). Acceptable car le sink se vide sub-ms.
+                            packetSink.trySend(response)
+                        }
+                        val total = droppedV6Count.incrementAndGet()
+                        if (total % 100L == 0L) {
+                            Log.i(TAG, "IPv6 packets fast-failed (ICMPv6 admin-prohibited): $total")
                         }
                         continue
                     }
