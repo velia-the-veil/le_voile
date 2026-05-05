@@ -226,6 +226,35 @@ object GoCoreAdapter {
      */
     fun isSessionOpen(): Boolean = Protocol.isSessionOpen()
 
+    /**
+     * R-T8 (2026-05-05) — QUIC Connection Migration RFC 9000 §9.
+     *
+     * Rebascule la session QUIC active vers le file descriptor UDP fourni.
+     * Utilisé par [fr.plateformeliberte.levoile.network.NetworkMigrationCoordinator]
+     * quand `ConnectivityManager.NetworkCallback` signale un changement
+     * d'underlying network (Wi-Fi <-> LTE handoff, network attach/detach).
+     *
+     * **Ownership du fd** : Go prend ownership. Sur succès le socket est lié
+     * au nouveau `*quic.Transport` côté Go ; sur échec le fd est fermé avant
+     * retour. Kotlin NE DOIT PAS close le DatagramSocket après l'appel.
+     *
+     * **Synchrone bornée 5s** : `Protocol.migrate` bloque sur le PATH_CHALLENGE
+     * /PATH_RESPONSE QUIC (timeout 2s) + AddPath/Switch internal scheduling.
+     * Si la migration échoue (path validation timeout, peer-disabled-migration,
+     * pas de session active), retourne un `Result.failure`.
+     *
+     * **Pourquoi pas de coupure visible utilisateur** : l'état applicatif
+     * (HTTP/3 streams, session token, /tunnel stream) est préservé. Les
+     * paquets en vol côté ancien socket sont drainés sur 2s avant que
+     * l'ancien transport soit fermé côté Go.
+     */
+    suspend fun migrate(fd: Int): Result<Unit> = mutex.withLock {
+        withContext(Dispatchers.IO) {
+            runCatching { Protocol.migrate(fd.toLong()) }
+                .recoverCatching { throw LeVoileCoreException("migrate failed: ${it.message}", it) }
+        }
+    }
+
     // ----- Constantes pure-data Story 9.2 (re-exposées pour confort) -----
 
     /** Version du protocole filaire — retour de `protocol.Version()`. */

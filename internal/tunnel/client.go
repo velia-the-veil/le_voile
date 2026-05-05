@@ -103,6 +103,24 @@ type Client struct {
 	// Consecutive DoH transport failure counter for auto-disconnect.
 	failureMu            sync.Mutex
 	consecutiveFailures  int
+
+	// QUIC connection captured via custom Dial callback (R-T8 — connection
+	// migration). Set on first http3.Transport.dial; reset by ResetTransport.
+	// quicTransport wraps the underlying UDP socket — replaced by MigrateToFD
+	// when the Android NetworkCallback signals an underlying network change.
+	// nil when no QUIC connection is active.
+	quicMu        sync.RWMutex
+	quicConn      *quic.Conn
+	quicTransport *quic.Transport
+
+	// Heartbeat goroutine lifecycle. startHeartbeat creates a stop channel
+	// closed by stopHeartbeat (idempotent). The heartbeat probes /health
+	// every 5s (timeout 2s) and triggers StateDisconnected after 2 consecutive
+	// failures — covers zombie tunnel cases where the underlying QUIC session
+	// is dead but quic-go's MaxIdleTimeout hasn't fired yet (typical on
+	// cellular CGNAT rotation or cell handoff with no network type change).
+	heartbeatMu   sync.Mutex
+	heartbeatStop chan struct{}
 }
 
 // NewClient creates a tunnel client configured for HTTP/3 with TLS 1.3.
@@ -211,6 +229,13 @@ func ConnectNew(ctx context.Context, relayDomain string, relayPubKeyBase64 strin
 
 // buildTransport creates a fresh HTTP/3 transport with TLS pinning.
 // Must be called with c.mu held or before concurrent access is possible.
+//
+// R-T8 — Connection migration : the custom `Dial` callback captures the
+// `*quic.Conn` and its underlying `*quic.Transport` so that MigrateToFD can
+// later swap the UDP socket without tearing down the application-layer
+// session (HTTP/3 streams, session token, /tunnel stream). Without the
+// custom callback, quic-go would create the Transport internally and we'd
+// have no handle on it.
 func (c *Client) buildTransport() *http3.Transport {
 	return &http3.Transport{
 		TLSClientConfig: &tls.Config{
@@ -250,7 +275,62 @@ func (c *Client) buildTransport() *http3.Transport {
 			MaxIdleTimeout:  90 * time.Second, // 90s idle before disconnect
 			KeepAlivePeriod: 10 * time.Second, // ping every 10s to survive aggressive NAT timeouts
 		},
+		Dial: c.dialQUICCustom,
 	}
+}
+
+// dialQUICCustom is the http3.Transport.Dial callback that opens the QUIC
+// connection AND captures both the *quic.Conn and *quic.Transport for later
+// migration via MigrateToFD (R-T8).
+//
+// Mirrors the default behaviour of quic-go's http3 layer (cf. transport.go
+// line ~360 in v0.59) :
+//   - Single shared *quic.Transport per Client session — reused across all
+//     dials. Creating a new Transport per dial breaks connection ID pooling,
+//     server-side state association and inflates resource usage. The default
+//     http3 implementation always reuses `t.transport`.
+//   - DialEarly (NOT Dial) for 0-RTT support and consistency with default
+//     http3 dial behaviour.
+//
+// The shared Transport is lazy-initialized on first dial (under c.quicMu)
+// and torn down by ResetTransport. The `dial-fix-T8-bis` (2026-05-05)
+// addresses a regression where the initial implementation created a new
+// Transport per dial — that broke the tunnel on Android in initial testing.
+func (c *Client) dialQUICCustom(ctx context.Context, addr string, tlsCfg *tls.Config, cfg *quic.Config) (*quic.Conn, error) {
+	udpAddr, err := net.ResolveUDPAddr("udp", addr)
+	if err != nil {
+		return nil, fmt.Errorf("tunnel: dial: resolve %q: %w", addr, err)
+	}
+
+	// Lazy-init the shared *quic.Transport on first dial of this Client
+	// session. Subsequent dials (HTTP/3 connection reuse, parallel requests)
+	// share the same UDP socket via this Transport.
+	c.quicMu.Lock()
+	transport := c.quicTransport
+	if transport == nil {
+		udpConn, lerr := net.ListenUDP("udp", &net.UDPAddr{})
+		if lerr != nil {
+			c.quicMu.Unlock()
+			return nil, fmt.Errorf("tunnel: dial: listen udp: %w", lerr)
+		}
+		transport = &quic.Transport{Conn: udpConn}
+		c.quicTransport = transport
+	}
+	c.quicMu.Unlock()
+
+	conn, err := transport.DialEarly(ctx, udpAddr, tlsCfg, cfg)
+	if err != nil {
+		// Don't close the shared Transport on dial failure — other concurrent
+		// dials may still be using it, and ResetTransport will clean up at
+		// the right moment.
+		return nil, err
+	}
+
+	c.quicMu.Lock()
+	c.quicConn = conn
+	c.quicMu.Unlock()
+
+	return conn, nil
 }
 
 // clientOptions holds optional client configuration.
@@ -304,15 +384,22 @@ func (c *Client) relayURL(path string) string {
 }
 
 // Connect establishes the tunnel by verifying the relay's Ed25519 identity.
+//
+// R-T8 : on success also starts the heartbeat probe (see heartbeat.go) which
+// monitors /health every 5s and triggers StateDisconnected on persistent
+// failures. The heartbeat goroutine is bound to context.Background — its
+// lifecycle is tied to the Client rather than the Connect ctx (which is a
+// short-lived 5s timeout for the handshake itself). Stopped on Disconnect
+// or ResetTransport.
 func (c *Client) Connect(ctx context.Context) error {
 	c.state.Set(StateConnecting)
 
-	ctx, cancel := context.WithTimeout(ctx, connectTimeout)
+	connectCtx, cancel := context.WithTimeout(ctx, connectTimeout)
 	defer cancel()
 
-	if err := c.verifyRelay(ctx); err != nil {
+	if err := c.verifyRelay(connectCtx); err != nil {
 		c.state.Set(StateDisconnected)
-		if ctx.Err() != nil {
+		if connectCtx.Err() != nil {
 			return ErrConnectionTimeout
 		}
 		return err
@@ -320,6 +407,13 @@ func (c *Client) Connect(ctx context.Context) error {
 
 	c.resetDoHFailures()
 	c.state.Set(StateConnected)
+
+	// R-T8 — heartbeat ré-activé après fix du callback Kotlin. Le heartbeat
+	// trip déclenche maintenant : state.Set + emitStatus(disconnected) +
+	// CloseWithError sur la conn QUIC. Le pump observe la fermeture et exit,
+	// runGomobilePump's emitStatus le voit (idempotent), et le statusCallback
+	// Kotlin déclenche l'auto-reconnect avec backoff.
+	c.startHeartbeat(context.Background())
 	return nil
 }
 
@@ -377,8 +471,13 @@ func (c *Client) Disconnect() error {
 // ResetTransport tears down the current QUIC/HTTP3 transport and creates a
 // fresh one without changing the tunnel state. Use this from the Reconnector
 // to avoid injecting a stale StateDisconnected event into the updates channel.
+//
+// R-T8 : also clears the captured *quic.Conn / *quic.Transport — they refer
+// to the dead connection and a stale Conn here would make MigrateToFD return
+// ErrMigrationNoActiveConn instead of nil even after a fresh Connect.
 func (c *Client) ResetTransport() {
 	c.resetDoHFailures()
+	c.stopHeartbeat() // stop probing the dying connection
 
 	c.mu.Lock()
 	oldTransport := c.transport
@@ -387,10 +486,21 @@ func (c *Client) ResetTransport() {
 	c.httpClient = &http.Client{Transport: newTransport}
 	c.mu.Unlock()
 
+	// Clear the captured QUIC handles — they will be re-set on the next
+	// http3 dial via dialQUICCustom.
+	c.quicMu.Lock()
+	oldQUICTransport := c.quicTransport
+	c.quicConn = nil
+	c.quicTransport = nil
+	c.quicMu.Unlock()
+
 	// Close old transport after replacing — ongoing requests will get errors
 	// but the connection was already broken or intentionally torn down.
 	if oldTransport != nil {
 		oldTransport.Close()
+	}
+	if oldQUICTransport != nil {
+		_ = oldQUICTransport.Close()
 	}
 }
 

@@ -173,6 +173,39 @@ class LeVoileVpnService : VpnService() {
 
     private lateinit var killSwitchDetector: fr.plateformeliberte.levoile.kill.KillSwitchDetector
 
+    /**
+     * R-T8 (2026-05-05) — Coordinateur de migration QUIC sur changement
+     * d'underlying network (Wi-Fi <-> LTE handoff, network attach/detach).
+     * Voir [fr.plateformeliberte.levoile.network.NetworkMigrationCoordinator].
+     *
+     * Lifecycle : créé dans [connectInternal] (a besoin du `this` VpnService
+     * pour `protect(socket)`), arrêté dans [cleanupSync].
+     */
+    @Volatile
+    private var migrationCoordinator: fr.plateformeliberte.levoile.network.NetworkMigrationCoordinator? = null
+
+    /**
+     * R-T8 — Flag sentinelle qui distingue un Disconnected « volontaire »
+     * (utilisateur a cliqué Disconnect, onRevoke système, force-stop) d'un
+     * Disconnected « subi » (heartbeat /health a tripé, QUIC connection
+     * morte silencieusement).
+     *
+     * Set à `true` au début de [connectInternal] (juste avant Builder).
+     * Set à `false` au TOUT début de [disconnectInternal] / [onRevoke] /
+     * [onDestroy] — avant tout cleanup. Le callback `onStateChanged` lit
+     * cette valeur : si Disconnected arrive avec `autoReconnectEnabled =
+     * true`, c'est qu'on a perdu la session sans intervention utilisateur
+     * → trigger un reconnect automatique avec backoff exponentiel.
+     */
+    private val autoReconnectEnabled = AtomicBoolean(false)
+
+    /**
+     * R-T8 — Compteur d'échecs de reconnect consécutifs, alimente le
+     * backoff exponentiel (1s, 2s, 4s, 8s, max 30s). Reset à 0 dès qu'un
+     * reconnect réussit (transition vers CONNECTED).
+     */
+    private val autoReconnectFailures = java.util.concurrent.atomic.AtomicInteger(0)
+
     // Story 9.5 : handler main-thread pour le teardown differe 5 s.
     // lateinit + creation onCreate = seul site d'init valide pour un Service
     // Android (le constructeur Service ne doit pas allouer de ressources OS).
@@ -285,6 +318,11 @@ class LeVoileVpnService : VpnService() {
 
     override fun onDestroy() {
         Log.i(TAG, "onDestroy — cleanup final (idempotent)")
+        // R-T8 — désactive l'auto-reconnect en TOUT premier (avant teardown
+        // handler ou cleanup), pour qu'aucun callback Disconnected en
+        // queue ne déclenche un reconnect sur un Service en cours de
+        // destruction (UB).
+        autoReconnectEnabled.set(false)
         // Story 9.5 : ANNULE le runnable de teardown differe (s'il existe encore)
         // pour eviter qu'il s'execute apres super.onDestroy() — un appel a
         // stopForeground/stopSelf sur un Service detruit est UB (no-op au
@@ -362,6 +400,12 @@ class LeVoileVpnService : VpnService() {
             Log.w(TAG, "connectInternal appelee alors que vpnInterface != null — ignore")
             return
         }
+
+        // R-T8 — autorise les auto-reconnects pendant la durée de vie de
+        // cette session. Set ICI (avant builder.establish) pour que tout
+        // Disconnected reçu pendant le handshake soit considéré comme un
+        // échec de connexion à reconnect-er, pas un disconnect volontaire.
+        autoReconnectEnabled.set(true)
 
         // Story 11.7-bis : (re)créer un Channel fresh — un précédent close()
         // l'aurait rendu inutilisable. Construit AVANT le packetRelay car ce
@@ -472,11 +516,31 @@ class LeVoileVpnService : VpnService() {
             Log.w(TAG, "packetRelay.onTunnelStarted error", t)
         }
         startPumpThreads(pfd)
+
+        // R-T8 BISECT round 2 — coordinator désactivé, heartbeat actif.
+        // Si tunnel meurt encore à 2 min : heartbeat est le coupable malgré
+        // le fix CloseWithError (faux positifs sur microcoupures LTE).
+        // Si tunnel stable > 5 min : coordinator était le coupable (events
+        // `onLinkPropertiesChanged` fréquents post-armé).
+        // try {
+        //     val coord = fr.plateformeliberte.levoile.network.NetworkMigrationCoordinator(this)
+        //     coord.start()
+        //     migrationCoordinator = coord
+        // } catch (t: Throwable) {
+        //     Log.w(TAG, "NetworkMigrationCoordinator start failed (continuons sans migration auto)", t)
+        // }
+
         // startForeground deja invoque au top de onStartCommand (defense ANR).
         Log.i(TAG, "connectInternal: tunnel cree, pumps demarres, foreground actif")
     }
 
     private fun disconnectInternal() {
+        // R-T8 — DESACTIVE l'auto-reconnect AVANT toute autre action. Sans
+        // ce flag à false, le `cleanupSync` qui suit déclencherait un
+        // onTunnelStopped → state DISCONNECTED → callback onStateChanged
+        // → triggerAutoReconnect → boucle infinie de reconnect.
+        autoReconnectEnabled.set(false)
+
         // Story 9.5 : idempotence du teardown differe — annule tout runnable
         // pendant avant d'en re-poster un. Sinon double-DISCONNECT (ex.
         // utilisateur re-tape l'action dans la fenetre 5 s) empilerait deux
@@ -530,6 +594,17 @@ class LeVoileVpnService : VpnService() {
     private fun cleanupSync() {
         // Capture l'etat AVANT cleanup pour decider si on notifie DISCONNECTED.
         val wasActive = vpnInterface != null || tunnelStartedFired
+
+        // R-T8 — arrête le NetworkCallback AVANT de teardown le pump pour
+        // ne pas déclencher une migration sur un tunnel qui se ferme. Stop
+        // est idempotent et safe quand coordinator est null.
+        try {
+            migrationCoordinator?.stop()
+        } catch (t: Throwable) {
+            Log.w(TAG, "migrationCoordinator.stop error (ignored)", t)
+        }
+        migrationCoordinator = null
+
         running.set(false)
         outPumpThread?.interrupt()
         inPumpJob?.cancel()
@@ -816,8 +891,98 @@ class LeVoileVpnService : VpnService() {
                         Log.w(TAG, "onStateChanged notify error (ignored): ${t.javaClass.simpleName}")
                     }
                 }
+
+                // R-T8 — auto-reconnect logic.
+                //  - Si le state revient à CONNECTED après une transition,
+                //    on reset le compteur de backoff (la session est
+                //    saine, ne pas pénaliser un futur incident isolé).
+                //  - Si on entre en DISCONNECTED ALORS QUE l'utilisateur n'a
+                //    PAS demandé de disconnect (autoReconnectEnabled = true),
+                //    c'est que le heartbeat /health Go a tripé OU le pump
+                //    Go a échoué sa boucle. On schedule un reconnect avec
+                //    backoff exponentiel.
+                when (state) {
+                    fr.plateformeliberte.levoile.ui.VpnState.CONNECTED -> {
+                        autoReconnectFailures.set(0)
+                    }
+                    fr.plateformeliberte.levoile.ui.VpnState.DISCONNECTED -> {
+                        if (autoReconnectEnabled.get()) {
+                            scheduleAutoReconnect()
+                        }
+                    }
+                    else -> {
+                        // CONNECTING / RECONNECTING / ERROR : pas d'action.
+                        // ERROR pourrait justifier un reconnect aussi, mais
+                        // GoBackedPacketRelay émet ERROR pour les pinning
+                        // failures et autres erreurs définitives — pas la peine
+                        // d'insister.
+                    }
+                }
             },
         )
+    }
+
+    // ---------- R-T8 Auto-reconnect ----------
+
+    /**
+     * R-T8 — Schedule un reconnect via [teardownHandler] avec backoff
+     * exponentiel : 1s, 2s, 4s, 8s, 16s, plafond 30s.
+     *
+     * Backoff évite l'emballement en cas de relais en panne ou de réseau
+     * définitivement coupé (sinon on bombarderait /verify toutes les
+     * secondes). Le compteur est reset à 0 dès qu'un CONNECTED est observé,
+     * donc une simple coupure transitoire reprend toujours son delay
+     * minimum (1s) au prochain incident.
+     *
+     * Race conditions à gérer :
+     *  - Utilisateur clique Disconnect pendant qu'un reconnect est planifié
+     *    → le runnable check autoReconnectEnabled.get() AVANT de lancer
+     *    connectInternal — si false, abandon silencieux.
+     *  - Reconnect réussit puis re-coupure rapide → counter incrément
+     *    correct, backoff progressif.
+     *  - Service en cours de destruction (onDestroy) → autoReconnectEnabled
+     *    est explicitement set à false en TÊTE d'onDestroy, donc même check
+     *    le runnable abort.
+     */
+    private fun scheduleAutoReconnect() {
+        if (!::teardownHandler.isInitialized) {
+            Log.w(TAG, "scheduleAutoReconnect: teardownHandler non init (Service en cours de destruction ?), skip")
+            return
+        }
+        val attempt = autoReconnectFailures.incrementAndGet()
+        // Backoff : 1, 2, 4, 8, 16, 30, 30, 30 ... — secondes
+        val delaySec = when (attempt) {
+            1 -> 1
+            2 -> 2
+            3 -> 4
+            4 -> 8
+            5 -> 16
+            else -> 30
+        }
+        Log.i(TAG, "scheduleAutoReconnect: tentative #$attempt, delay ${delaySec}s")
+
+        teardownHandler.postDelayed({
+            // Re-check juste avant l'action — l'utilisateur a pu
+            // disconnect pendant le delay.
+            if (!autoReconnectEnabled.get()) {
+                Log.i(TAG, "scheduleAutoReconnect runnable: autoReconnect désactivé entre-temps, abort")
+                return@postDelayed
+            }
+            if (vpnInterface != null) {
+                // Étrange — la TUN est déjà revenue (probablement via un
+                // chemin alternatif), pas la peine de re-connect.
+                Log.i(TAG, "scheduleAutoReconnect runnable: vpnInterface != null, skip reconnect")
+                return@postDelayed
+            }
+            // Cleanup défensif au cas où la session précédente n'a pas
+            // tout libéré (idempotent).
+            cleanupSync()
+            // Re-déclenche le flow de connexion. connectInternal pose
+            // tunnelStartedFired = true, builder.establish, etc. Si une
+            // erreur survient ici, le state passera à DISCONNECTED qui
+            // rappellera scheduleAutoReconnect (avec backoff augmenté).
+            connectInternal()
+        }, (delaySec * 1000L))
     }
 
     // Story 9.6 : ensureNotificationChannel() + buildStubOngoingNotification()

@@ -104,6 +104,12 @@ func startTestRelay(t *testing.T, signingKey ed25519.PrivateKey) (addr string, c
 }
 
 // newTestClient creates a tunnel Client pointing at a local test relay with InsecureSkipVerify.
+//
+// R-T8 — uses c.buildTransport() so the custom Dial callback (dialQUICCustom)
+// is wired in tests too. Without it, the http3 layer would dial via its
+// internal default transport and the *quic.Conn / *quic.Transport capture
+// (used by MigrateToFD) would never populate, breaking migration_test.go
+// and heartbeat_test.go.
 func newTestClient(t *testing.T, addr string, pubKeyBase64 string) *Client {
 	t.Helper()
 
@@ -112,23 +118,17 @@ func newTestClient(t *testing.T, addr string, pubKeyBase64 string) *Client {
 		t.Fatalf("import public key: %v", err)
 	}
 
-	tr := &http3.Transport{
-		TLSClientConfig: &tls.Config{
-			InsecureSkipVerify: true,
-			NextProtos:         []string{http3.NextProtoH3},
-			MinVersion:         tls.VersionTLS13,
-		},
-	}
-
-	return &Client{
+	c := &Client{
 		relayDomain: addr,
 		relayIP:     addr,
 		relayPubKey: pubKey,
-		httpClient:  &http.Client{Transport: tr},
-		transport:   tr,
 		insecure:    true,
 		state:       NewStateManager(),
 	}
+	tr := c.buildTransport()
+	c.httpClient = &http.Client{Transport: tr}
+	c.transport = tr
+	return c
 }
 
 func TestClient_NewClient_ValidKey(t *testing.T) {

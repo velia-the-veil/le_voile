@@ -133,3 +133,30 @@ func Close() error {
 func IsSessionOpen() bool {
 	return tunnel.IsGomobileSessionOpen()
 }
+
+// Migrate rebascule la session QUIC active vers le file descriptor UDP
+// fourni (R-T8 — QUIC Connection Migration RFC 9000 §9).
+//
+// Appele cote Kotlin par NetworkMigrationCoordinator quand le
+// ConnectivityManager.NetworkCallback signale un changement d'underlying
+// network (Wi-Fi <-> LTE handoff, network attach/detach). Le fd doit etre
+// celui d'un DatagramSocket Java :
+//   - Bind sur le nouveau reseau via Network.bindSocket(socket)
+//   - Exempt du tunnel via VpnService.protect(socket) pour ne pas s'auto-
+//     aspirer dans la TUN
+//   - Extrait via reflection (ParcelFileDescriptor.getInt$())
+//
+// Cote Go, MigrateGomobile prend ownership du fd : sur succes le socket est
+// lie au nouveau *quic.Transport et close()'e via ce dernier ; sur erreur
+// le fd est ferme avant retour. Kotlin NE DOIT PAS close le DatagramSocket
+// apres l'appel (succes ou echec).
+//
+// Synchrone bornee 5s (path challenge timeout 2s + slack). Retourne une
+// erreur si pas de session active ou si la migration QUIC echoue (path
+// validation failed, peer-disabled-migration, etc.).
+//
+// gomobile expose `int` -> `long` Java : Kotlin doit passer un Int (caste
+// en Long auto par gomobile). Le fd POSIX tient sur 32 bits.
+func Migrate(fd int) error {
+	return tunnel.MigrateGomobile(fd)
+}

@@ -529,6 +529,60 @@ func IsGomobileSessionOpen() bool {
 	return gomobileActive != nil
 }
 
+// MigrateGomobile rebascule la session QUIC active vers le file descriptor
+// UDP fourni — typiquement obtenu côté Android par la séquence :
+//
+//   1. ConnectivityManager.NetworkCallback détecte un changement d'underlying
+//      network (Wi-Fi <-> LTE, network attach/detach).
+//   2. Le service VpnService crée un DatagramSocket.
+//   3. network.bindSocket(socket) le route via le nouveau réseau physique.
+//   4. VpnService.protect(socket) l'exempte du tunnel (sinon les paquets QUIC
+//      seraient aspirés dans la TUN et ne sortiraient jamais).
+//   5. Extraction du fd natif (POSIX int) via reflection sur le DatagramSocket.
+//   6. Appel MigrateGomobile(fd).
+//
+// Côté Go, MigrateToFD prend ownership du fd : sur succès le socket est lié
+// au nouveau *quic.Transport et close()'é via ce dernier ; sur erreur le fd
+// est fermé immédiatement avant retour. L'appelant Kotlin ne doit PAS close
+// le DatagramSocket lui-même après MigrateGomobile (que ce soit succès ou
+// échec).
+//
+// Sémantique migration QUIC RFC 9000 §9 :
+//
+//   - PATH_CHALLENGE / PATH_RESPONSE valident que le nouveau path joint
+//     bien le relais (timeout 2s, cf. migrationProbeTimeout).
+//   - L'état applicatif (HTTP/3 streams, session token, /tunnel stream) est
+//     préservé : aucun re-handshake TLS, aucun re-verify Ed25519.
+//   - Les paquets en vol côté ancien socket sont drainés sur 2s
+//     (migrationOldTransportDrainDelay) avant fermeture.
+//
+// Retourne ErrNotConnected si aucune session n'est active.
+//
+// REENTRANCY : NE PAS appeler MigrateGomobile depuis le callback packet de
+// la pompe — le path validation peut prendre 100-2000ms et bloquerait la
+// pompe. Le bridge Kotlin enregistre un Handler dédié pour le NetworkCallback.
+func MigrateGomobile(fd int) error {
+	gomobileMu.Lock()
+	sess := gomobileActive
+	gomobileMu.Unlock()
+
+	if sess == nil || sess.client == nil {
+		// Caller passed us an fd they expected us to consume — close it so
+		// the socket isn't leaked when migration is impossible.
+		_ = closeFD(fd)
+		return ErrNotConnected
+	}
+
+	// 5s ceiling on the whole operation : 2s for path probe + slack for
+	// AddPath + Switch internal scheduling. If the network is so degraded
+	// that even AddPath blocks longer, the heartbeat (5s/2-fail) will trip
+	// the state to Disconnected and Android will reconnect from scratch.
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	return sess.client.MigrateToFD(ctx, fd)
+}
+
 // ResetGomobileForTest est un helper UNIQUEMENT pour les tests qui veulent
 // repartir d'un état propre. Force CloseGomobile + nettoie les callbacks
 // + force-clear le flag connecting (les tests peuvent en avoir besoin si
