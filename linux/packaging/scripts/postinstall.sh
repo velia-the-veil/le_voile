@@ -165,6 +165,23 @@ else
 fi
 
 # ------------------------------------------------------------------------
+# 4-bis. Restaurer les contextes SELinux des binaires installés (audit fix
+# U3, 2026-05-04). Sur RHEL/Fedora/CentOS Stream avec SELinux enforcing,
+# les fichiers extraits par dpkg/rpm peuvent recevoir un mauvais contexte
+# (typiquement bin_t vs un type custom local) — un restorecon réapplique
+# la policy par défaut et garantit que systemd peut exécuter le binaire
+# dans le bon domaine. Best-effort : pas de SELinux → no-op silencieux.
+# Idempotent (restorecon est designed for ça) — safe sur upgrade.
+# ------------------------------------------------------------------------
+if command -v restorecon >/dev/null 2>&1; then
+    for f in /usr/bin/levoile-service /usr/bin/levoile-ctl /usr/bin/levoile-ui; do
+        [ -e "$f" ] && restorecon -F "$f" 2>/dev/null || true
+    done
+    [ -d /etc/levoile ] && restorecon -RF /etc/levoile 2>/dev/null || true
+    log "contextes SELinux restaurés (best-effort)."
+fi
+
+# ------------------------------------------------------------------------
 # 5. Rafraîchir les caches XDG (menus + icônes). Best-effort.
 # ------------------------------------------------------------------------
 if command -v update-desktop-database >/dev/null 2>&1; then

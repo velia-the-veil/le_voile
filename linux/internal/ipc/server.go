@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"os"
 	"sync"
 )
 
@@ -129,10 +130,21 @@ func (s *Server) closeAllConns() {
 // handleConnection reads JSON messages line by line, dispatches to handler,
 // and writes JSON responses.
 func (s *Server) handleConnection(ctx context.Context, conn net.Conn) {
+	// Audit fix R-T1.1 (2026-05-04) — read SO_PEERCRED at accept time and
+	// reject peers whose UID is not authorised to drive the service.
+	// See peercred_linux.go for the policy.
+	cred, credErr := getPeerCred(conn)
+	encoder := json.NewEncoder(conn)
+	if credErr == nil && !authorizePeer(cred) {
+		fmt.Fprintf(os.Stderr, "SECURITY AUDIT: IPC peer rejected uid=%d gid=%d pid=%d\n",
+			cred.UID, cred.GID, cred.PID)
+		_ = encoder.Encode(Response{Status: StatusError, Error: "peer_unauthorized"})
+		return
+	}
+
 	scanner := bufio.NewScanner(conn)
 	// Limit max message size to 4KB to prevent resource exhaustion.
 	scanner.Buffer(make([]byte, 4096), 4096)
-	encoder := json.NewEncoder(conn)
 
 	for scanner.Scan() {
 		select {

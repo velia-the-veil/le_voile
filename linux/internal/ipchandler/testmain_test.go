@@ -7,13 +7,13 @@ import (
 	"testing"
 )
 
-// TestMain sets LEVOILE_IPC_LEGACY_AUTH=1 for the whole package so tests
-// authored before the 2026-04 strict-auth flip keep passing empty-Auth
-// requests through the gate. Tests that specifically exercise the strict
-// path (strict_auth_test.go) unset or override the variable inside their
-// own body via t.Setenv / os.Unsetenv, which take precedence because they
-// run under t.Run scope.
+// TestMain flips the package-internal testBypassAuthGate so the historical
+// test suite — authored before the 2026-04 strict-auth flip — keeps passing
+// empty-Auth mutating requests through the gate. Tests that specifically
+// exercise the strict path (strict_auth_test.go) flip the variable back to
+// false inside their own bodies. The variable is package-internal and not
+// driven by environment, so production binaries cannot reach this state.
 func TestMain(m *testing.M) {
-	os.Setenv("LEVOILE_IPC_LEGACY_AUTH", "1")
+	testBypassAuthGate = true
 	os.Exit(m.Run())
 }

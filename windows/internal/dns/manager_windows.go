@@ -254,7 +254,15 @@ func (m *windowsManager) persistState() {
 	}
 	path := dnsStatePath()
 	os.MkdirAll(filepath.Dir(path), 0755)
-	os.WriteFile(path, data, 0644)
+	if err := os.WriteFile(path, data, 0644); err != nil {
+		return
+	}
+	// Audit fix F-11 (2026-05-04): tighten the DACL to LocalSystem +
+	// Administrators only. The default %ProgramData% inheritance grants
+	// read to "Authenticated Users", which would expose the original
+	// resolver list to any user of the machine. Best-effort — failure is
+	// not fatal for the persistence path itself.
+	_ = applyRestrictedPerms(path)
 }
 
 // removePersistedState deletes the persisted DNS state file after successful restore.

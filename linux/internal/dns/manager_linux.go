@@ -86,7 +86,11 @@ func (m *linuxManager) setResolverResolvectl(ctx context.Context, addr string) e
 	// Parse ALL interfaces from resolvectl output
 	interfaces := parseAllResolvectlInterfaces(string(out))
 	if len(interfaces) == 0 {
-		interfaces = []string{"eth0"} // fallback
+		// Audit fix D3 (2026-05-04) — fallback enumerates the kernel's
+		// real interfaces (UP, non-loopback, non-tunnel) instead of
+		// hard-coding "eth0", which doesn't exist on Wi-Fi laptops, VMs
+		// with predictable names (enpXsY), or Fedora/Arch hosts.
+		interfaces = enumerateActiveInterfaces()
 	}
 
 	// Modify DNS on ALL interfaces
@@ -95,6 +99,17 @@ func (m *linuxManager) setResolverResolvectl(ctx context.Context, addr string) e
 		if err != nil {
 			return fmt.Errorf("dns: set resolver: resolvectl for %q: %s: %w", iface, string(out), ErrSetResolverFailed)
 		}
+		// Audit fix D4 (2026-05-04) — disable mDNS and LLMNR on the
+		// physical interfaces while the tunnel is up. The kill-switch
+		// already drops outbound multicast at the firewall layer, but
+		// systemd-resolved still emits its own mDNS / LLMNR queries on
+		// behalf of getaddrinfo callers; turning the resolver-side
+		// switch off prevents hostnames being broadcast to the LAN at
+		// all (a meaningful fingerprint signal in repressive networks).
+		// Best-effort: failures are logged via stderr but do not abort
+		// SetResolver — DNS via the proxy still works.
+		_, _ = m.run(ctx, "resolvectl", "mdns", iface, "off")
+		_, _ = m.run(ctx, "resolvectl", "llmnr", iface, "off")
 	}
 
 	return nil
@@ -104,7 +119,7 @@ func (m *linuxManager) restoreResolvectl(ctx context.Context) error {
 	// Revert ALL interfaces from saved state
 	interfaces := parseAllResolvectlInterfaces(m.originalDNS)
 	if len(interfaces) == 0 {
-		interfaces = []string{"eth0"}
+		interfaces = enumerateActiveInterfaces()
 	}
 
 	var lastErr error
@@ -134,6 +149,39 @@ func (m *linuxManager) restoreResolvectl(ctx context.Context) error {
 
 	m.originalDNS = ""
 	return lastErr
+}
+
+// enumerateActiveInterfaces returns the list of physical interfaces
+// currently UP and not loopback / not a Le Voile tunnel device. Used as
+// the D3 fallback when resolvectl returns no parseable Link lines (audit
+// fix 2026-05-04). Skips loopback (lo), the tunnel itself (levoile*) and
+// classic VPN/virtual prefixes that have no business hosting an upstream
+// resolver. Returns empty slice if nothing matches — the caller will then
+// fail loudly in the resolvectl step rather than silently misconfigure
+// the wrong device, which is the safer outcome on an exotic host.
+func enumerateActiveInterfaces() []string {
+	ifs, err := net.Interfaces()
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for _, ifi := range ifs {
+		if ifi.Flags&net.FlagUp == 0 || ifi.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		name := ifi.Name
+		if strings.HasPrefix(name, "levoile") ||
+			strings.HasPrefix(name, "tun") ||
+			strings.HasPrefix(name, "tap") ||
+			strings.HasPrefix(name, "wg") ||
+			strings.HasPrefix(name, "docker") ||
+			strings.HasPrefix(name, "veth") ||
+			strings.HasPrefix(name, "br-") {
+			continue
+		}
+		out = append(out, name)
+	}
+	return out
 }
 
 // parseAllResolvectlInterfaces extracts ALL interface names from resolvectl dns output.

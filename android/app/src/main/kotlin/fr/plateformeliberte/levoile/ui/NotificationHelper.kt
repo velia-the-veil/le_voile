@@ -106,7 +106,12 @@ class NotificationHelper(private val context: Context) {
             .setSilent(true)
             .setShowWhen(false)
             .setCategory(NotificationCompat.CATEGORY_SERVICE)
-            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+            // Audit fix Android-§11 (2026-05-04): VISIBILITY_PRIVATE keeps
+            // the notification icon visible on the lock screen but hides
+            // the country flag + relay IP from the lock-screen surface.
+            // For a confiscated/photographed phone, that removes a static
+            // "user is connected to a German VPN relay" tell.
+            .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
             .setColor(ContextCompat.getColor(context, R.color.primary_blue))
             .setColorized(false)
             .setContentIntent(buildContentIntent(launchKillSwitchFlow = isKillSwitchAlert))

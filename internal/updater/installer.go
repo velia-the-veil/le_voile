@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -387,6 +388,21 @@ func atomicCopyFile(src, dst string) error {
 	if err := renameWithRetry(tmpDst, dst); err != nil {
 		os.Remove(tmpDst)
 		return fmt.Errorf("rename: %w", err)
+	}
+
+	// Audit fix U3 (2026-05-04) — on SELinux-enforcing distributions
+	// (RHEL/Fedora/CentOS Stream), the file inherits the source domain's
+	// type (typically bin_t or var_lib_t depending on the staging dir).
+	// Calling restorecon reapplies the system policy so systemd can exec
+	// the binary in the expected domain. Best-effort: missing binary or
+	// non-SELinux host = silent no-op. Restricted to Linux + the standard
+	// /usr/bin install path so we never reach for an arbitrary tool from
+	// the staging dir on Windows or unprivileged tests.
+	if runtime.GOOS == "linux" && strings.HasPrefix(dst, "/usr/bin/") {
+		if path, lookErr := exec.LookPath("restorecon"); lookErr == nil {
+			cmd := exec.Command(path, "-F", dst)
+			_ = cmd.Run()
+		}
 	}
 
 	return nil

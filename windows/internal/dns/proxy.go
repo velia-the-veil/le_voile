@@ -154,7 +154,41 @@ func (p *Proxy) handleQuery(ctx context.Context, payload []byte, clientAddr *net
 		return
 	}
 
+	// Audit fix F-09 (2026-05-04) — defense-in-depth even though the DoH
+	// tunnel is TLS-pinned end-to-end. Reject responses whose Transaction
+	// ID, QR bit, or QNAME do not match the request, so a buggy upstream
+	// or any future code path that relays untrusted bytes never lands a
+	// mismatched answer in the client's resolver cache.
+	if !responseMatchesQuery(payload, resp) {
+		return
+	}
+
 	conn.WriteToUDP(resp, clientAddr)
+}
+
+// responseMatchesQuery validates that resp is a plausible reply to query.
+// It compares the 16-bit Transaction ID (bytes 0-1) and, when both the
+// query and the response have an extractable QNAME, requires those to
+// match. A query with no extractable QNAME (truncated probes, raw
+// header-only test payloads) keeps the historical "forward whatever the
+// upstream returned" behaviour — the TXID match alone still gates against
+// blind injection, which is the realistic attack vector here. This is
+// defense-in-depth: the DoH tunnel is the primary trust boundary; this
+// layer only catches bugs and never logs because dropping silently is
+// the right behaviour for a resolver under attack.
+func responseMatchesQuery(query, resp []byte) bool {
+	if len(query) < minDNSSize || len(resp) < minDNSSize {
+		return false
+	}
+	if query[0] != resp[0] || query[1] != resp[1] {
+		return false
+	}
+	q := extractDomain(query)
+	r := extractDomain(resp)
+	if q == "" || r == "" {
+		return true
+	}
+	return strings.EqualFold(q, r)
 }
 
 // extractDomain parses the QNAME from a DNS wire-format query payload.

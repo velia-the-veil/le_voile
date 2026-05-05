@@ -67,6 +67,29 @@ RestrictRealtime=true
 SystemCallArchitectures=native
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK AF_PACKET
 
+# Audit fix S2 (2026-05-04) — additional sandboxing layers. Each is a
+# best-effort lockdown: if a future code path needs one of these, systemd
+# logs a clear EACCES / EPERM and the entry is removed in a follow-up.
+#   - SystemCallFilter limits syscalls to the @system-service set (the
+#     standard "any long-running daemon" allowlist) and explicitly denies
+#     @privileged, @resources, @mount and @debug. The service does not
+#     mount filesystems, change resource limits, or self-debug; this is
+#     safe to apply.
+#   - SystemCallErrorNumber=EPERM makes denied syscalls fail with a
+#     consistent errno instead of SIGSYS-killing the process.
+#   - RestrictNamespaces blocks creating new user/pid/uts/ipc/cgroup/net
+#     namespaces — the service runs entirely in the host namespace and
+#     never unshares.
+#   - ProtectProc=invisible / ProcSubset=pid hides other processes' /proc
+#     entries from the levoile UID, narrowing the surface for /proc-based
+#     fingerprinting if the service is ever compromised.
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources @mount @debug
+SystemCallErrorNumber=EPERM
+RestrictNamespaces=true
+ProtectProc=invisible
+ProcSubset=pid
+
 # Répertoire d'état privé — systemd crée /run/levoile avec le bon owner
 # (user=levoile) sans que preinstall.sh ait à le faire. Persiste pendant la vie
 # du service, nettoyé automatiquement au stop.

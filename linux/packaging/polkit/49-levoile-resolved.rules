@@ -7,15 +7,31 @@
 // l'autorisation par défaut requiert un admin authentifié interactivement.
 // Pour un service système non-interactif, ça échoue sans cette règle.
 //
-// Scope strict : uniquement les actions org.freedesktop.resolve1.* (configurer
-// DNS, domaines, route par défaut, mDNS, LLMNR, DNSSEC, revert). N'élargit pas
-// le périmètre du user `levoile` au-delà de ce que CAP_NET_ADMIN permet déjà.
+// Audit fix D2 + D4 (2026-05-04) — scope strict aux cinq actions réellement
+// utilisées par le service :
+//   - set-link-dns-servers : `resolvectl dns <iface> <addr>`
+//   - revert-link          : `resolvectl revert <iface>`
+//   - flush-caches         : `resolvectl flush-caches`
+//   - set-link-mdns        : `resolvectl mdns <iface> off` (D4 — anti-leak LAN)
+//   - set-link-llmnr       : `resolvectl llmnr <iface> off` (D4 — anti-leak LAN)
+// Antérieurement la règle ouvrait l'ensemble de org.freedesktop.resolve1.*
+// (set-link-default-route, set-link-dnssec, register, etc.), ce qui
+// autorisait un attaquant ayant compromis le user `levoile` à désactiver
+// DNSSEC partout ou à réenregistrer un nom de service. Le scope est
+// désormais minimal et l'usage de mdns/llmnr off est cohérent (on les
+// désactive — on ne les active jamais).
 //
 // Polkit relit ce fichier via inotify dès qu'il apparaît dans
 // /etc/polkit-1/rules.d/ → pas de reload requis après installation.
 polkit.addRule(function(action, subject) {
-    if (action.id.indexOf("org.freedesktop.resolve1.") === 0 &&
-        subject.user === "levoile") {
+    if (subject.user !== "levoile") {
+        return;
+    }
+    if (action.id === "org.freedesktop.resolve1.set-link-dns-servers" ||
+        action.id === "org.freedesktop.resolve1.revert-link" ||
+        action.id === "org.freedesktop.resolve1.flush-caches" ||
+        action.id === "org.freedesktop.resolve1.set-link-mdns" ||
+        action.id === "org.freedesktop.resolve1.set-link-llmnr") {
         return polkit.Result.YES;
     }
 });

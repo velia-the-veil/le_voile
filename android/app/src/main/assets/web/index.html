@@ -3,6 +3,14 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <!-- Audit fix Android-W4 (2026-05-04). Restrict every fetchable origin
+       to 'self' (= the WebViewAssetLoader authority appassets.androidplatform.net)
+       so that even if a future asset bug allowed an attacker-controlled
+       URL into the page, no script, frame, image, or fetch could escape
+       to a remote origin. 'unsafe-inline' on style-src covers existing
+       UI styles (no inline scripts; script-src stays strict). frame-src
+       'none' + frame-ancestors 'none' close clickjacking. -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; font-src 'self'; frame-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'none'">
   <title>Le Voile</title>
   <link rel="stylesheet" href="style.css">
   <link rel="stylesheet" href="style-android.css">

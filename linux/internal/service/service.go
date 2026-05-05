@@ -29,6 +29,7 @@ import (
 	"github.com/velia-the-veil/le_voile/linux/internal/firewall"
 	"github.com/velia-the-veil/le_voile/internal/httpproxy"
 	"github.com/velia-the-veil/le_voile/internal/leakcheck"
+	"github.com/velia-the-veil/le_voile/internal/logsec"
 	"github.com/velia-the-veil/le_voile/linux/internal/preflight"
 	"github.com/velia-the-veil/le_voile/internal/registry"
 	"github.com/velia-the-veil/le_voile/linux/internal/routing"
@@ -40,9 +41,14 @@ import (
 	"github.com/velia-the-veil/le_voile/internal/watchdog"
 )
 
-// serviceStderr is the writer for error output. Defaults to os.Stderr.
-// Overridable in tests.
-var serviceStderr io.Writer = os.Stderr
+// serviceStderr is the writer for error output. Defaults to a
+// PII-scrubbing wrapper around os.Stderr (audit fix F-18, 2026-05-04):
+// every fmt.Fprintf(serviceStderr, ...) call now collapses /home/<user>,
+// /Users/<user>, %USERPROFILE%, and /root paths to "$HOME" before the
+// bytes hit the OS log (Event Log on Windows, journald on Linux).
+// Overridable in tests — when tests assign a *bytes.Buffer they bypass
+// the scrub which is fine because tests assert specific log contents.
+var serviceStderr io.Writer = logsec.NewWriter(os.Stderr)
 
 // ServiceName is the OS service name used for registration.
 const ServiceName = "LeVoile"
@@ -77,7 +83,6 @@ type Config struct {
 	UpdateOwner       string // GitHub owner
 	UpdateRepo        string // GitHub repo
 	UpdateStagingDir  string // staging directory path
-	UpdatePubKey      string // Ed25519 public key for update signature verification (falls back to RelayPubKey if empty)
 	// UpdateAllowWhenPackaged, when true, forces auto-update even when the binary
 	// was installed by a system package manager. Default false (package manager
 	// is authoritative to prevent version conflicts).
@@ -2024,24 +2029,21 @@ func (p *Program) shutdown() {
 	}
 }
 
-// updatePubKey returns the Ed25519 public key for update verification,
-// falling back to RelayPubKey if no dedicated key is configured.
+// updatePubKey returns the Ed25519 public key for update verification.
+// The key is the release key baked into the binary at build time (NFR22h,
+// rotated every 24 months). Audit fix R-T2 (2026-05-04): the previous
+// implementation accepted a runtime override from p.config.UpdatePubKey,
+// which made the trust anchor substitutable by anyone who could write the
+// config file. The release pubkey is now the only trust anchor; rotation
+// happens at compile time via internal/crypto/release_keys.go (Current +
+// Next + revocation list).
 func (p *Program) updatePubKey() string {
-	if p.config.UpdatePubKey != "" {
-		return p.config.UpdatePubKey
-	}
-	// Canonical fallback: the release key baked into the binary at build time
-	// (rotated every 24 months per NFR22h). This is the key the release
-	// pipeline signs artifacts with — verifying with RelayPubKey (registry
-	// master) was incorrect and would reject every legitimate signed release
-	// because the two keys are distinct by design (see internal/crypto/
-	// release_keys.go and reference_relay_servers memory).
 	if k := lecrypto.ReleasePublicKeyCurrentBase64; k != "" {
 		return k
 	}
-	// Last resort: RelayPubKey. Kept for backward-compat with test fixtures
-	// that wire the relay key directly; production releases will never reach
-	// this branch because release_keys.go is compile-time non-empty.
+	// Last resort for test fixtures only: RelayPubKey. Production releases
+	// never reach this branch because release_keys.go is compile-time
+	// non-empty.
 	return p.config.RelayPubKey
 }
 

@@ -36,5 +36,12 @@
 # TODO Story 9.7 : ajouter rules spécifiques aux callbacks Go→Kotlin
 # (interfaces enregistrées via GoCoreAdapter.setCallbacks)
 
-# TODO Story 11.x : ajouter rules pour les classes annotées @JavascriptInterface
-# quand le JS Bridge sera livré
+# Audit fix Android-§13 (2026-05-04). LeVoileBridge expose des méthodes au
+# WebView via @JavascriptInterface. Sans rule explicite, R8 / ProGuard
+# pourrait renommer ces méthodes, ce qui les rendrait invisibles depuis le
+# JS bundle (qui appelle par nom). Le defaultProguardFile androidx.webkit
+# couvre déjà le cas le plus commun, mais on rend la garantie locale et
+# auditable ici.
+-keepclassmembers class fr.plateformeliberte.levoile.bridge.LeVoileBridge {
+    @android.webkit.JavascriptInterface <methods>;
+}

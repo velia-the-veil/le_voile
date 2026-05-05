@@ -48,24 +48,14 @@ func isMutatingAction(a string) bool {
 	return ok
 }
 
-// legacyEmptyAuthAllowed returns true when the operator explicitly opted
-// back into the pre-2026-04 contract that accepted mutating IPC requests
-// with an empty req.Auth. Set LEVOILE_IPC_LEGACY_AUTH=1 to re-enable that
-// path — only useful on a host where a stale UI build has not yet been
-// upgraded to the token-aware one and the mismatch is producing
-// "auth_required" errors on every click.
-//
-// Default (env unset or any other value) is strict: empty-Auth mutations
-// are rejected. The flip from opt-in-strict (pre-2026-04) to opt-out-legacy
-// is deliberate — the window where any same-user process can drive the
-// service is closed by default now that cmd/ui loads the ctlauth token on
-// startup (see cmd/ui/main.go).
-//
-// The older LEVOILE_IPC_STRICT_AUTH variable is now a no-op and is kept
-// only so a leftover =1 from previous rollouts does not surprise anyone.
-func legacyEmptyAuthAllowed() bool {
-	return os.Getenv("LEVOILE_IPC_LEGACY_AUTH") == "1"
-}
+// testBypassAuthGate is a package-internal escape hatch for the historical
+// test suite, which was authored with empty-Auth requests before the
+// strict-auth flip. The variable is intentionally NOT exported and NOT
+// driven by an environment variable: a runtime attacker (or anyone able to
+// edit the service environment) cannot toggle it, which is precisely the
+// audit-fix R-T1 (2026-05-04) we want to enforce. Only the package's own
+// testmain_test.go flips it; production binaries observe false forever.
+var testBypassAuthGate bool
 
 // uiSupervisionFromSnapshot maps the in-process uiwatchdog snapshot to
 // the wire-format struct used by GetStatus / GetUISupervision. RFC 3339
@@ -157,19 +147,17 @@ func Handle(prg *svc.Program, req ipc.Request, opts Options) ipc.Response {
 		}
 	}
 
-	// Fix C3 (audit sécurité) — strict-by-default authentication gate. A
-	// mutating action with an empty req.Auth is rejected unless the operator
-	// has explicitly opted back into the pre-2026-04 legacy path via
-	// LEVOILE_IPC_LEGACY_AUTH=1 (documented in SECURITY.md §C3). The audit
-	// line still fires in both postures so operators can spot missing tokens
-	// even when legacy mode is keeping the install functional.
-	if isMutatingAction(req.Action) && req.Auth == "" {
-		legacy := legacyEmptyAuthAllowed()
-		fmt.Fprintf(os.Stderr, "SECURITY AUDIT: mutating IPC without req.Auth action=%s legacy=%v\n",
-			req.Action, legacy)
-		if !legacy {
-			return ipc.Response{Status: ipc.StatusError, Error: "auth_required"}
-		}
+	// Fix C3 (audit sécurité) — strict authentication gate. A mutating action
+	// with an empty req.Auth is rejected. Audit fix R-T1 (2026-05-04): the
+	// LEVOILE_IPC_LEGACY_AUTH=1 environment-variable escape hatch was removed
+	// because it allowed any process able to write the service environment
+	// (or convince an operator to do so) to neutralise the auth gate on a
+	// production install. The UI must always present a valid ctlauth token.
+	// testBypassAuthGate is package-internal and only flipped by the test
+	// suite — production binaries observe false unconditionally.
+	if isMutatingAction(req.Action) && req.Auth == "" && !testBypassAuthGate {
+		fmt.Fprintf(os.Stderr, "SECURITY AUDIT: mutating IPC without req.Auth action=%s\n", req.Action)
+		return ipc.Response{Status: ipc.StatusError, Error: "auth_required"}
 	}
 	switch req.Action {
 	case ipc.ActionGetStatus:

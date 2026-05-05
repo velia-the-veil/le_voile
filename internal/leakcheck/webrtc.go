@@ -49,15 +49,26 @@ const (
 )
 
 // defaultSTUNServers are the STUN servers used for leak checks.
+//
+// Audit fix L1 (2026-05-04): the list mixes US-based providers (Google,
+// Cloudflare) with European operator-run servers (Mullvad, sipgate). The
+// scheduler picks one entry per cycle; rotating across operator legal
+// domains makes it harder for any single observer (a US provider tying
+// timing data to a relay's IP) to correlate the leak-check probe with
+// the user's session.
 var defaultSTUNServers = []string{
 	"stun.l.google.com:19302",
 	"stun1.l.google.com:19302",
 	"stun.cloudflare.com:3478",
+	"stun.mullvad.net:3478",
+	"stun.sipgate.net:3478",
 }
 
 // DefaultSTUNServers returns a copy of the built-in STUN server list
-// (Google x2 + Cloudflare). Callers can override the first entry to apply
-// a legacy [stun] default_server config without duplicating the fallback.
+// (Google x2, Cloudflare, Mullvad, sipgate — a US/EU mix to avoid pinning
+// every leak check to a single jurisdiction). Callers can override the
+// first entry to apply a legacy [stun] default_server config without
+// duplicating the fallback.
 func DefaultSTUNServers() []string {
 	out := make([]string, len(defaultSTUNServers))
 	copy(out, defaultSTUNServers)

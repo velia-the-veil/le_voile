@@ -8,26 +8,37 @@ import (
 	"github.com/velia-the-veil/le_voile/windows/internal/ipc"
 )
 
-// TestLegacyAuth_Default_Strict covers the 2026-04 flip: by default empty
-// req.Auth on a mutating action is rejected — legacyEmptyAuthAllowed must
-// return false when LEVOILE_IPC_LEGACY_AUTH is unset. t.Setenv("", "")
-// is not a thing, so we use the empty-string override which is still
-// falsy under our ==1 check. The parent TestMain sets LEGACY=1 for the
-// package; t.Setenv scopes this override to the current test only.
-func TestLegacyAuth_Default_Strict(t *testing.T) {
-	t.Setenv("LEVOILE_IPC_LEGACY_AUTH", "")
-	if legacyEmptyAuthAllowed() {
-		t.Fatal("legacyEmptyAuthAllowed = true when env is empty — default must be strict")
+// TestStrictAuth_Default rejects empty-Auth mutating requests when the test
+// bypass is off. This mirrors the production posture: production binaries
+// observe testBypassAuthGate=false unconditionally because the variable is
+// package-internal (audit fix R-T1, 2026-05-04).
+func TestStrictAuth_Default(t *testing.T) {
+	prev := testBypassAuthGate
+	testBypassAuthGate = false
+	t.Cleanup(func() { testBypassAuthGate = prev })
+
+	resp := Handle(newTestProgram(), ipc.Request{Action: ipc.ActionConnect}, Options{})
+	if resp.Status != ipc.StatusError || resp.Error != "auth_required" {
+		t.Fatalf("strict mode: empty-Auth Connect should be auth_required, got status=%v err=%q",
+			resp.Status, resp.Error)
 	}
 }
 
-// TestLegacyAuth_Opt_In : setting LEVOILE_IPC_LEGACY_AUTH=1 re-enables the
-// pre-2026-04 contract where mutating actions with empty Auth still
-// proceeded (for hosts stuck on an old UI build that cannot send a token).
-func TestLegacyAuth_Opt_In(t *testing.T) {
-	t.Setenv("LEVOILE_IPC_LEGACY_AUTH", "1")
-	if !legacyEmptyAuthAllowed() {
-		t.Fatal("legacyEmptyAuthAllowed = false with env=1")
+// TestStrictAuth_BypassFlag covers the test-only escape hatch that the rest
+// of this package's tests rely on. Production binaries never reach this
+// state because testBypassAuthGate is package-internal. GetStatus is a
+// read-only action so the gate is irrelevant for it; the discriminator is
+// that an empty-Auth Connect (mutating) is accepted instead of being
+// rejected with "auth_required".
+func TestStrictAuth_BypassFlag(t *testing.T) {
+	prev := testBypassAuthGate
+	testBypassAuthGate = true
+	t.Cleanup(func() { testBypassAuthGate = prev })
+
+	resp := Handle(newTestProgram(), ipc.Request{Action: ipc.ActionConnect}, Options{})
+	if resp.Error == "auth_required" {
+		t.Fatalf("bypass mode: empty-Auth Connect should not be auth_required, got status=%v err=%q",
+			resp.Status, resp.Error)
 	}
 }
 

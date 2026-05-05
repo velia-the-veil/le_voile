@@ -5,12 +5,15 @@ import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import fr.plateformeliberte.levoile.BuildConfig
 import fr.plateformeliberte.levoile.log.LeVoileLog
+import fr.plateformeliberte.levoile.vpn.LeVoileVpnService
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
 import java.nio.charset.StandardCharsets
+import kotlin.random.Random
 
 /**
  * Story 12.5 — Worker périodique 24h qui vérifie GitHub releases pour le canal
@@ -33,6 +36,27 @@ internal class UpdateCheckWorker(
 ) : CoroutineWorker(appContext, params) {
 
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
+        // Audit fix Android-§6 (2026-05-04) — partial mitigation of the
+        // "passive observer can enumerate Le Voile users via 24h GitHub
+        // hits" leak (the full fix moves the check inside the tunnel via
+        // a relay /update-meta endpoint).
+        //
+        // 1. Skip when the VPN is not currently connected. WorkManager
+        //    will retry under its standard schedule; in the meantime no
+        //    stable 24h heartbeat is emitted from the user's real IP.
+        // 2. Add a uniform jitter [0, 30 min] before the request so the
+        //    fetch time decorrelates from the install time, denying a
+        //    passive correlator the "every device starts checking 24h
+        //    after first launch" cohort signal.
+        if (LeVoileVpnService.instance == null) {
+            LeVoileLog.i(TAG, "VPN inactive — update check skipped (will retry next cycle)")
+            return@withContext Result.success()
+        }
+        val jitterMs = Random.nextLong(0, MAX_JITTER_MS)
+        if (jitterMs > 0) {
+            delay(jitterMs)
+        }
+
         val checker = UpdateChecker(
             autoUpdateEnabled = BuildConfig.AUTO_UPDATE_ENABLED,
             localVersion = SemVer.parse(BuildConfig.VERSION_NAME),
@@ -57,9 +81,18 @@ internal class UpdateCheckWorker(
         conn.requestMethod = "GET"
         conn.connectTimeout = 10_000
         conn.readTimeout = 10_000
+        // Audit fix R-T3 / Android-§6 (2026-05-04): the previous User-Agent
+        // ("LeVoile/x.y.z (Android; SDK; APK direct)") was a unique
+        // fingerprint that any passive observer could use to enumerate Le
+        // Voile users in the wild. The check itself still leaves the
+        // tunnel (the worker runs under disallowedApplications), so we
+        // mimic a generic browser UA — not perfect anonymity, but it
+        // raises the bar from "trivial blocklist key" to "needs SNI/IP
+        // intelligence". Replacing the channel with a relay-side
+        // /update-meta endpoint is tracked separately.
         conn.setRequestProperty(
             "User-Agent",
-            "LeVoile/${BuildConfig.VERSION_NAME} (Android; ${android.os.Build.VERSION.SDK_INT}; APK direct)",
+            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
         )
         conn.setRequestProperty("Accept", "application/vnd.github+json")
         try {
@@ -81,5 +114,6 @@ internal class UpdateCheckWorker(
         private const val GITHUB_API_LATEST_RELEASE =
             "https://api.github.com/repos/velia-the-veil/le_voile/releases/latest"
         const val WORK_NAME = "levoile-update-check-24h"
+        private const val MAX_JITTER_MS = 30L * 60L * 1000L
     }
 }
