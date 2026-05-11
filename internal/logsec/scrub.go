@@ -22,7 +22,15 @@ import (
 // drive letters and other roots match the same behaviour). The
 // captured user segment is stripped together with the parent so the
 // replacement is collapsed to "$HOME".
-var homeUserRE = regexp.MustCompile(`(?i)(/home/|/Users/|[A-Z]:\\\\Users\\\\)[^/\\:|"'\s]+`)
+//
+// Fix 2026-05-11 : la partie Windows avait `\\\\` (4 backslashes raw =
+// regex "match 2 backslashes") au lieu de `\\` (2 raw = regex "match 1
+// backslash"). Le test TestScrubLine_WindowsProfile passait en local
+// Windows uniquement parce que la 3e étape (strings.ReplaceAll avec
+// os.UserHomeDir()) faisait le remplacement par hasard ; sur runner CI
+// Ubuntu, UserHomeDir()=/home/runner qui ne matche pas C:\Users\<user>
+// → regex Windows seule en jeu → fail.
+var homeUserRE = regexp.MustCompile(`(?i)(/home/|/Users/|[A-Z]:\\Users\\)[^/\\:|"'\s]+`)
 
 // rootHomeRE catches the /root path used by services that drop into a
 // privileged shell. /root has no trailing username segment because it
