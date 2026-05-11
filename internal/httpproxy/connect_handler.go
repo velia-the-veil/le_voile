@@ -207,6 +207,10 @@ func (h *connectHandler) handleConnect(w http.ResponseWriter, r *http.Request) {
 // relay quota, so counting them would be misleading. The user's real IP is
 // exposed to the destination (accepted trade-off).
 func (h *connectHandler) tryDirectBypass(w http.ResponseWriter, r *http.Request, target string) bool {
+	// #nosec G704 -- SSRF par construction : tryDirectBypass est un HTTP proxy
+	// CONNECT handler dont le rôle EST de dial vers la cible demandée par le
+	// client. Pas de SSRF à mitiger — c'est la sémantique d'un proxy. Le
+	// contrôle d'accès / blocklist se fait en amont (handler ConnectHandler).
 	destConn, err := net.DialTimeout("tcp", target, BypassDialTimeout)
 	if err != nil {
 		if h.volumeTracker != nil {

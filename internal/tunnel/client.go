@@ -241,7 +241,11 @@ func (c *Client) buildTransport() *http3.Transport {
 		TLSClientConfig: &tls.Config{
 			ServerName:         c.relayDomain, // SNI must match the cert, not the IP
 			NextProtos:         []string{http3.NextProtoH3},
-			MinVersion:         tls.VersionTLS13,
+			MinVersion: tls.VersionTLS13,
+			// #nosec G402 -- InsecureSkipVerify n'est activé QUE quand
+			// WithInsecure(true) ou WithInsecureSkipCAOnly() sont passés (dev/
+			// tests only — jamais en production). Avec skipCAOnly, le pinning
+			// Ed25519 reste enforced via VerifyPeerCertificate.
 			InsecureSkipVerify: c.insecure || c.skipCAOnly,
 			// #nosec G123 -- VerifyPeerCertificate seul peut être bypassé par
 			// TLS session resumption (resumed sessions skip cette callback).

@@ -3,11 +3,11 @@ package relay
 import (
 	"context"
 	cryptorand "crypto/rand"
+	"encoding/binary"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
-	"math/rand"
 	"net"
 	"os"
 	"sync"
@@ -417,7 +417,15 @@ func (n *NAT) openTCP(entry *natEntry, p *parsedPacket) error {
 	// Initialize TCP state.
 	entry.mu.Lock()
 	entry.clientISN = p.tcpSeq
-	entry.relayISN = rand.Uint32()
+	// G404 fix : utilise crypto/rand pour l'Initial Sequence Number TCP
+	// (RFC 6528 — défense contre les TCP sequence prediction attacks).
+	// math/rand est prédictible. Sur erreur cryptorand.Read (extrêmement
+	// rare, OS panic-level), on garde 0 — le NAT relay reste fonctionnel,
+	// juste moins protégé contre injection blind sur cette session.
+	var isnBytes [4]byte
+	if _, err := cryptorand.Read(isnBytes[:]); err == nil {
+		entry.relayISN = binary.BigEndian.Uint32(isnBytes[:])
+	}
 	entry.clientSeqNext = p.tcpSeq + 1 // SYN consumes one sequence number
 	entry.relaySeqNext = entry.relayISN + 1
 	entry.tcpState = tcpStateEstablished

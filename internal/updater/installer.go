@@ -400,6 +400,9 @@ func atomicCopyFile(src, dst string) error {
 	// the staging dir on Windows or unprivileged tests.
 	if runtime.GOOS == "linux" && strings.HasPrefix(dst, "/usr/bin/") {
 		if path, lookErr := exec.LookPath("restorecon"); lookErr == nil {
+			// #nosec G204 -- `path` est résolu par exec.LookPath sur PATH système
+			// (pas user input), et `dst` est filtré par strings.HasPrefix("/usr/bin/")
+			// ligne au-dessus. Pas d'injection possible.
 			cmd := exec.Command(path, "-F", dst)
 			_ = cmd.Run()
 		}
