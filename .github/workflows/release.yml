@@ -38,11 +38,16 @@ jobs:
           go-version: "1.26.x"
           cache: true
 
+      # Scopé sur les packages partagés (ADR-08 isolation OS). `./linux/...`
+      # et `./windows/...` portent du cgo OS-specific (webview, WFP) qui
+      # exige `libwebkit2gtk-4.1-dev` ou wintun.dll — installés uniquement
+      # dans les workflows OS-spécifiques. `./cmd/` n'existe plus depuis le
+      # refactor 2026-04 qui a migré le code vers linux/ et windows/.
       - name: go vet
-        run: go vet ./...
+        run: go vet ./internal/... ./relay/... ./tools/...
 
       - name: go test -race
-        run: go test -race -count=1 ./cmd/... ./internal/...
+        run: go test -race -count=1 ./internal/... ./relay/... ./tools/...
 
   security:
     name: security gates (NFR22d/e/f)
@@ -60,14 +65,15 @@ jobs:
       - name: install govulncheck
         run: go install golang.org/x/vuln/cmd/govulncheck@latest
 
+      # Scope idem `go vet` : packages partagés sans cgo OS-specific.
       - name: govulncheck
-        run: govulncheck ./...
+        run: govulncheck ./internal/... ./relay/... ./tools/...
 
       - name: install gosec
         run: go install github.com/securego/gosec/v2/cmd/gosec@latest
 
       - name: gosec -severity medium
-        run: gosec -severity medium -quiet ./...
+        run: gosec -severity medium -quiet ./internal/... ./relay/... ./tools/...
 
   snapshot-signing:
     name: release snapshot + signature smoke
