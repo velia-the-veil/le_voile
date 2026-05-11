@@ -1,4 +1,5 @@
 # Story 7.4 — CI pipeline : tests, security gates, snapshot signing smoke test.
+# Reset cache 2026-05-11 : forcer fresh checkout suite à bascule private→public.
 #
 # Cette workflow NE fait PAS de release réelle. Par choix délibéré (NFR22g),
 # la master key de signature ne vit que sur la machine du mainteneur — jamais
