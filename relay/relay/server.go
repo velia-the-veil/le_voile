@@ -143,9 +143,10 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 	// Required for: registry client (HTTP GET), latency checker (/health),
 	// and /ip endpoint used by the desktop client for visible IP detection.
 	tcpServer := &http.Server{
-		Addr:      s.Addr,
-		Handler:   mux,
-		TLSConfig: tlsCfg.Clone(),
+		Addr:              s.Addr,
+		Handler:           mux,
+		TLSConfig:         tlsCfg.Clone(),
+		ReadHeaderTimeout: 10 * time.Second, // G112 — anti-Slowloris
 	}
 	go func() {
 		if err := tcpServer.ListenAndServeTLS(s.CertFile, s.KeyFile); err != nil && err != http.ErrServerClosed {

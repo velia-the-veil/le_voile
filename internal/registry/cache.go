@@ -75,6 +75,9 @@ func (c *Cache) Save(entries []RelayEntry, masterPubKey string) error {
 	}
 
 	tmpPath := c.path + ".tmp"
+	// #nosec G304 -- c.path est défini par le constructeur Cache (paramètre du
+	// code appelant, pas user input). Le ".tmp" est concaténé en interne pour
+	// écriture atomique. Aucun path traversal possible.
 	f, err := os.Create(tmpPath)
 	if err != nil {
 		return fmt.Errorf("registry: cache save: %w", err)
@@ -151,6 +154,7 @@ func (c *Cache) SaveLatencies(rankings []LatencyResult) error {
 	}
 
 	tmpPath := c.path + ".tmp"
+	// #nosec G304 -- idem ligne 78 : c.path interne, pas user input.
 	f, err := os.Create(tmpPath)
 	if err != nil {
 		return fmt.Errorf("registry: cache save latencies: %w", err)

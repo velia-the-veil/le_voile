@@ -79,6 +79,10 @@ func run(args []string) error {
 		return fmt.Errorf("genkey: chmod private key: %w", err)
 	}
 
+	// #nosec G306 -- clé PUBLIQUE Ed25519 : donnée publique par design (elle
+	// est embarquée dans les binaires release pour le vérifier de signature
+	// côté utilisateur). 0644 permet une distribution standard sans escalade
+	// de privilèges. La clé privée correspondante est 0600 (cf. line 78).
 	if err := os.WriteFile(pubPath, []byte(lecrypto.ExportPublicKeyBase64(pub)+"\n"), 0o644); err != nil {
 		return fmt.Errorf("genkey: write public key: %w", err)
 	}
@@ -88,6 +92,7 @@ func run(args []string) error {
 		if err != nil {
 			return fmt.Errorf("genkey: export pem: %w", err)
 		}
+		// #nosec G306 -- même clé publique exportée au format PEM. Publique.
 		if err := os.WriteFile(pemPath, pemBytes, 0o644); err != nil {
 			return fmt.Errorf("genkey: write pem: %w", err)
 		}

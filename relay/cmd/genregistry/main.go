@@ -177,6 +177,10 @@ func main() {
 		os.Exit(1)
 	}
 
+	// #nosec G306 -- relay-registry.json est distribué publiquement (servi
+	// par le master registry sur HTTPS pour tous les clients Le Voile). Son
+	// intégrité est garantie par signature Ed25519 embarquée dans le JSON
+	// lui-même (champ "signature"). 0644 = standard pour fichier public.
 	if err := os.WriteFile(*outPath, data, 0o644); err != nil {
 		fmt.Fprintf(os.Stderr, "genregistry: write: %v\n", err)
 		os.Exit(1)

@@ -113,6 +113,9 @@ func signArtifact(priv ed25519.PrivateKey, path string) error {
 		return fmt.Errorf("signpkg: sign %s: %w", path, err)
 	}
 	sigPath := path + ".sig"
+	// #nosec G306 -- signature Ed25519 = donnée PUBLIQUE par design. 0644
+	// permet aux pipelines de release (CI + miroirs) de lire la signature
+	// sans privilèges spéciaux. Aucun secret n'est exposé.
 	if err := os.WriteFile(sigPath, sig, 0o644); err != nil {
 		return fmt.Errorf("signpkg: write %s: %w", sigPath, err)
 	}

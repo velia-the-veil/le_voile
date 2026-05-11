@@ -114,6 +114,10 @@ func (h *VerifyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
+	// #nosec G117 -- SessionToken DOIT être renvoyé au client : c'est la
+	// finalité même de l'endpoint /verify (issue d'un token signé Ed25519
+	// après challenge/response). Le canal est TLS 1.3 + cert pinning Ed25519
+	// (cf. internal/tunnel/client.go). Token = data à délivrer, pas leak.
 	if err := json.NewEncoder(w).Encode(resp); err != nil {
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return

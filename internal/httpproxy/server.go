@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"sync"
+	"time"
 )
 
 // TunnelClient is the interface required from tunnel.Client for proxy operations.
@@ -68,7 +69,8 @@ func (s *Server) Start(ctx context.Context) error {
 	}
 
 	s.httpServer = &http.Server{
-		Handler: handler,
+		Handler:           handler,
+		ReadHeaderTimeout: 10 * time.Second, // G112 — anti-Slowloris
 	}
 
 	// Start volume tracker cleanup if enabled.
