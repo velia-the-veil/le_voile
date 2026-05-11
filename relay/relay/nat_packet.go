@@ -179,6 +179,8 @@ func pseudoHeaderSum(srcIP, dstIP []byte, proto uint8, l4Len int) uint32 {
 	s += uint32(dstIP[0])<<8 | uint32(dstIP[1])
 	s += uint32(dstIP[2])<<8 | uint32(dstIP[3])
 	s += uint32(proto)
+	// #nosec G115 -- l4Len est la longueur d'un payload L4 (TCP/UDP) borné
+	// par MTU IPv4 (≤ 65535 octets), donc << 2^32. Conversion sûre.
 	s += uint32(l4Len)
 	return s
 }
@@ -243,6 +245,8 @@ func buildUDPPacket(srcIP, dstIP net.IP, srcPort, dstPort uint16, payload []byte
 	pkt := make([]byte, totalLen)
 
 	pkt[0] = 0x45
+	// #nosec G115 -- IPv4 Total Length field est uint16 par RFC 791 (max
+	// 65535). totalLen est ipHL(20) + udpLen, et udpLen est borné par MTU.
 	binary.BigEndian.PutUint16(pkt[2:4], uint16(totalLen))
 	pkt[8] = 64
 	pkt[9] = ipv4ProtoUDP
@@ -252,6 +256,8 @@ func buildUDPPacket(srcIP, dstIP net.IP, srcPort, dstPort uint16, payload []byte
 	udp := pkt[ipHL:]
 	binary.BigEndian.PutUint16(udp[0:2], srcPort)
 	binary.BigEndian.PutUint16(udp[2:4], dstPort)
+	// #nosec G115 -- UDP Length field est uint16 par RFC 768 (max 65535).
+	// udpLen = udpHeaderLen(8) + len(payload), borné par MTU IPv4.
 	binary.BigEndian.PutUint16(udp[4:6], uint16(udpLen))
 	if len(payload) > 0 {
 		copy(udp[udpHeaderLen:], payload)

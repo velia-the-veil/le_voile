@@ -545,6 +545,8 @@ func (n *NAT) forwardTCPData(entry *natEntry, p *parsedPacket, pkt []byte) {
 	}
 
 	entry.mu.Lock()
+	// #nosec G115 -- TCP sequence number is uint32 by RFC 793 §3.2. len(payload)
+	// is bounded by MTU (≤ 65535) so the conversion can never overflow.
 	entry.clientSeqNext = p.tcpSeq + uint32(len(payload))
 	seq := entry.relaySeqNext
 	ack := entry.clientSeqNext
@@ -585,6 +587,8 @@ func (n *NAT) tcpReverseLoop(entry *natEntry) {
 			entry.mu.Lock()
 			seq := entry.relaySeqNext
 			ack := entry.clientSeqNext
+			// #nosec G115 -- nr est len(buf[:nr]) borné par la taille du buffer (≤ MTU),
+			// donc largement inférieur à 2^32. TCP sequence est uint32 par RFC 793.
 			entry.relaySeqNext += uint32(nr)
 			entry.mu.Unlock()
 

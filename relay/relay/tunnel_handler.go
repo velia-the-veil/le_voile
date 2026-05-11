@@ -251,6 +251,9 @@ func (h *TunnelHandler) serveTunnel(w http.ResponseWriter, r *http.Request, payl
 			if h.bwLimiter != nil {
 				h.bwLimiter.AccountAndThrottle(sessionCtx, remoteIP, len(pkt))
 			}
+			// #nosec G115 -- header de framing tunnel = uint16 (cf. architecture.md
+			// + internal/tunnel/pump.go FramingHeaderSize). len(pkt) est borné par
+			// MTU TUN (≤ 65535) côté client.
 			binary.BigEndian.PutUint16(hdr, uint16(len(pkt)))
 			if _, err := w.Write(hdr); err != nil {
 				return false

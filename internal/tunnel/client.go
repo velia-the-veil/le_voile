@@ -243,6 +243,14 @@ func (c *Client) buildTransport() *http3.Transport {
 			NextProtos:         []string{http3.NextProtoH3},
 			MinVersion:         tls.VersionTLS13,
 			InsecureSkipVerify: c.insecure || c.skipCAOnly,
+			// #nosec G123 -- VerifyPeerCertificate seul peut être bypassé par
+			// TLS session resumption (resumed sessions skip cette callback).
+			// Défense en profondeur Le Voile : (1) Ed25519 cert pinning ICI
+			// + (2) /verify endpoint au handshake applicatif qui re-valide
+			// une signature Ed25519 challenge/response indépendamment de TLS
+			// (cf. verifyRelay). Une resumed session avec cert frauduleux ne
+			// peut pas répondre /verify correctement → la session est rejetée
+			// au layer applicatif. Le risque G123 est mitigé hors-TLS.
 			VerifyPeerCertificate: func(rawCerts [][]byte, _ [][]*x509.Certificate) error {
 				if c.insecure {
 					return nil // development mode bypass — never set in production builds
