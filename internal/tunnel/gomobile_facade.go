@@ -38,6 +38,7 @@ package tunnel
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"net"
 	"strings"
 	"sync"
@@ -332,6 +333,25 @@ func ConnectGomobile(relayDomain, relayPubKeyBase64 string) error {
 // runGomobilePump est extrait pour clarté — exécuté dans une goroutine
 // dédiée. Convertit le PacketWriter (callback in-bound de tunnel.RunPump)
 // en invocation du gomobilePacketCB enregistré.
+//
+// R-T8 BISECT round 4 (2026-05-10) — toute erreur du pump est traitée comme
+// "disconnected" (pas "error"). Pourquoi : le pump ne tourne qu'APRÈS un
+// Connect/verify réussi, donc à ce stade le pinning est validé, le token
+// obtenu, la session QUIC ouverte. Une erreur du pump (read header EOF,
+// write frame failed, stream EOF) est par construction d'origine RÉSEAU
+// (NAT timeout, CGNAT rotation, microcoupure cellulaire) — donc transitoire
+// et reconnect-able.
+//
+// Le côté Kotlin (LeVoileVpnService.onStateChanged) traite "error" comme
+// définitif (pinning, verification, token expired — erreurs de phase
+// Connect) et n'auto-reconnect PAS dessus. Avant ce fix, un pump qui mourait
+// sur un network_error transitoire émettait "error", le Kotlin l'ignorait,
+// et le tunnel restait zombie : TUN ouverte côté Kotlin, pump mort côté Go,
+// tous les paquets utilisateur droppés silencieusement (Twitch/Facebook KO,
+// test IP simple OK car déjà chargé en cache).
+//
+// Les vraies erreurs définitives (pinning, verification) viennent uniquement
+// de ConnectGomobile, jamais d'ici — leur emitStatusErr est conservé là-bas.
 func runGomobilePump(ctx context.Context, c *Client, outbound <-chan []byte) {
 	inbound := func(pkt []byte) (int, error) {
 		gomobileMu.Lock()
@@ -352,10 +372,13 @@ func runGomobilePump(ctx context.Context, c *Client, outbound <-chan []byte) {
 
 	err := c.RunPump(ctx, outbound, inbound)
 	if err != nil && ctx.Err() == nil {
-		emitStatusErr(err)
-	} else {
-		emitStatus("disconnected", "")
+		// Log la cause via slog (visible logcat tag Go) avant l'émission —
+		// utile pour diagnostiquer post-mortem si l'auto-reconnect lui-même
+		// échoue ensuite.
+		slog.Warn("tunnel: pump exited with error — will trigger reconnect", "error", err)
 	}
+	// Toujours "disconnected" — déclenche scheduleAutoReconnect côté Kotlin.
+	emitStatus("disconnected", "")
 }
 
 // WritePacketGomobile pousse un paquet IP brut dans la file de pump.

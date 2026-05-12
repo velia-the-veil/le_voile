@@ -1,12 +1,12 @@
-// R-T8 (2026-05-05) — Tests for the heartbeat /health probe.
+// R-T8 (2026-05-05, retuned 2026-05-10) — Tests for the heartbeat /health probe.
 //
 // Smoke tests focus on :
 //   - pingHealth() returns nil when relay /health responds 200.
 //   - pingHealth() returns error when relay is unreachable.
 //   - startHeartbeat / stopHeartbeat are idempotent.
 //
-// The full goroutine lifecycle (timing-dependent : 5s ticks * 2 fails =
-// ~15s minimum to flip state) is NOT exercised here — too slow for unit
+// The full goroutine lifecycle (timing-dependent : 10s ticks * 3 fails =
+// ~30s minimum to flip state) is NOT exercised here — too slow for unit
 // tests, validated end-to-end on Android device. We keep the heartbeat
 // constants un-mocked so production behaviour is what the test verifies.
 
@@ -132,7 +132,7 @@ func TestClient_HeartbeatLoop_NotConnected_NoStateChange(t *testing.T) {
 		close(done)
 	}()
 
-	// Let the loop run for a bit (less than heartbeatInterval=5s) — no
+	// Let the loop run for a bit (less than heartbeatInterval=10s) — no
 	// tick fires, nothing happens.
 	time.Sleep(100 * time.Millisecond)
 

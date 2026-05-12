@@ -12,14 +12,27 @@
 //     keeps going. In practice we saw 90+ minutes of zombie state on Free
 //     Mobile 4G LTE before the user noticed.
 //
-// The heartbeat probes the relay's `/health` endpoint every 5s with a 2s
-// timeout. After 2 consecutive failures the client transitions to
+// The heartbeat probes the relay's `/health` endpoint every 10s with a 3s
+// timeout. After 3 consecutive failures the client transitions to
 // StateDisconnected, allowing the upstream Reconnector (Android service or
 // internal/tunnel/reconnect.go on desktop) to re-establish.
 //
-// 5s + 2 fails = 10-15s detection floor. Acceptable trade-off : faster
-// would generate more probe traffic ; slower would let the user wait
-// longer before reconnect kicks in.
+// R-T8 BISECT round 3 (2026-05-10) — élargissement des fenêtres :
+//   - tick 5s → 10s
+//   - timeout 2s → 3s
+//   - fails consécutifs 2 → 3
+//
+// Justification : sur 4G LTE Free Mobile (Nothing Phone Android 16),
+// l'ancien réglage 5s/2s/2-fails trip-ait sur des microcoupures cellulaires
+// transitoires (cell handoff intra-LTE de 1-3s, congestion radio). Le tunnel
+// QUIC sain était tué par un faux positif heartbeat. Symptôme : coupure
+// nette à ~2 min précises pendant un live Twitch sur device.
+//
+// Le nouveau réglage donne une détection floor de ~30s (3 fails à 10s
+// d'intervalle, chaque fail = 3s timeout) au lieu de ~14s, mais élimine
+// les faux positifs : un vrai zombie tunnel restera à 100% RX-silent sur
+// 30s+, alors qu'une microcoupure récupère en 1-3s donc ne fail pas 3
+// pings d'affilée.
 //
 // On Android, R-T8 also wires QUIC Connection Migration (MigrateToFD) which
 // eliminates the visible coupure for cases where the underlying network
@@ -32,14 +45,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"time"
 )
 
 const (
-	heartbeatInterval               = 5 * time.Second
-	heartbeatTimeout                = 2 * time.Second
-	maxConsecutiveHeartbeatFailures = 2
+	heartbeatInterval               = 10 * time.Second
+	heartbeatTimeout                = 3 * time.Second
+	maxConsecutiveHeartbeatFailures = 3
 )
 
 // startHeartbeat spawns the heartbeat goroutine. Idempotent : if a heartbeat
@@ -110,6 +124,10 @@ func (c *Client) heartbeatLoop(parentCtx context.Context, stop <-chan struct{}) 
 			err := c.pingHealth(parentCtx)
 			if err != nil {
 				consecutiveFailures++
+				slog.Warn("tunnel: heartbeat: probe failed",
+					"consecutive_failures", consecutiveFailures,
+					"max_failures", maxConsecutiveHeartbeatFailures,
+					"error", err)
 				if consecutiveFailures >= maxConsecutiveHeartbeatFailures && c.state.Get() == StateConnected {
 					// Trip the disconnect — wake everyone up.
 					//
@@ -125,6 +143,8 @@ func (c *Client) heartbeatLoop(parentCtx context.Context, stop <-chan struct{}) 
 					//    Pump returns with error, runGomobilePump's deferred
 					//    emitStatus("disconnected") runs (idempotent — Kotlin
 					//    side dedupes consecutive identical states).
+					slog.Error("tunnel: heartbeat: tripping StateDisconnected — zombie tunnel detected",
+						"consecutive_failures", consecutiveFailures)
 					c.state.Set(StateDisconnected)
 					emitStatus("disconnected", "")
 
@@ -143,6 +163,10 @@ func (c *Client) heartbeatLoop(parentCtx context.Context, stop <-chan struct{}) 
 			}
 
 			// Success — reset counter.
+			if consecutiveFailures > 0 {
+				slog.Info("tunnel: heartbeat: probe recovered",
+					"failures_cleared", consecutiveFailures)
+			}
 			consecutiveFailures = 0
 		}
 	}

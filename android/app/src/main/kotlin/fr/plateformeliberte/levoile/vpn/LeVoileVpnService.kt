@@ -910,12 +910,25 @@ class LeVoileVpnService : VpnService() {
                             scheduleAutoReconnect()
                         }
                     }
+                    fr.plateformeliberte.levoile.ui.VpnState.ERROR -> {
+                        // R-T8 BISECT round 7 (2026-05-11) — ERROR doit AUSSI
+                        // déclencher un reconnect. Observation device : pendant
+                        // le restart du relais, le client fait un Connect qui
+                        // timeout (relais en cours de boot, 5s connect ceiling).
+                        // ConnectGomobile émet alors error/connection_timeout
+                        // → state ERROR → si on ignore, le tunnel reste bloqué.
+                        //
+                        // Pour les erreurs DEFINITIVES (pinning_failed,
+                        // verification_failed), l'utilisateur a un kill switch
+                        // Always-On qui le protège ; et le backoff exponentiel
+                        // (1s, 2s, 4s, 8s, 16s, 30s) évite l'emballement même
+                        // sur 100 tentatives.
+                        if (autoReconnectEnabled.get()) {
+                            scheduleAutoReconnect()
+                        }
+                    }
                     else -> {
-                        // CONNECTING / RECONNECTING / ERROR : pas d'action.
-                        // ERROR pourrait justifier un reconnect aussi, mais
-                        // GoBackedPacketRelay émet ERROR pour les pinning
-                        // failures et autres erreurs définitives — pas la peine
-                        // d'insister.
+                        // CONNECTING / RECONNECTING : pas d'action.
                     }
                 }
             },
@@ -968,14 +981,19 @@ class LeVoileVpnService : VpnService() {
                 Log.i(TAG, "scheduleAutoReconnect runnable: autoReconnect désactivé entre-temps, abort")
                 return@postDelayed
             }
-            if (vpnInterface != null) {
-                // Étrange — la TUN est déjà revenue (probablement via un
-                // chemin alternatif), pas la peine de re-connect.
-                Log.i(TAG, "scheduleAutoReconnect runnable: vpnInterface != null, skip reconnect")
-                return@postDelayed
-            }
-            // Cleanup défensif au cas où la session précédente n'a pas
-            // tout libéré (idempotent).
+            // R-T8 BISECT round 3 (2026-05-10) — fix bug critique :
+            // l'ancien code skip-ait le reconnect si `vpnInterface != null`
+            // en partant du principe « la TUN est déjà revenue ». Faux :
+            // quand le heartbeat Go trip, il ferme la session QUIC mais
+            // PERSONNE ne ferme la TUN Kotlin côté Service. La TUN reste
+            // ouverte mais le pump Go est mort → tous les paquets sont
+            // droppés silencieusement → l'utilisateur perd internet
+            // jusqu'à un disconnect manuel. Symptôme observé sur Nothing
+            // Phone / 4G LTE Free Mobile : coupure définitive à ~2 min.
+            //
+            // Fix : on cleanupSync() inconditionnellement (idempotent —
+            // ferme la TUN morte si elle est ouverte) puis connectInternal
+            // crée une TUN fraîche + une nouvelle session Go.
             cleanupSync()
             // Re-déclenche le flow de connexion. connectInternal pose
             // tunnelStartedFired = true, builder.establish, etc. Si une

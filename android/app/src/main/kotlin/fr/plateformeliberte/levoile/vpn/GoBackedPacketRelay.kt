@@ -68,17 +68,20 @@ class GoBackedPacketRelay(
      */
     private val inboundSink: Channel<ByteArray>,
     /**
-     * Capacité du Channel outbound interne (Kotlin → Go). 2048 paquets ≈ 2.9 MB
+     * Capacité du Channel outbound interne (Kotlin → Go). 8192 paquets ≈ 11 MB
      * max in-flight (MTU 1420). Drop silencieux au-delà.
      *
-     * Bumped 256 -> 2048 après mesure 2026-05-04 : le drainOutboundLoop
-     * (Mutex + JNI per packet via GoCoreAdapter.writePacket) ne suit pas le
-     * débit du pump-out sous charge → 1000 drops/30s observés sur Cloudflare
-     * speed test → retransmissions QUIC → throughput effondré 37 KB/s. Le
+     * Bumped 256 -> 2048 (2026-05-04) puis 2048 -> 8192 (R-T8 BISECT round 4,
+     * 2026-05-10) : sous charge Facebook (50+ connexions parallèles,
+     * gros JS+images), 2048 saturait en quelques secondes → drops massifs →
+     * SYN/ACK perdus → "tunnel zombie" apparent (Twitch + tout autre site
+     * KO en même temps que FB) sans aucune erreur visible côté pump Go
+     * (pas de heartbeat trip car la connexion répond aux /health). Le
      * vrai fix est de batcher les writes côté Kotlin↔Go (Phase 2), mais
-     * augmenter la capacité absorbe les bursts en attendant.
+     * augmenter la capacité absorbe les bursts en attendant. 11 MB
+     * d'in-flight est acceptable côté mémoire (vs 2.9 MB avant).
      */
-    private val outboundCapacity: Int = 2048,
+    private val outboundCapacity: Int = 8192,
     /**
      * Code-review post-Epic 11 (M4) + Story 11.7-bis : callback de transition
      * d'état tunnel enrichi. Reçoit aussi l'IP visible et le pays effectif
@@ -133,13 +136,28 @@ class GoBackedPacketRelay(
     private val droppedBackPressureCount = AtomicLong(0)
 
     /**
+     * Compteurs Round 7 (2026-05-11) — quantifier le pump-in drop.
+     * Hypothèse : si `inboundSink` (Channel capacity 256 côté Service) sature,
+     * les paquets retour Go→Kotlin sont droppés ici silencieusement → côté
+     * Go on incrémente rxBytesTotal (avant l'appel inbound) → le watchdog ne
+     * voit pas le drop. Mais le user voit son tunnel zombie. Instrumentons.
+     */
+    private val droppedInboundSinkCount = AtomicLong(0)
+
+    /**
      * Callback Go → Kotlin invoqué pour chaque paquet IP reçu du relais.
      * Enqueue dans le sink du Service via `trySend` (non-blocking + drop
      * silencieux si saturé — M-3).
      */
     private val packetCallback = PacketCallback { packet ->
         if (running.get()) {
-            inboundSink.trySend(packet)
+            val sent = inboundSink.trySend(packet).isSuccess
+            if (!sent) {
+                val total = droppedInboundSinkCount.incrementAndGet()
+                if (total % 100L == 0L) {
+                    Log.i(TAG, "drop $total (inbound sink saturé — pump-in service trop lent)")
+                }
+            }
         }
         // Si !running, on drop (le Service a déjà appelé onTunnelStopped
         // mais la goroutine Go pourrait encore livrer un dernier paquet).
@@ -253,8 +271,9 @@ class GoBackedPacketRelay(
     override fun onOutboundPacket(buf: ByteArray, length: Int) {
         if (!running.get()) {
             droppedNotConnectedCount.incrementAndGet()
+            // Log.i pour visibilité debug (Nothing OS filtre Verbose+Debug).
             if (droppedNotConnectedCount.get() % 1000L == 0L) {
-                Log.d(TAG, "drop ${droppedNotConnectedCount.get()} (session non ouverte)")
+                Log.i(TAG, "drop ${droppedNotConnectedCount.get()} (session non ouverte)")
             }
             return
         }
@@ -265,9 +284,17 @@ class GoBackedPacketRelay(
         val sent = outboundChannel.trySend(packet).isSuccess
         if (!sent) {
             // Channel plein → drop silencieux (TCP/QUIC retransmettront).
-            droppedBackPressureCount.incrementAndGet()
-            if (droppedBackPressureCount.get() % 1000L == 0L) {
-                Log.d(TAG, "drop ${droppedBackPressureCount.get()} (back-pressure outbound)")
+            //
+            // R-T8 BISECT round 4 (2026-05-10) : seuil 100 + Log.i pour
+            // diagnostiquer le bug "Facebook tue Twitch" sur 4G LTE. Sous
+            // charge (50+ connexions parallèles, gros JS, images), le
+            // drainOutboundLoop ne suit pas → drop massifs → SYN/ACK perdus
+            // → tunnel apparaît zombie. Si on voit ces logs, augmenter
+            // outboundCapacity (2048→8192) absorbe les bursts en attendant
+            // un fix structurel (batch JNI writes, Phase 2).
+            val total = droppedBackPressureCount.incrementAndGet()
+            if (total % 100L == 0L) {
+                Log.i(TAG, "drop $total (back-pressure outbound) — augmenter outboundCapacity ?")
             }
         }
     }
