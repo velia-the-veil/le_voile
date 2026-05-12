@@ -84,14 +84,21 @@ jobs:
         working-directory: android
         run: |
           APK="app/build/outputs/apk/apkDirect/debug/app-apkDirect-debug.apk"
+          # Whitelist NFR-AND-7 — cf. doc detaillee dans android-audit.yml.
+          # 5 permissions applicatives + 1 AGP-injectee + 3 WorkManager-injectees
+          # (Story 12.5 UpdateCheckWorker : WAKE_LOCK, ACCESS_NETWORK_STATE,
+          # RECEIVE_BOOT_COMPLETED — toutes normal-level).
           # Pas de heredoc indenté (espaces de prefix cassent le diff contre
           # apkanalyzer). Cf. fix Story 12.2 Review (2026-05-03).
           EXPECTED_SORTED=$(printf '%s\n' \
+            'android.permission.ACCESS_NETWORK_STATE' \
             'android.permission.FOREGROUND_SERVICE' \
             'android.permission.FOREGROUND_SERVICE_DATA_SYNC' \
             'android.permission.FOREGROUND_SERVICE_SPECIAL_USE' \
             'android.permission.INTERNET' \
             'android.permission.POST_NOTIFICATIONS' \
+            'android.permission.RECEIVE_BOOT_COMPLETED' \
+            'android.permission.WAKE_LOCK' \
             'fr.plateformeliberte.levoile.debug.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION' \
             | sort -u)
           ACTUAL=$(apkanalyzer manifest permissions "$APK" | sort -u)
