@@ -1,0 +1,37 @@
+[Unit]
+Description=Le Voile - Relais VPN Stateless
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/opt/levoile/relay -addr :443 -cert /opt/levoile/cert.pem -key /opt/levoile/key.pem -signing-key /opt/levoile/signing.key -registry-file /opt/levoile/relay-registry.json
+Restart=always
+RestartSec=5
+User=levoile
+Group=levoile
+AmbientCapabilities=CAP_NET_BIND_SERVICE CAP_NET_ADMIN
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE CAP_NET_ADMIN
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectHostname=true
+ProtectClock=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_NETLINK AF_UNIX
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+SystemCallFilter=@system-service
+SystemCallArchitectures=native
+LimitNOFILE=65536
+WorkingDirectory=/opt/levoile
+
+[Install]
+WantedBy=multi-user.target

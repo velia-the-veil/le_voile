@@ -1,0 +1,124 @@
+# Maintainer: Velia the Veil <aur-release@levoile.dev>
+# Story 7.3 — PKGBUILD AUR + publication GitHub Action
+#
+# Ce paquet est un binaire pré-compilé (approche `-bin` malgré le nom court
+# `levoile` imposé par la BDD "yay -S levoile"). Les artefacts sont extraits
+# directement depuis le .deb produit par GoReleaser + nfpm (story 7.2) — ce qui
+# garantit strictement les mêmes chemins, permissions et fichiers que sur
+# Debian/Fedora/Alpine. Aucun build Go n'est effectué côté utilisateur.
+#
+# Les pkgver/sha256sums sont remplacés par le workflow .github/workflows/aur-publish.yml
+# à chaque release GitHub (placeholders REPLACE_ME_*).
+
+pkgname=levoile
+pkgver=0.0.0
+pkgrel=1
+pkgdesc="VPN — tunnel QUIC/HTTP3 via Cloudflare, capture L3 TUN, kill switch nftables, UI tray+webview"
+arch=('x86_64' 'aarch64')
+url="https://github.com/velia-the-veil/le_voile"
+license=('MIT')
+depends=('webkit2gtk-4.1' 'libayatana-appindicator' 'nftables' 'iproute2')
+# binutils fournit `ar` et bsdtar est dans base/base-devel pour extraire le .deb.
+# openssl fourni par base — liste explicite pour la vérification verify() (story 7.4).
+makedepends=('binutils' 'openssl')
+# Les commits du repo AUR sont signés GPG (NFR22i) ; pas de validpgpkeys ici car
+# la vérification crypto des artefacts est Ed25519 (master key Le Voile) —
+# branchée dans verify() ci-dessous (story 7.4 livrée).
+# pkgname=levoile → pas besoin de `provides=('levoile')` (implicite).
+# Conflits avec les variantes AUR concurrentes (non publiées à date, provision
+# défensive pour éviter les doublons si quelqu'un forkait le PKGBUILD).
+conflicts=('levoile-bin' 'levoile-git')
+install=levoile.install
+options=('!strip' '!debug')
+
+# Sources par architecture : le .deb upstream + sa signature Ed25519 détachée.
+# Noms locaux `levoile-${pkgver}-<arch>.deb[.sig]` pour éviter les collisions
+# $srcdir quand makepkg construit amd64 et aarch64 dans le même workspace.
+#
+# La .sig fait 64 octets (Ed25519 RFC 8032). SHA256 = SKIP car il est dérivé
+# de manière déterministe du .deb + clé privée : figer son SHA256 serait une
+# indirection inutile. La sécurité vient de la vérification Ed25519 dans
+# verify() via la clé publique inlinée plus bas.
+source_x86_64=(
+    "levoile-${pkgver}-x86_64.deb::https://github.com/velia-the-veil/le_voile/releases/download/v${pkgver}/levoile_${pkgver}_amd64.deb"
+    "levoile-${pkgver}-x86_64.deb.sig::https://github.com/velia-the-veil/le_voile/releases/download/v${pkgver}/levoile_${pkgver}_amd64.deb.sig"
+)
+source_aarch64=(
+    "levoile-${pkgver}-aarch64.deb::https://github.com/velia-the-veil/le_voile/releases/download/v${pkgver}/levoile_${pkgver}_arm64.deb"
+    "levoile-${pkgver}-aarch64.deb.sig::https://github.com/velia-the-veil/le_voile/releases/download/v${pkgver}/levoile_${pkgver}_arm64.deb.sig"
+)
+
+sha256sums_x86_64=('REPLACE_ME_AMD64' 'SKIP')
+sha256sums_aarch64=('REPLACE_ME_ARM64' 'SKIP')
+
+# Activated story-7.4 : vérification Ed25519 de la signature détachée via la
+# master key Le Voile (clé publique inlinée pour éviter tout téléchargement
+# runtime — un attaquant MITM sur un serveur de clés ne peut pas forger une
+# release). La clé publique canonique est aussi exposée dans le repo amont :
+# docs/keys/levoile-release.pub.pem et dans internal/crypto/release_keys.go
+# (constante ReleasePublicKeyCurrentBase64).
+#
+# Mettre à jour manuellement ce heredoc lors d'une rotation master key
+# (NFR22h) : récupérer la nouvelle clé depuis docs/keys/ en amont, bumper
+# pkgrel, pousser. La PEM complète ne fait que 3 lignes — inliner la rend
+# auditable en lecture simple du PKGBUILD.
+verify() {
+    local deb sig status
+    local pubkey_pem
+    pubkey_pem=$(cat <<'PEM'
+-----BEGIN PUBLIC KEY-----
+MCowBQYDK2VwAyEAh94H7SXEBMr0/OTqxLmepAxax60vhgbbezU0Jt+hbQM=
+-----END PUBLIC KEY-----
+PEM
+)
+    cd "$srcdir"
+    deb="levoile-${pkgver}-${CARCH}.deb"
+    sig="${deb}.sig"
+
+    if [[ ! -f "$sig" ]]; then
+        echo "verify: signature file missing: $sig" >&2
+        return 1
+    fi
+
+    # openssl pkeyutl -rawin -verify reçoit :
+    #   - la clé publique PEM via stdin (-inkey /dev/stdin)
+    #   - la signature détachée via -sigfile
+    #   - le fichier signé via -in
+    # Exit 0 si la signature est valide, ≠ 0 sinon.
+    status=0
+    printf '%s\n' "$pubkey_pem" \
+        | openssl pkeyutl -verify -pubin -inkey /dev/stdin \
+                          -rawin -in "$deb" -sigfile "$sig" \
+                          >/dev/null 2>&1 || status=$?
+
+    if [[ $status -ne 0 ]]; then
+        echo "verify: Ed25519 signature verification FAILED for $deb" >&2
+        echo "verify: do not install — the package has been tampered with or signed by an untrusted key" >&2
+        return 1
+    fi
+    msg "Ed25519 signature valid for $deb (Le Voile master key)"
+}
+
+prepare() {
+    cd "$srcdir"
+    local deb="levoile-${pkgver}-${CARCH}.deb"
+    # Un .deb est une archive ar contenant debian-binary + control.tar.* + data.tar.*
+    # bsdtar (libarchive) sait extraire ar ET les tarballs internes.
+    bsdtar -xf "$deb"
+}
+
+package() {
+    # data.tar.* (nfpm utilise zstd par défaut) contient TOUS les fichiers
+    # avec leurs chemins absolus finaux et permissions nfpm. On réextrait dans
+    # $pkgdir → 1:1 avec les paquets Debian/Fedora/Alpine, aucune divergence
+    # possible entre distros.
+    bsdtar -xpf "$srcdir"/data.tar.* -C "$pkgdir"
+
+    # Convention Arch : la licence va dans /usr/share/licenses/$pkgname/ plutôt
+    # que /usr/share/doc/ (habitude Debian). On déplace proprement.
+    install -d "$pkgdir/usr/share/licenses/$pkgname"
+    if [ -f "$pkgdir/usr/share/doc/$pkgname/LICENSE" ]; then
+        mv "$pkgdir/usr/share/doc/$pkgname/LICENSE" \
+           "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+    fi
+}

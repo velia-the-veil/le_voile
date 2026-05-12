@@ -1,0 +1,30 @@
+# Le Voile — Configuration par défaut (Linux)
+#
+# Ce fichier est livré par le paquet .deb/.rpm/.apk à /etc/levoile/config.toml
+# (mode 0644 root:root, type "config|noreplace" → non écrasé à l'upgrade).
+# Il sert de squelette en lecture seule. La config runtime mutable (pays choisi,
+# toggles, etc.) est écrite par le service dans /etc/levoile/runtime.toml
+# (permissions 0600 levoile:levoile, HMAC signé — NFR9j).
+#
+# Remplacement de la clé publique Ed25519 au moment du build/release via
+# GoReleaser env (placeholder ci-dessous).
+
+[relay]
+domain = "relay.levoile.dev"
+public_key_ed25519 = "rjgDdexo2SOeNXhdy0fUKAONXeQGAyN2d3ixCeuXOpk="
+
+[client]
+auto_start = true
+
+[blocklist]
+enabled = true
+
+[registry]
+enabled = true
+url = "https://relay.levoile.dev"
+master_public_key = "rjgDdexo2SOeNXhdy0fUKAONXeQGAyN2d3ixCeuXOpk="
+bootstrap_doh_enabled = true
+
+# Note : section [http_proxy] obsolète sur Linux — la capture est L3 (TUN) via
+# levoile0, pas via proxy HTTP. Elle reste dans la version Windows legacy.
+# Cf. Epic 2 (story 2.1) pour la capture TUN, NFR9i pour DoH bootstrap.

@@ -1,0 +1,123 @@
+# Scriptlet pacman — Le Voile VPN (story 7.3)
+#
+# Fonctions pacman (différentes de dpkg/rpm) :
+#   post_install   — après l'installation fresh
+#   post_upgrade   — après une mise à jour (old_version passé en $1)
+#   pre_remove     — avant la suppression (désactivation du service)
+#   post_remove    — après la suppression (cleanup optionnel)
+#
+# La logique est alignée sur packaging/scripts/{preinstall,postinstall,preremove,postremove}.sh
+# (paquets .deb/.rpm/.apk, story 7.2) pour garantir un comportement identique.
+# Divergences volontaires :
+#   - Pacman gère lui-même les caches XDG via `hooks` post-transaction → pas
+#     besoin d'appeler update-desktop-database / gtk-update-icon-cache ici.
+#   - Création du user système faite dans post_install/post_upgrade (pacman n'a
+#     pas de pre_install dans le scriptlet, contrairement aux .deb/.rpm).
+
+_log() { echo "[levoile] $*" >&2; }
+
+_create_user() {
+    # 1. Groupe d'abord — on le crée SEUL (indépendant du user) pour que
+    # `useradd --gid levoile` puisse l'utiliser en groupe primaire.
+    if ! getent group levoile >/dev/null 2>&1; then
+        if groupadd --system levoile; then
+            _log "groupe système 'levoile' créé."
+        else
+            _log "ERREUR : groupadd levoile a échoué — le service ne pourra pas démarrer."
+            return 1
+        fi
+    fi
+
+    # 2. User — on vérifie l'absence AVANT d'appeler useradd ; si useradd
+    # échoue (race, /etc/passwd verrouillé, quota), on log explicitement.
+    if ! getent passwd levoile >/dev/null 2>&1; then
+        if useradd --system --no-create-home \
+                --shell /usr/sbin/nologin \
+                --gid levoile \
+                --comment "Le Voile VPN service" \
+                levoile; then
+            _log "user système 'levoile' créé (groupe primaire levoile)."
+        else
+            _log "ERREUR : useradd levoile a échoué — activer le service manuellement après correction."
+            return 1
+        fi
+    fi
+    return 0
+}
+
+# Helper : systemctl présent ET init systemd actif. Utile en chroot/container
+# où /usr/bin/systemctl existe mais systemd n'est pas PID 1.
+_systemd_active() {
+    command -v systemctl >/dev/null 2>&1 && \
+        systemctl daemon-reload >/dev/null 2>&1
+}
+
+post_install() {
+    _create_user || return 0  # soft-fail : pacman install continue, warning déjà loggé
+
+    # nf_tables est déjà chargé sur les kernels Arch standards, mais un
+    # best-effort modprobe reste utile sur kernels custom / container.
+    modprobe nf_tables 2>/dev/null || true
+    if command -v nft >/dev/null 2>&1 && ! nft list ruleset >/dev/null 2>&1; then
+        _log "WARN : nftables semble indisponible — le kill switch ne fonctionnera pas."
+    fi
+
+    if _systemd_active; then
+        if systemctl enable --now levoile.service 2>/dev/null; then
+            _log "service activé (enable + start). UI disponible à la prochaine session."
+        else
+            _log "WARN : 'systemctl enable --now levoile.service' a échoué — activer manuellement."
+        fi
+    else
+        _log "INFO : systemd non actif (chroot/container) — activation différée."
+    fi
+}
+
+post_upgrade() {
+    # old_version est passé en $1 — non utilisé ici, mais disponible pour les
+    # migrations futures (changements de schéma config, etc.).
+    _create_user || return 0
+
+    if ! _systemd_active; then
+        _log "INFO : systemd non actif — upgrade sans restart."
+        return 0
+    fi
+
+    # Respecter l'état utilisateur : si le service avait été `systemctl disable`,
+    # on ne le ré-enable pas. Si activé et qui tournait, on redémarre pour
+    # prendre le nouveau binaire.
+    if systemctl is-enabled levoile.service >/dev/null 2>&1; then
+        systemctl try-restart levoile.service 2>/dev/null \
+            && _log "service redémarré (état enabled préservé)." \
+            || _log "INFO : service stoppé — pas de restart."
+    else
+        _log "INFO : upgrade — service reste désactivé (choix utilisateur respecté)."
+    fi
+}
+
+pre_remove() {
+    # Désactivation propre du kill switch via IPC tant que le service tourne
+    # encore — évite de laisser nftables + TUN orphelins.
+    if [ -x /usr/bin/levoile-ctl ]; then
+        /usr/bin/levoile-ctl killswitch off >/dev/null 2>&1 || true
+    fi
+
+    if command -v systemctl >/dev/null 2>&1; then
+        systemctl disable --now levoile.service 2>/dev/null || true
+    fi
+
+    # Fallback : retirer nftables + interface si le ctl n'a pas pu.
+    if command -v nft >/dev/null 2>&1; then
+        nft delete table inet levoile 2>/dev/null || true
+    fi
+    if command -v ip >/dev/null 2>&1 && ip link show levoile0 >/dev/null 2>&1; then
+        ip link delete levoile0 2>/dev/null || true
+    fi
+}
+
+post_remove() {
+    # Convention Arch : on conserve la config et le user système (symétrique
+    # au `apt remove` sans purge). L'utilisateur qui veut un clean complet fait
+    # `sudo rm -rf /etc/levoile && sudo userdel levoile`.
+    :
+}
