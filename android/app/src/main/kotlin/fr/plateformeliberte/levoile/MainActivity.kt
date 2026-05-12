@@ -281,12 +281,14 @@ class MainActivity : AppCompatActivity() {
 
             override fun onPageStarted(view: WebView, url: String, favicon: android.graphics.Bitmap?) {
                 super.onPageStarted(view, url, favicon)
-                if (BuildConfig.DEBUG) Log.i(TAG, "onPageStarted url=$url")
+                // NFR-AND-9 : ne pas logger l'URL — marqueur d'événement seulement.
+                if (BuildConfig.DEBUG) Log.i(TAG, "onPageStarted")
             }
 
             override fun onPageFinished(view: WebView, url: String) {
                 super.onPageFinished(view, url)
-                if (BuildConfig.DEBUG) Log.i(TAG, "onPageFinished url=$url")
+                // NFR-AND-9 : ne pas logger l'URL — marqueur d'événement seulement.
+                if (BuildConfig.DEBUG) Log.i(TAG, "onPageFinished")
                 // AC #3 (Story 9.3) : marqueur responsive injecté APRÈS chargement DOM.
                 // Si Story 11.1 a besoin que la classe soit là AVANT certaines instanciations
                 // de composants C13-C17, elle utilisera un MutationObserver côté JS.
