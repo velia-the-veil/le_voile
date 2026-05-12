@@ -96,3 +96,6 @@ config.toml
 # OS files
 .DS_Store
 Thumbs.db
+
+# Notes personnelles de reprise de session — jamais commitées
+session_a_reprendre.md
