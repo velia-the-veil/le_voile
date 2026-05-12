@@ -72,14 +72,16 @@ jobs:
 
       - name: Run AuditCITest unit test
         working-directory: android
-        run: ./gradlew :app:testDebugUnitTest --tests "fr.plateformeliberte.levoile.audit.AuditCITest" --no-daemon
+        # Story 12.5 — productFlavors apkDirect/fdroid → testDebugUnitTest est
+        # ambigu, il faut nommer les 2 tasks de flavor explicitement.
+        run: ./gradlew :app:testApkDirectDebugUnitTest :app:testFdroidDebugUnitTest --tests "fr.plateformeliberte.levoile.audit.AuditCITest" --no-daemon
 
       # Story 10.5 — scan zéro-data-utilisateur des templates de log Kotlin.
       # Step séparé pour lisibilité de l'output CI (préférence vs un appel
       # consolidé qui mélangerait les outputs des 2 tests d'audit).
       - name: Run LogFilteringTest unit test
         working-directory: android
-        run: ./gradlew :app:testDebugUnitTest --tests "fr.plateformeliberte.levoile.log.LogFilteringTest" --no-daemon
+        run: ./gradlew :app:testApkDirectDebugUnitTest :app:testFdroidDebugUnitTest --tests "fr.plateformeliberte.levoile.log.LogFilteringTest" --no-daemon
 
   # ============================================================================
   # Story 12.2 — Lint Android (Kotlin compile + AGP lint).
@@ -162,7 +164,7 @@ jobs:
 
       - name: Gradle unit tests
         working-directory: android
-        run: ./gradlew :app:testDebugUnitTest :levoile-core:testDebugUnitTest --no-daemon --stacktrace
+        run: ./gradlew :app:testApkDirectDebugUnitTest :app:testFdroidDebugUnitTest :levoile-core:testDebugUnitTest --no-daemon --stacktrace
 
       - name: Upload test reports
         if: always()
@@ -170,7 +172,8 @@ jobs:
         with:
           name: unit-test-reports
           path: |
-            android/app/build/reports/tests/testDebugUnitTest/
+            android/app/build/reports/tests/testApkDirectDebugUnitTest/
+            android/app/build/reports/tests/testFdroidDebugUnitTest/
             android/levoile-core/build/reports/tests/testDebugUnitTest/
           if-no-files-found: warn
 

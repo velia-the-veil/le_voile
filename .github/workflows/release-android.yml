@@ -72,12 +72,12 @@ jobs:
 
       - name: Audit télémétrie + lint + tests + assembleDebug (apkDirect)
         working-directory: android
-        # Story 12.5 — productFlavors apkDirect/fdroid. testDebugUnitTest
-        # lifecycle task execute les 2 flavors automatiquement.
+        # Story 12.5 — productFlavors apkDirect/fdroid → testDebugUnitTest est
+        # ambigu, il faut nommer les 2 tasks de flavor explicitement.
         run: |
           ./gradlew :app:auditTelemetryDependencies :levoile-core:auditTelemetryDependencies --no-daemon --stacktrace
           ./gradlew :app:lintApkDirectDebug :levoile-core:lint --no-daemon --stacktrace
-          ./gradlew :app:testDebugUnitTest :levoile-core:testDebugUnitTest --no-daemon --stacktrace
+          ./gradlew :app:testApkDirectDebugUnitTest :app:testFdroidDebugUnitTest :levoile-core:testDebugUnitTest --no-daemon --stacktrace
           ./gradlew :app:assembleApkDirectDebug --no-daemon --stacktrace
 
       - name: Audit permissions APK apkDirect debug
