@@ -47,6 +47,13 @@ android {
         ndk {
             abiFilters.add("arm64-v8a")
             abiFilters.add("armeabi-v7a")
+            // Story 12.6 — tests instrumentés CI : émulateur GitHub Actions
+            // tourne en x86_64 (accélération KVM). Activer x86_64 uniquement
+            // via -PciEmulator=true pour ne pas alourdir l'APK release
+            // (NFR-AND-3 < 25 MB).
+            if (project.hasProperty("ciEmulator")) {
+                abiFilters.add("x86_64")
+            }
         }
     }
 
