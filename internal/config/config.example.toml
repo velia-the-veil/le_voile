@@ -1,0 +1,94 @@
+# Le Voile - Example configuration (copy to config.toml and fill in your values)
+#
+# ⚠ NE PAS ÉDITER `config.toml` À LA MAIN (NFR9j / Story 7.5)
+#
+# Le service signe `config.toml` au démarrage via HMAC-SHA256 (clé machine-local
+# 0600 / ACL user-only). Toute modification externe déclenche un refus de
+# démarrer + un bandeau d'alerte UI. Éditez vos préférences via :
+#   • l'UI Le Voile (pays, kill switch, toggles)
+#   • `levoile-ctl` pour les commandes avancées
+#
+# Si vous avez besoin de régénérer une config propre (après corruption, essai
+# manuel, backup), procédure hors-band :
+#   Linux   : sudo systemctl stop levoile.service
+#             sudo rm /etc/levoile/config.toml /etc/levoile/config.toml.hmac
+#             sudo systemctl start levoile.service
+#   Windows : arrêt de « Le Voile Service » (services.msc)
+#             suppression de %AppData%\LeVoile\config.toml + .hmac
+#             redémarrage du service
+# Au prochain démarrage, ce squelette (embarqué dans le binaire) est copié et
+# signé automatiquement.
+#
+# Déploiement admin / CI : pour pré-configurer une flotte, remplacez
+# `config.example.toml` dans l'arbre source (ou patchez le binaire)
+# AVANT le premier démarrage — le bootstrap copiera vos valeurs et signera.
+
+# [relay] section — intentionally left empty in the bootstrap skeleton.
+# The service will fail fast at startup ("relay public key is required")
+# rather than attempt a phantom tunnel against placeholder values.
+# Fill these in manually, or use the installer/package which ships a
+# pre-configured config.toml with registry-validated relay defaults.
+[relay]
+domain = ""
+public_key_ed25519 = ""
+# insecure = true  # Uncomment for development only — NEVER in production
+
+# DNS resolver côté relais (story 3.5) — résolution interne avec blocklist.
+# Ces paramètres ne sont utilisés que par cmd/relay, pas par le client.
+[relay.dns]
+upstreams = ["https://1.1.1.1/dns-query", "https://9.9.9.9/dns-query"]
+blocklist_url = "https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts"
+blocklist_refresh_hours = 24
+
+[client]
+auto_start = true
+
+[tun]
+# Active la création de l'interface TUN/Wintun au démarrage (Epic 2 —
+# capture L3). Laisser à false tant que routing/firewall/pump ne sont pas
+# livrés. Override en dev : LEVOILE_TUN_ENABLED=1.
+enabled = false
+# Nom de l'interface TUN/Wintun créée par le service. Ne modifier que si
+# conflit d'interface (regex autorisée : ^[a-z][a-z0-9]{0,14}$).
+name = "levoile0"
+# MTU en octets — bornes [576, 9000]. 1420 = défaut compatible QUIC/HTTP3
+# (laisse 80 octets pour l'encapsulation IP + tunnel).
+mtu = 1420
+
+[firewall]
+# Active le kill switch kernel-level (WFP sur Windows, nftables sur Linux).
+# Bloque tout trafic sortant sauf TUN + relais.
+#
+# Story 5.9 — désactivable temporairement à chaud via :
+#   • le menu tray "Mode dégradé" (modale de confirmation destructive),
+#   • la commande CLI privilégiée `levoile-ctl killswitch off|on`.
+# Auto-restauré dès qu'une nouvelle connexion tunnel réussit. La valeur
+# persistée ici est mise à jour automatiquement par le service.
+enable_killswitch = true
+
+# ⚠ ATTENTION : autoriser IPv6 hors tunnel expose votre IPv6 réelle sur
+# les services IPv6. Le trafic IPv6 NE passe PAS par le tunnel Le Voile.
+# Défaut false = IPv6 bloqué par le kill switch (comportement sûr).
+allow_ipv6_leak = false
+
+# Watchdog TUN : détecte la disparition/altération de levoile0 toutes les
+# 3s (NFR16 < 5s). Non configurable pour l'instant — DefaultInterval codé
+# dans internal/tun/watchdog/watchdog.go. Sera exposé via TOML si besoin.
+
+[stun]
+# Story 6.1 — Validation anti-fuite. Le client émet régulièrement des
+# requêtes STUN Binding (RFC 5389) via la TUN pour vérifier que le trafic
+# UDP passe bien par le tunnel. Après Epic 2, c'est un check de validation :
+# la capture L3 empêche structurellement les fuites.
+#
+# Intervalle entre deux checks. 10m suffit pour une validation
+# anti-fuite non-intrusive sans surcharger les serveurs STUN publics.
+# leakcheck_interval = "10m"
+#
+# Override du premier serveur STUN de la liste (legacy — compat < 6.1).
+# Laisser vide pour garder le défaut stun.l.google.com:19302.
+# default_server = "stun.l.google.com:19302"
+#
+# Override complet de la liste des serveurs STUN (ordre = ordre d'essai).
+# Si vide, utilise les défauts : Google x2 + Cloudflare.
+# servers = ["stun.l.google.com:19302", "stun1.l.google.com:19302", "stun.cloudflare.com:3478"]

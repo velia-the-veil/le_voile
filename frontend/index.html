@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Le Voile</title>
+    <link rel="stylesheet" href="src/style.css">
+</head>
+<body>
+    <!-- Story 7.5 / NFR9j — permanent banner when startup HMAC verification
+         of config.toml failed (external tampering). Takes precedence over the
+         kill-switch banner so the user sees the fatal state first. Recovery
+         is hors-band only: no reset button by design. -->
+    <div class="integrity-failed-banner" id="integrity-banner" style="display:none;" role="alert">
+        &#9888; Configuration altérée — Le Voile est figé en sécurité.
+        <span class="integrity-recovery-hint" id="integrity-recovery-hint"></span>
+    </div>
+    <!-- Story 5.9 — permanent banner shown whenever killswitch_mode === "degraded".
+         Sticky-top, always visible across panels. Kept inviolable: no close button. -->
+    <div class="killswitch-degraded-banner" id="killswitch-banner" style="display:none;" role="alert">
+        &#9888; Mode dégradé — protection désactivée
+    </div>
+    <!-- Story 8.1 AC9 — non-blocking update notice, fixed at the bottom edge so
+         it never steals vertical space from the main UI. Toggled by app.js
+         based on /api/update-status. The "Plus tard" link is in-memory only
+         (no localStorage / no server pref): the user MUST be reminded each
+         time the window opens until the service is restarted. -->
+    <div class="update-ready-banner" id="update-banner" style="display:none;" role="status" aria-live="polite">
+        <span id="update-banner-text"></span>
+        <a href="#" id="update-dismiss" onclick="dismissUpdateBanner(event)">Plus tard</a>
+    </div>
+    <div class="titlebar">
+        <div class="titlebar-left">
+            <span class="titlebar-v" id="titlebar-v">V</span>
+            <span class="titlebar-name">Le Voile</span>
+            <span class="ipv6-badge" id="ipv6-badge" style="display:none;" title="Votre IP IPv6 réelle est visible pour les services IPv6">IPv6</span>
+        </div>
+        <div class="titlebar-controls">
+            <button class="titlebar-btn bell-btn" id="bell-btn" onclick="showPanel('notifications')" title="Alertes">
+                🔔<span class="bell-badge" id="bell-badge">0</span>
+            </button>
+            <button class="titlebar-btn" onclick="__minimize()" title="Reduire">─</button>
+            <button class="titlebar-btn close-btn" onclick="confirmQuit()" title="Quitter">✕</button>
+        </div>
+    </div>
+    <div class="window-body">
+        <div class="sidebar">
+            <button class="sidebar-tab active" id="tab-status" onclick="showPanel('status')">
+                <span class="tab-icon">🛡</span><span>Statut</span>
+            </button>
+            <button class="sidebar-tab" id="tab-settings" onclick="showPanel('settings')">
+                <span class="tab-icon">⚙</span><span>Parametres</span>
+            </button>
+            <div class="sidebar-divider"></div>
+            <div id="country-list"></div>
+        </div>
+        <div class="panel-area">
+            <!-- SERVICE DOWN FALLBACK (Story 5.6) — affiché si /api/status renvoie service_reachable=false -->
+            <div class="panel service-down" id="panel-service-down" role="alertdialog" aria-labelledby="service-down-title" style="display:none;">
+                <h2 class="service-down-title" id="service-down-title">Service Le Voile non démarré</h2>
+                <p class="service-down-msg" id="service-down-msg"></p>
+                <pre class="service-down-cmd" id="service-down-cmd" tabindex="0"></pre>
+                <div class="service-down-retry" aria-live="polite">
+                    <span class="service-down-spinner" aria-hidden="true"></span>
+                    <span>Nouvelle tentative toutes les 5 s…</span>
+                </div>
+            </div>
+            <!-- STATUS PANEL -->
+            <div class="panel visible" id="panel-status">
+                <div class="status-group">
+                    <div class="status-dot" id="status-dot"></div>
+                    <span class="status-text" id="status-text">Chargement...</span>
+                </div>
+                <div class="captive-banner" id="captive-banner" style="display:none;">
+                    <span class="captive-icon">&#9888;</span>
+                    <span>Portail Wi-Fi detecte. Authentifiez-vous, puis cliquez ci-dessous.</span>
+                    <button class="btn btn-captive-retry" id="btn-captive-retry" onclick="retryCaptive()">Activer la protection</button>
+                </div>
+                <div class="failover-banner" id="failover-banner" role="alert" style="display:none;">
+                    <span class="captive-icon">&#9888;</span>
+                    <span id="failover-banner-text"></span>
+                </div>
+                <div class="anomaly-banner" id="anomaly-banner" role="alert" style="display:none;">
+                    <span class="captive-icon">&#9888;</span>
+                    <span id="anomaly-banner-text">Anomalie detectee &mdash; reconnexion en cours</span>
+                </div>
+                <div class="country-name-display" id="country-name"></div>
+                <div class="info-group">
+                    <div class="ip-row" id="ip-real"></div>
+                    <div class="ip-row" id="ip-visible"></div>
+                    <div class="relay-info" id="relay-info"></div>
+                </div>
+                <div class="actions-group">
+                    <button class="btn btn-connect" id="btn-connect" onclick="toggleConnect()" aria-label="Se connecter">Connecter</button>
+                    <a class="link" id="test-link" href="https://plateformeliberte.fr/test-protection.html" target="_blank">Tester ma protection</a>
+                </div>
+            </div>
+            <!-- NOTIFICATIONS PANEL -->
+            <div class="panel" id="panel-notifications">
+                <h3>ALERTES</h3>
+                <div class="notif-empty">Aucune notification</div>
+            </div>
+            <!-- SETTINGS PANEL -->
+            <div class="panel" id="panel-settings">
+                <h3>PARAMETRES</h3>
+                <div class="setting-group">
+                    <div class="toggle-row">
+                        <span class="setting-label">Demarrage automatique</span>
+                        <div class="toggle" id="toggle-autostart" onclick="toggleSetting('autostart')"><div class="toggle-knob"></div></div>
+                    </div>
+                    <div class="setting-desc">Lancer Le Voile au demarrage de Windows.</div>
+                </div>
+                <div class="setting-group">
+                    <div class="toggle-row">
+                        <span class="setting-label">Blocklist DNS</span>
+                        <div class="toggle" id="toggle-blocklist" onclick="toggleSetting('blocklist')"><div class="toggle-knob"></div></div>
+                    </div>
+                    <div class="setting-desc">Bloquer les trackers et publicites via DNS.</div>
+                </div>
+                <div class="setting-group">
+                    <div class="toggle-row">
+                        <span class="setting-label">Proxy HTTP</span>
+                        <div class="toggle" id="toggle-httpproxy" onclick="toggleSetting('httpproxy')"><div class="toggle-knob"></div></div>
+                    </div>
+                    <div class="setting-desc">Proxy CONNECT local pour les navigateurs.</div>
+                </div>
+                <div class="setting-divider"></div>
+                <h4 class="setting-section-title">AVANCE</h4>
+                <div class="setting-group">
+                    <div class="toggle-row">
+                        <span class="setting-label">Autoriser IPv6 hors tunnel</span>
+                        <div class="toggle" id="toggle-ipv6leak" onclick="toggleIPv6Leak()"><div class="toggle-knob"></div></div>
+                    </div>
+                    <div class="setting-desc">Laisser passer le trafic IPv6 natif sans protection.</div>
+                    <div class="setting-warn" id="ipv6-warn" style="display:none;">&#9888; IPv6 expose hors tunnel</div>
+                </div>
+            </div>
+            <!-- QUIT CONFIRMATION MODAL -->
+            <div class="modal-overlay" id="modal-quit" style="display:none;">
+                <div class="modal">
+                    <div class="modal-text">Voulez-vous quitter Le Voile ?<br><span class="modal-hint">Votre protection sera interrompue.</span></div>
+                    <label class="modal-checkbox">
+                        <input type="checkbox" id="quit-dont-ask">
+                        <span>Ne plus montrer</span>
+                    </label>
+                    <div class="modal-actions">
+                        <button class="btn btn-modal-cancel" id="btn-quit-cancel" onclick="cancelQuitModal()">Annuler</button>
+                        <button class="btn btn-modal-danger" id="btn-quit-confirm" onclick="doQuit()">Quitter</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- IPv6 WARNING MODAL -->
+            <div class="modal-overlay" id="modal-ipv6" style="display:none;">
+                <div class="modal">
+                    <div class="modal-icon">&#9888;</div>
+                    <div class="modal-text">L'IPv6 ne sera PAS protégé par Le Voile et exposera votre IP réelle sur les services IPv6. Continuer ?</div>
+                    <div class="modal-actions">
+                        <button class="btn btn-modal-cancel" id="btn-ipv6-cancel" onclick="cancelIPv6Modal()">Annuler</button>
+                        <button class="btn btn-modal-danger" id="btn-ipv6-confirm" onclick="confirmIPv6Leak()">Continuer</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- KILL SWITCH DEGRADED MODAL (Story 5.9 AC1).
+                 Text is exact per AC; buttons mirror the IPv6 destructive pattern;
+                 the modal stays open until /api/settings/killswitch returns ok. -->
+            <div class="modal-overlay" id="modal-killswitch" style="display:none;">
+                <div class="modal">
+                    <div class="modal-icon">&#9888;</div>
+                    <div class="modal-text" id="modal-killswitch-text">Voulez-vous désactiver la protection temporairement ? Votre trafic ne sera PAS chiffré. L'icône tray deviendra rouge jusqu'à rétablissement du tunnel.</div>
+                    <div class="modal-error" id="modal-killswitch-error" style="display:none;"></div>
+                    <div class="modal-actions">
+                        <button class="btn btn-modal-cancel" id="btn-killswitch-cancel" onclick="cancelKillSwitchModal()">Annuler</button>
+                        <button class="btn btn-modal-danger" id="btn-killswitch-confirm" onclick="confirmKillSwitchDegraded()">Continuer</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <script src="src/app.js"></script>
+</body>
+</html>
