@@ -52,7 +52,10 @@ jobs:
   audit-dependencies:
     name: Audit dépendances Gradle (zéro-tracking)
     runs-on: ubuntu-22.04
-    timeout-minutes: 10
+    # Bumped à 25 min : depuis l'ajout des unit tests AuditCITest/LogFilteringTest
+    # (Story 10.5), ce job nécessite gomobile + build .aar comme les autres
+    # jobs Android — sans quoi `:app:checkApkDirectDebugAarMetadata` échoue.
+    timeout-minutes: 25
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -65,6 +68,27 @@ jobs:
 
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v3
+
+      - uses: actions/setup-go@v5
+        with: { go-version: '1.26.3' }
+
+      - uses: android-actions/setup-android@v3
+        with:
+          cmdline-tools-version: '11076708'
+
+      - name: Install gomobile
+        run: |
+          go install golang.org/x/mobile/cmd/gomobile@latest
+          go install golang.org/x/mobile/cmd/gobind@latest
+          gomobile init
+
+      - name: Build .aar gomobile
+        working-directory: android
+        run: bash scripts/build-aar.sh
+
+      - name: Sync frontend assets
+        working-directory: android
+        run: bash scripts/sync-frontend.sh
 
       - name: Run telemetry audit task
         working-directory: android
