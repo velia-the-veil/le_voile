@@ -110,12 +110,22 @@ if [ "$KEYALG" = "RSA" ] || [ "$KEYALG" = "DSA" ]; then
   KEYTOOL_ARGS+=(-keysize "$KEYSIZE")
 fi
 
-if ! command -v keytool >/dev/null 2>&1; then
-  echo "ERROR : keytool introuvable. Installer un JDK 17+ et le mettre dans le PATH." >&2
+# Resolution keytool : PATH d'abord, puis fallback JAVA_HOME (cas Windows
+# typique où JDK est installé mais bash MSYS n'a pas $PATH étendu).
+KEYTOOL_BIN=""
+if command -v keytool >/dev/null 2>&1; then
+  KEYTOOL_BIN="keytool"
+elif [ -n "${JAVA_HOME:-}" ] && [ -x "$JAVA_HOME/bin/keytool" ]; then
+  KEYTOOL_BIN="$JAVA_HOME/bin/keytool"
+elif [ -n "${JAVA_HOME:-}" ] && [ -x "$JAVA_HOME/bin/keytool.exe" ]; then
+  KEYTOOL_BIN="$JAVA_HOME/bin/keytool.exe"
+fi
+if [ -z "$KEYTOOL_BIN" ]; then
+  echo "ERROR : keytool introuvable. Installer un JDK 17+ et le mettre dans le PATH (ou définir JAVA_HOME)." >&2
   exit 1
 fi
 
-keytool "${KEYTOOL_ARGS[@]}"
+"$KEYTOOL_BIN" "${KEYTOOL_ARGS[@]}"
 
 unset STOREPASS STOREPASS_CONFIRM
 

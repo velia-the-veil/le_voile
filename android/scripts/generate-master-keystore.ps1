@@ -61,8 +61,19 @@ le fichier puis relancer ce script.
 
 New-Item -ItemType Directory -Path $keystoreDir -Force | Out-Null
 
-if (-not (Get-Command keytool -ErrorAction SilentlyContinue)) {
-  throw 'keytool introuvable. Installer un JDK 17+ et le mettre dans le PATH.'
+# Resolution keytool : PATH d'abord, puis fallback JAVA_HOME (cas Windows
+# typique où JDK est installé mais PowerShell n'a pas $env:PATH étendu).
+$keytoolBin = $null
+$keytoolCmd = Get-Command keytool -ErrorAction SilentlyContinue
+if ($keytoolCmd) {
+  $keytoolBin = $keytoolCmd.Source
+} elseif ($env:JAVA_HOME) {
+  foreach ($candidate in @("$env:JAVA_HOME\bin\keytool.exe", "$env:JAVA_HOME\bin\keytool")) {
+    if (Test-Path $candidate) { $keytoolBin = $candidate; break }
+  }
+}
+if (-not $keytoolBin) {
+  throw 'keytool introuvable. Installer un JDK 17+ et le mettre dans le PATH (ou définir JAVA_HOME).'
 }
 
 # Read password (SecureString — non afficher dans console history).
@@ -114,7 +125,7 @@ if ($KeyAlg -eq 'RSA' -or $KeyAlg -eq 'DSA') {
   $keytoolArgs += "$KeySize"
 }
 
-& keytool @keytoolArgs
+& $keytoolBin @keytoolArgs
 if ($LASTEXITCODE -ne 0) {
   throw "keytool a echoue (exit code $LASTEXITCODE)"
 }
