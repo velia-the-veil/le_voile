@@ -45,6 +45,13 @@ class UpdateNotificationFlowTest {
     fun setup() {
         EmulatorAssumptions.assumePostNotificationsAvailable()
         context = InstrumentationRegistry.getInstrumentation().targetContext
+        // Android 13+ (API 33+) : POST_NOTIFICATIONS est runtime permission.
+        // Sans grant explicit, NotificationManager.notify() drop silencieusement
+        // et activeNotifications reste vide → test fail. Le grant via uiAutomation
+        // bypass le dialog UX (autorisé en androidTest uniquement). L'assumption
+        // ci-dessus garantit qu'on n'appelle ça qu'en API >= 33.
+        InstrumentationRegistry.getInstrumentation().uiAutomation
+            .grantRuntimePermission(context.packageName, android.Manifest.permission.POST_NOTIFICATIONS)
         nm = context.getSystemService(NotificationManager::class.java)
         // Cleanup notifs préexistantes pour éviter pollution cross-test.
         nm.cancel(UpdateNotificationHelper.NOTIFICATION_ID)
