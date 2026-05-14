@@ -6,7 +6,10 @@ version: 2
 # Le fichier copié est gitignored, regénéré à chaque release.
 before:
   hooks:
-    - cmd: cp ../LICENSE LICENSE
+    - cp ../LICENSE LICENSE
+    - mkdir -p keys
+    - cp ../docs/keys/levoile-release.pub keys/levoile-release.pub
+    - cp ../docs/keys/levoile-release.pub.pem keys/levoile-release.pub.pem
 
 # Autonomous goreleaser config for the Windows tier.
 #
@@ -69,9 +72,9 @@ archives:
     files:
       - LICENSE
       - installer/config-default.toml
-      - src: ../docs/keys/levoile-release.pub
+      - src: keys/levoile-release.pub
         dst: keys/levoile-release.pub
-      - src: ../docs/keys/levoile-release.pub.pem
+      - src: keys/levoile-release.pub.pem
         dst: keys/levoile-release.pub.pem
 
 checksum:
@@ -93,5 +96,5 @@ signs:
 # GitHub Release Windows.
 release:
   extra_files:
-    - glob: ../docs/keys/levoile-release.pub
-    - glob: ../docs/keys/levoile-release.pub.pem
+    - glob: keys/levoile-release.pub
+    - glob: keys/levoile-release.pub.pem

@@ -108,6 +108,8 @@ session_a_reprendre.md
 # vit dans linux/packaging/icons/ — celle-là est trackée).
 /levoile.png
 
-# LICENSE copié dans windows/ par before.hook goreleaser (workaround bug glob
-# v2.14.3 sur ../LICENSE avec drive letter Windows). Régénéré à chaque release.
+# LICENSE + clés publiques copiés dans windows/ par before.hooks goreleaser
+# (workaround bug glob v2.14.3 sur `../*` avec drive letter Windows).
+# Régénérés à chaque release.
 /windows/LICENSE
+/windows/keys/
