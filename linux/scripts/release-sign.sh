@@ -81,6 +81,14 @@ trap 'rm -rf "${TMP_BIN}"' EXIT
 ( cd "${REPO_ROOT}" && go build -o "${TMP_BIN}/signpkg" ./tools/signpkg )
 export PATH="${TMP_BIN}:${PATH}"
 
+# Strip the `linux-` tag prefix so goreleaser parses the version as pure
+# semver. Without this override {{.Version}} stays `linux-vX.Y.Z` and
+# artefacts are named `levoile_linux-vX.Y.Z_amd64.deb`. goreleaser v2's
+# `monorepo.tag_prefix` block does not apply this rewrite, so we normalize
+# at the caller layer via GORELEASER_CURRENT_TAG.
+export GORELEASER_CURRENT_TAG="${TAG#linux-}"
+log "GORELEASER_CURRENT_TAG=${GORELEASER_CURRENT_TAG} (stripped from ${TAG})"
+
 log "reminder: if this machine is online, consider disconnecting network before release"
 log "running: goreleaser release --clean --config .goreleaser.yaml"
 goreleaser release --clean --config .goreleaser.yaml

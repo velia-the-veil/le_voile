@@ -13,6 +13,14 @@ version: 2
 # All paths in this file are relative to linux/ (where goreleaser is invoked).
 # `signpkg` must be in $PATH — linux/scripts/release-sign.sh builds it from
 # tools/signpkg before invoking goreleaser.
+#
+# Tag convention: `linux-vX.Y.Z` (enforced by release-sign.sh). The "linux-"
+# prefix is stripped before invoking goreleaser by exporting
+# GORELEASER_CURRENT_TAG=vX.Y.Z (see linux/scripts/release-sign.sh) — this
+# way {{.Version}} resolves to a clean semver and artefacts are named
+# `levoile_X.Y.Z_amd64.deb` instead of `levoile_linux-vX.Y.Z_amd64.deb`.
+# (goreleaser v2's `monorepo.tag_prefix` does not strip for version parsing,
+#  so we normalize at the caller layer.)
 
 builds:
   # Service privilégié systemd (kardianos/service). CGO_ENABLED=0 pour un
