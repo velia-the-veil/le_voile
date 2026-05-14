@@ -35,6 +35,19 @@ if (-not (Test-Path $WintunSrc)) {
 # doesn't try to cross-compile the Linux ui/service targets (CGO webview)
 # without a Linux toolchain. This installer only needs the Windows binaries
 # anyway (service + ui + ctl + verify).
+#
+# Note : ajout Git\usr\bin au PATH pour les before.hooks goreleaser (cp, mkdir -p)
+# qui sont POSIX et absents du PATH PowerShell natif. Le hook tente d'invoquer
+# `cp ../LICENSE LICENSE` (workaround bug glob ../LICENSE sur drive Windows).
+$gitUsrBin = "C:\Program Files\Git\usr\bin"
+if ((Test-Path $gitUsrBin) -and ($env:PATH -notlike "*$gitUsrBin*")) {
+    $env:PATH = "$gitUsrBin;$env:PATH"
+}
+
+# Note 2 : goreleaser build (sans `release`) n'invoque PAS les before.hooks
+# par défaut → il faut les exécuter manuellement, OU passer par `goreleaser release --snapshot`
+# qui les invoque. On reste sur `build` (simple binaires Windows pour NSIS)
+# et on copie LICENSE + clés à la main.
 Write-Host "--- Building binaries with GoReleaser ---"
 Push-Location $WindowsRoot
 goreleaser build --snapshot --clean --single-target --config .goreleaser.yaml

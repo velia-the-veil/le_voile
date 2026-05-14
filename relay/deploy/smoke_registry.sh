@@ -18,7 +18,7 @@
 set -euo pipefail
 
 DEFAULT_DOMAINS=(
-    de-001.levoile.dev de-002.levoile.dev
+    de-001.levoile.dev de-002.levoile.dev de-003.levoile.dev
     es-001.levoile.dev es-002.levoile.dev
     gb-001.levoile.dev gb-002.levoile.dev
     us-001.levoile.dev us-002.levoile.dev
