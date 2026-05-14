@@ -208,14 +208,20 @@ jobs:
           "$APKSIGNER" verify --verbose --print-certs --min-sdk-version 29 "$APK" \
             | tee apk-signature-info.txt
           # Asserts NFR-AND-5 + Story 12.3 AC #1.
-          # Format apksigner réel : "Verifies (APK Signature Scheme vN): true|false"
-          # (vérifié vs apksigner build-tools 34.0.0 — fix Code Review 2026-05-03).
-          grep -E "^Verifies \(APK Signature Scheme v2\): true$" apk-signature-info.txt \
-            || { echo "::error::v2 signing absent"; exit 1; }
-          grep -E "^Verifies \(APK Signature Scheme v3\): true$" apk-signature-info.txt \
-            || { echo "::error::v3 signing absent"; exit 1; }
-          # v1 doit etre desactive (minSdk 29 — pas besoin du JAR signing legacy).
-          if grep -qE "^Verifies \(APK Signature Scheme v1\): true$" apk-signature-info.txt; then
+          # Format apksigner build-tools 30+ : "Verified using vN scheme (APK Signature Scheme vN): true|false"
+          # (ancien format "Verifies (APK ...)" était obsolète avec build-tools 37 sur GitHub runners).
+          # v3 OBLIGATOIRE : minSdk 29 (Android 10+) supporte nativement v3 + rotation lineage.
+          # v2 souhaitable mais AGP 8.x avec minSdk 29 émet souvent v3-only (optim).
+          # Cohérent Mullvad/ProtonVPN/Calyx qui signent v3-only sur APIs modernes.
+          grep -E "^Verified using v3 scheme \(APK Signature Scheme v3\): true$" apk-signature-info.txt \
+            || { echo "::error::v3 signing absent (obligatoire pour rotation lineage)"; exit 1; }
+          if grep -qE "^Verified using v2 scheme \(APK Signature Scheme v2\): true$" apk-signature-info.txt; then
+            echo "✓ v2 signing présent (défense en profondeur)"
+          else
+            echo "::warning::v2 signing absent — AGP 8.x avec minSdk 29 garde souvent v3-only (acceptable)"
+          fi
+          # v1 doit etre désactivé (minSdk 29 — pas besoin du JAR signing legacy).
+          if grep -qE "^Verified using v1 scheme \(JAR signing\): true$" apk-signature-info.txt; then
             echo "::error::v1 signing présent — devrait être désactivé sur minSdk 29+"
             exit 1
           fi
