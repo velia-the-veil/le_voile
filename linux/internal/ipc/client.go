@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"sync"
 	"time"
 )
 
@@ -17,7 +18,14 @@ const (
 )
 
 // Client connects to the IPC server and sends requests.
+//
+// SendContext is safe for concurrent use from multiple goroutines — each call
+// is serialized through sendMu so the request/response pair on the underlying
+// single connection cannot interleave (which would corrupt the bufio.Scanner
+// buffer and the JSON decode). Close intentionally does not take the mutex:
+// closing the conn from another goroutine is what unblocks a long Scan().
 type Client struct {
+	sendMu  sync.Mutex
 	conn    net.Conn
 	scanner *bufio.Scanner
 	encoder *json.Encoder
@@ -55,6 +63,9 @@ func (c *Client) Send(req Request) (Response, error) {
 
 // SendContext sends a request with context-based cancellation and timeout.
 func (c *Client) SendContext(ctx context.Context, req Request) (Response, error) {
+	c.sendMu.Lock()
+	defer c.sendMu.Unlock()
+
 	if c.conn == nil {
 		return Response{}, fmt.Errorf("ipc: client: not connected")
 	}

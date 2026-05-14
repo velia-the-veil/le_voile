@@ -15,8 +15,19 @@ func TestSocketPath_Format(t *testing.T) {
 	if !strings.HasSuffix(SocketPath, ".sock") {
 		t.Errorf("SocketPath = %q, want .sock suffix", SocketPath)
 	}
-	if SocketPath != "/tmp/levoile.sock" {
-		t.Errorf("SocketPath = %q, want %q", SocketPath, "/tmp/levoile.sock")
+	// /var/run avoids /tmp TOCTOU attacks (pipe_unix.go header).
+	if SocketPath != "/var/run/levoile/levoile.sock" {
+		t.Errorf("SocketPath = %q, want %q", SocketPath, "/var/run/levoile/levoile.sock")
+	}
+}
+
+// requireSocketDirWritable skips the test if /var/run/levoile cannot be
+// created (no root, no CAP_DAC_OVERRIDE). CI runs as root so these tests
+// exercise the real path; dev boxes typically can't.
+func requireSocketDirWritable(t *testing.T) {
+	t.Helper()
+	if err := os.MkdirAll("/var/run/levoile", 0o750); err != nil {
+		t.Skipf("requires root or writable /var/run: %v", err)
 	}
 }
 
@@ -28,6 +39,7 @@ func TestNewPlatformListener_Unix_ReturnsNonNil(t *testing.T) {
 }
 
 func TestPlatformListener_Listen_CreatesSocket(t *testing.T) {
+	requireSocketDirWritable(t)
 	// Clean up any existing socket first.
 	os.Remove(SocketPath)
 
@@ -51,6 +63,7 @@ func TestPlatformListener_Listen_CreatesSocket(t *testing.T) {
 }
 
 func TestPlatformListener_DialPlatform(t *testing.T) {
+	requireSocketDirWritable(t)
 	os.Remove(SocketPath)
 
 	pl := newPlatformListener()
@@ -78,6 +91,7 @@ func TestPlatformListener_DialPlatform(t *testing.T) {
 }
 
 func TestPlatformListener_Cleanup_RemovesSocket(t *testing.T) {
+	requireSocketDirWritable(t)
 	os.Remove(SocketPath)
 
 	pl := newPlatformListener()
@@ -104,6 +118,7 @@ func TestPlatformListener_Cleanup_RemovesSocket(t *testing.T) {
 }
 
 func TestPlatformListener_Listen_RemovesStaleSock(t *testing.T) {
+	requireSocketDirWritable(t)
 	// Create a stale socket file.
 	os.Remove(SocketPath)
 	if err := os.WriteFile(SocketPath, []byte("stale"), 0644); err != nil {
