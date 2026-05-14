@@ -231,13 +231,20 @@ jobs:
         run: |
           rm -f "$RUNNER_TEMP/levoile-release.jks"
 
+      - name: Stage signed APK + signature info (flat)
+        # actions/upload-artifact@v4 préserve la structure de paths (LCA = `android/`),
+        # ce qui complique le download côté publish-release. On stage les 2 fichiers
+        # dans un dossier plat avant upload.
+        run: |
+          mkdir -p "$RUNNER_TEMP/signed-stage"
+          cp android/app/build/outputs/apk/apkDirect/release/app-apkDirect-release.apk "$RUNNER_TEMP/signed-stage/"
+          cp android/apk-signature-info.txt "$RUNNER_TEMP/signed-stage/"
+
       - name: Upload signed APK + signature info
         uses: actions/upload-artifact@v4
         with:
           name: app-apkDirect-release-signed
-          path: |
-            android/app/build/outputs/apk/apkDirect/release/app-apkDirect-release.apk
-            android/apk-signature-info.txt
+          path: ${{ runner.temp }}/signed-stage/
           retention-days: 90
           if-no-files-found: error
 
