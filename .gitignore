@@ -107,3 +107,7 @@ session_a_reprendre.md
 # Asset PNG laissé à la racine par export design (l'icône réelle de prod
 # vit dans linux/packaging/icons/ — celle-là est trackée).
 /levoile.png
+
+# LICENSE copié dans windows/ par before.hook goreleaser (workaround bug glob
+# v2.14.3 sur ../LICENSE avec drive letter Windows). Régénéré à chaque release.
+/windows/LICENSE

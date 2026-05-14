@@ -1,5 +1,13 @@
 version: 2
 
+# Pre-hook : copie LICENSE racine dans windows/ pour contourner le bug glob
+# goreleaser v2 qui résout mal `../LICENSE` sur drive letter Windows
+# (résolution `./D:/...LICENSE` qui fait crash filepath.Glob).
+# Le fichier copié est gitignored, regénéré à chaque release.
+before:
+  hooks:
+    - cmd: cp ../LICENSE LICENSE
+
 # Autonomous goreleaser config for the Windows tier.
 #
 # Usage (from this directory):
@@ -59,7 +67,7 @@ archives:
     name_template: "LeVoile_{{.Version}}_windows_amd64"
     formats: [zip]
     files:
-      - ../LICENSE
+      - LICENSE
       - installer/config-default.toml
       - src: ../docs/keys/levoile-release.pub
         dst: keys/levoile-release.pub
