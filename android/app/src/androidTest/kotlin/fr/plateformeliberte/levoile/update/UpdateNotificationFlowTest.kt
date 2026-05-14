@@ -52,7 +52,11 @@ class UpdateNotificationFlowTest {
 
     @After
     fun teardown() {
-        nm.cancel(UpdateNotificationHelper.NOTIFICATION_ID)
+        // Guard : si assumePostNotificationsAvailable() a bail out en @Before
+        // (API < 33), `nm` reste non-initialisé → ne pas crasher le teardown.
+        if (::nm.isInitialized) {
+            nm.cancel(UpdateNotificationHelper.NOTIFICATION_ID)
+        }
     }
 
     @Test

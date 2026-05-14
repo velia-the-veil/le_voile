@@ -5,7 +5,7 @@ import androidx.test.platform.app.InstrumentationRegistry
 import fr.plateformeliberte.levoile.kill.KillSwitchDetector
 import fr.plateformeliberte.levoile.kill.KillSwitchStatus
 import org.junit.After
-import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 
@@ -50,11 +50,14 @@ class KillSwitchHeuristicsTest {
         val ctx = InstrumentationRegistry.getInstrumentation().targetContext
         val detector = KillSwitchDetector(ctx)
         detector.refresh()
-        // Sans WRITE_SECURE_SETTINGS, on s'attend à Unverifiable par défaut.
-        assertEquals(
-            "Sans permission WRITE_SECURE_SETTINGS, le détecteur ne peut pas vérifier — fallback Unverifiable",
-            KillSwitchStatus.Unverifiable,
-            detector.status.value,
+        // Sans WRITE_SECURE_SETTINGS impossible d'écrire `always_on_vpn_app` côté test
+        // → on ne peut pas vérifier le cas ACTIVE. Smoke check : lecture Settings.Global
+        // ne crash pas et retourne une valeur connue. Inactive (lecture OK, valeur null)
+        // ou Unverifiable (lecture throw) sont les deux possibles selon API.
+        val state = detector.status.value
+        assertTrue(
+            "État doit être Inactive ou Unverifiable (smoke check lecture Settings.Global) — actuel: $state",
+            state is KillSwitchStatus.Inactive || state is KillSwitchStatus.Unverifiable,
         )
     }
 
@@ -75,10 +78,9 @@ class KillSwitchHeuristicsTest {
         // Story 10.1 spec : `null` ou absent → Inactive sur API où la lecture marche, sinon
         // Unverifiable. Le test accepte les deux (l'émulateur peut varier par API).
         val state = detector.status.value
-        assertEquals(
-            "Sans always_on_vpn configuré et sans WRITE_SECURE_SETTINGS, fallback Unverifiable",
-            KillSwitchStatus.Unverifiable,
-            state,
+        assertTrue(
+            "Sans always_on_vpn configuré : Inactive (lecture OK valeur null) ou Unverifiable (lecture throw) — actuel: $state",
+            state is KillSwitchStatus.Inactive || state is KillSwitchStatus.Unverifiable,
         )
     }
 }
