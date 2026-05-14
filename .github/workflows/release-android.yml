@@ -195,7 +195,17 @@ jobs:
             ls -la app/build/outputs/apk/release/ || true
             exit 1
           fi
-          apksigner verify --verbose --print-certs --min-sdk-version 29 "$APK" \
+          # Resolution apksigner : `android-actions/setup-android@v3` n'ajoute
+          # PAS $ANDROID_HOME/build-tools/<version> au PATH. On résout via la
+          # plus récente version installée par Gradle pendant assembleApkDirectRelease.
+          APKSIGNER=$(ls -1 "$ANDROID_HOME/build-tools/"*/apksigner 2>/dev/null | sort -V | tail -1)
+          if [ -z "$APKSIGNER" ]; then
+            echo "::error::apksigner introuvable dans $ANDROID_HOME/build-tools/"
+            ls -la "$ANDROID_HOME/build-tools/" 2>/dev/null || true
+            exit 1
+          fi
+          echo "Using apksigner: $APKSIGNER"
+          "$APKSIGNER" verify --verbose --print-certs --min-sdk-version 29 "$APK" \
             | tee apk-signature-info.txt
           # Asserts NFR-AND-5 + Story 12.3 AC #1.
           # Format apksigner réel : "Verifies (APK Signature Scheme vN): true|false"
@@ -404,10 +414,38 @@ jobs:
     needs: [sign-apk, reproducibility-check, instrumented-tests]
     runs-on: ubuntu-22.04
     timeout-minutes: 15
+    permissions:
+      contents: write
     steps:
-      - name: TODO Phase 12 finale
+      - uses: actions/checkout@v4
+
+      - name: Download signed APK artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: app-apkDirect-release-signed
+          path: ./signed-apk
+
+      - name: Calc SHA256
+        working-directory: ./signed-apk
         run: |
-          echo "TODO — gh release create + upload signed APK + SHA256 + Ed25519"
-          echo "signature de l'APK + apk-signature-info.txt + repro report."
-          echo "À ouvrir post-12.3/12.4/12.6 livrées."
-          exit 1
+          sha256sum app-apkDirect-release.apk > app-apkDirect-release.apk.sha256
+          cat app-apkDirect-release.apk.sha256
+
+      - name: Upload signed APK to GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        working-directory: ./signed-apk
+        run: |
+          # La release peut déjà exister (créée par Windows release-sign.sh sur
+          # le même tag) — --clobber update les assets sans re-créer la release.
+          # Si elle n'existe pas, on la crée avec --notes-start.
+          if ! gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
+            gh release create "${GITHUB_REF_NAME}" \
+              --title "${GITHUB_REF_NAME}" \
+              --generate-notes
+          fi
+          gh release upload "${GITHUB_REF_NAME}" \
+            app-apkDirect-release.apk \
+            app-apkDirect-release.apk.sha256 \
+            apk-signature-info.txt \
+            --clobber
