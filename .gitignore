@@ -99,3 +99,11 @@ Thumbs.db
 
 # Notes personnelles de reprise de session — jamais commitées
 session_a_reprendre.md
+
+# Logs ad-hoc (build manuel, logcat repro device). Les vrais logs runtime
+# sont écrits sous %ProgramData%/$XDG_STATE_HOME, jamais dans le repo.
+*.log
+
+# Asset PNG laissé à la racine par export design (l'icône réelle de prod
+# vit dans linux/packaging/icons/ — celle-là est trackée).
+/levoile.png
