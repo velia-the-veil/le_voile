@@ -14,6 +14,9 @@ import (
 // CheckCurrentResolver returns the current system DNS resolver address
 // by reading resolv.conf or using resolvectl.
 func CheckCurrentResolver(ctx context.Context) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
 	// Try resolvectl first.
 	if out, err := exec.CommandContext(ctx, "resolvectl", "dns").CombinedOutput(); err == nil {
 		lines := strings.Split(string(out), "\n")
@@ -53,6 +56,9 @@ func CheckCurrentResolver(ctx context.Context) (string, error) {
 // ForceResolver sets the system DNS resolver without saving the original value.
 // Used by the watchdog for corrections.
 func ForceResolver(ctx context.Context, addr string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	// Validate addr is a valid IP to prevent injection.
 	if net.ParseIP(addr) == nil {
 		return fmt.Errorf("dns: force resolver: invalid IP address %q", addr)

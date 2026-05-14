@@ -58,7 +58,10 @@ func TestLoadOrCreate_PersistsHex(t *testing.T) {
 	}
 }
 
-// On Linux/macOS the token file must be 0600 — no group/world readability.
+// On Linux the token file is 0640 (owner rw, group r, no world) — see
+// perms_unix.go header: service user `levoile` writes, desktop UI user reads
+// via group membership. /etc/levoile/ itself is 2770 root:levoile so "other"
+// cannot traverse anyway.
 func TestLoadOrCreate_PermsRestricted(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("permission bits are not POSIX on Windows; ACL inherits from parent dir")
@@ -73,8 +76,8 @@ func TestLoadOrCreate_PermsRestricted(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if mode := info.Mode().Perm(); mode != 0o600 {
-		t.Errorf("file mode = %o, want 0600", mode)
+	if mode := info.Mode().Perm(); mode != 0o640 {
+		t.Errorf("file mode = %o, want 0640", mode)
 	}
 }
 

@@ -45,12 +45,16 @@ func TestIsIPAddr_Valid(t *testing.T) {
 		input string
 		want  bool
 	}{
+		// IPv4
 		{"192.168.1.1", true},
 		{"8.8.8.8", true},
 		{"0.0.0.0", true},
 		{"255.255.255.255", true},
 		{"127.0.0.1", true},
 		{"1.2.3.4", true},
+		// IPv6 — isIPAddr is family-agnostic, DNS over IPv6 is valid.
+		{"::1", true},
+		{"2001:db8::1", true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.input, func(t *testing.T) {
@@ -77,8 +81,6 @@ func TestIsIPAddr_Invalid(t *testing.T) {
 		{"1.2.3.4a"},
 		{"1234.1.1.1"},
 		{"1.2.3.-1"},
-		{"::1"},
-		{"2001:db8::1"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.input, func(t *testing.T) {
